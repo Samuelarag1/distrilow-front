@@ -1,8 +1,14 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
-import { Badge } from "@/components/ui/badge"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Badge } from "@/components/ui/badge";
 
 const activities = [
   {
@@ -41,27 +47,34 @@ const activities = [
     time: "hace 1 hora",
     status: "cancelled",
   },
-]
+];
 
 const statusColors = {
   pending: "bg-yellow-100 text-yellow-800",
   confirmed: "bg-blue-100 text-blue-800",
   completed: "bg-green-100 text-green-800",
   cancelled: "bg-red-100 text-red-800",
-}
+};
 
 export function RecentActivity() {
   return (
-    <Card>
+    <Card className="w-full">
       <CardHeader>
-        <CardTitle>Actividad Reciente</CardTitle>
-        <CardDescription>Últimas transacciones y eventos</CardDescription>
+        <CardTitle className="text-base sm:text-lg">
+          Actividad Reciente
+        </CardTitle>
+        <CardDescription className="text-sm">
+          Últimas transacciones y eventos
+        </CardDescription>
       </CardHeader>
-      <CardContent>
-        <div className="space-y-4">
-          {activities.map((activity) => (
-            <div key={activity.id} className="flex items-center space-x-4">
-              <Avatar className="h-9 w-9">
+      <CardContent className="space-y-4 px-4 sm:px-6">
+        {activities.map((activity) => (
+          <div
+            key={activity.id}
+            className="flex flex-wrap items-center justify-between gap-2 sm:gap-4"
+          >
+            <div className="flex items-center gap-3 min-w-0">
+              <Avatar className="h-9 w-9 shrink-0">
                 <AvatarImage src="/placeholder.svg?height=36&width=36" />
                 <AvatarFallback>
                   {activity.customer
@@ -70,20 +83,28 @@ export function RecentActivity() {
                     .join("")}
                 </AvatarFallback>
               </Avatar>
-              <div className="flex-1 space-y-1">
-                <p className="text-sm font-medium leading-none">{activity.customer}</p>
-                <p className="text-sm text-muted-foreground">
+              <div className="min-w-0">
+                <p className="text-sm font-medium leading-none truncate">
+                  {activity.customer}
+                </p>
+                <p className="text-sm text-muted-foreground truncate">
                   {activity.action} • {activity.time}
                 </p>
               </div>
-              <div className="flex items-center space-x-2">
-                <Badge className={statusColors[activity.status as keyof typeof statusColors]}>{activity.status}</Badge>
-                <div className="text-sm font-medium">{activity.amount}</div>
-              </div>
             </div>
-          ))}
-        </div>
+            <div className="flex items-center gap-2 text-sm">
+              <Badge
+                className={`text-xs ${
+                  statusColors[activity.status as keyof typeof statusColors]
+                }`}
+              >
+                {activity.status}
+              </Badge>
+              <div className="font-medium">{activity.amount}</div>
+            </div>
+          </div>
+        ))}
       </CardContent>
     </Card>
-  )
+  );
 }

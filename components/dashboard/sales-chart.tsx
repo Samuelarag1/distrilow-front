@@ -1,8 +1,18 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
-import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts"
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
 const data = [
   { name: "Ene", ventas: 4000, pedidos: 240 },
@@ -12,7 +22,7 @@ const data = [
   { name: "May", ventas: 1890, pedidos: 480 },
   { name: "Jun", ventas: 2390, pedidos: 380 },
   { name: "Jul", ventas: 3490, pedidos: 430 },
-]
+];
 
 const chartConfig = {
   ventas: {
@@ -23,22 +33,39 @@ const chartConfig = {
     label: "Pedidos",
     color: "hsl(var(--chart-2))",
   },
-}
+};
 
 export function SalesChart() {
   return (
-    <Card className="w-full">
+    <Card className="w-full overflow-hidden">
       <CardHeader>
-        <CardTitle>Resumen de Ventas</CardTitle>
-        <CardDescription>Ventas y pedidos de los últimos 7 meses</CardDescription>
+        <CardTitle className="text-base sm:text-lg">
+          Resumen de Ventas
+        </CardTitle>
+        <CardDescription className="text-sm">
+          Ventas y pedidos de los últimos 7 meses
+        </CardDescription>
       </CardHeader>
-      <CardContent className="p-6">
-        <div className="w-full h-[300px]">
+      <CardContent className="p-4 sm:p-6">
+        <div className="w-full h-[250px] sm:h-[300px]">
           <ChartContainer config={chartConfig} className="w-full h-full">
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={data} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
-                <XAxis dataKey="name" axisLine={false} tickLine={false} tick={{ fontSize: 12 }} />
-                <YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12 }} width={60} />
+              <AreaChart
+                data={data}
+                margin={{ top: 10, right: 10, left: -10, bottom: 10 }}
+              >
+                <XAxis
+                  dataKey="name"
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 11 }}
+                />
+                <YAxis
+                  axisLine={false}
+                  tickLine={false}
+                  tick={{ fontSize: 11 }}
+                  width={45}
+                />
                 <ChartTooltip content={<ChartTooltipContent />} />
                 <Area
                   type="monotone"
@@ -62,5 +89,5 @@ export function SalesChart() {
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }
