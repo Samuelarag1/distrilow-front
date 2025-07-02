@@ -102,4 +102,3 @@ export async function PUT(req: Request) {
 
   return NextResponse.json({ token });
 }
-//! Check this
