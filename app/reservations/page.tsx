@@ -3,10 +3,10 @@
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { Header } from "@/components/layout/header";
-import { Dashboard } from "@/components/dashboard/dashboard";
+import { UnderDevelopment } from "@/components/common/under-development";
 import { BusinessProvider } from "@/components/providers/business-provider";
 
-export default function HomePage() {
+export default function ReportsPage() {
   return (
     <BusinessProvider>
       <SidebarProvider defaultOpen={true}>
@@ -14,11 +14,22 @@ export default function HomePage() {
           <AppSidebar />
           <SidebarInset className="flex-1 flex flex-col min-w-0">
             <Header />
-            <main className="flex-1 overflow-auto">
+            {/* <main className="flex-1 overflow-auto">
               <div className="container mx-auto p-4 space-y-6 max-w-7xl">
-                <Dashboard />
+                <UnderDevelopment
+                  title="Reportes y Análisis"
+                  description="Centro de reportes y análisis de datos del negocio"
+                  features={[
+                    "Reportes de ventas",
+                    "Análisis de productos",
+                    "Métricas de clientes",
+                    "Exportación a PDF/Excel",
+                    "Gráficos interactivos",
+                    "Reportes personalizados",
+                  ]}
+                />
               </div>
-            </main>
+            </main> */}
           </SidebarInset>
         </div>
       </SidebarProvider>

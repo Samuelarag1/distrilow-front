@@ -244,10 +244,6 @@ export function ProductsModule() {
                             <Edit className="mr-2 h-4 w-4" />
                             Editar
                           </DropdownMenuItem>
-                          <DropdownMenuItem>
-                            <Eye className="mr-2 h-4 w-4" />
-                            Ver detalles
-                          </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() => handleDelete(product.id)}
                             className="text-destructive"
