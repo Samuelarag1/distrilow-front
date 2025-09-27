@@ -16,7 +16,7 @@ export default function HomePage() {
             <Header />
             <main className="flex-1 overflow-auto">
               <div className="container mx-auto p-4 space-y-6 max-w-7xl">
-                <Dashboard />
+                {/* <Dashboard /> */}
               </div>
             </main>
           </SidebarInset>
