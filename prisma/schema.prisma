@@ -22,6 +22,7 @@ model Company {
   active       Boolean        @default(true)
   branches     Branch[]
   users        User[]
+  type         CompanyType    @default(RETAIL)
   createdAt    DateTime       @default(now())
   Category     Category[]
   Product      Product[]
@@ -74,6 +75,7 @@ model Product {
   category   Category     @relation(fields: [categoryId], references: [id])
   categoryId String
   price      Float
+  cost       Float        @default(0)
   stockItems StockItem[]
   company    Company      @relation(fields: [companyId], references: [id])
   companyId  String
@@ -135,6 +137,11 @@ model CashboxLog {
   createdAt DateTime    @default(now())
   Company   Company?    @relation(fields: [companyId], references: [id])
   companyId String?
+}
+
+enum CompanyType {
+  RETAIL
+  WHOLESALE
 }
 
 enum CashboxType {

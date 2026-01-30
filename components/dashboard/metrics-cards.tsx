@@ -1,47 +1,99 @@
 "use client"
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Users, Package } from "lucide-react"
+import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Users, Package, Wallet, FileText, CreditCard } from "lucide-react"
+import { DashboardMetrics, BusinessType } from "@/lib/data-service"
 
-const metrics = [
-  {
-    title: "Ventas Totales",
-    value: "$12,345",
-    change: "+12.5%",
-    trend: "up",
-    icon: DollarSign,
-    description: "vs mes anterior",
-  },
-  {
-    title: "Pedidos",
-    value: "156",
-    change: "+8.2%",
-    trend: "up",
-    icon: ShoppingCart,
-    description: "este mes",
-  },
-  {
-    title: "Clientes",
-    value: "1,234",
-    change: "+3.1%",
-    trend: "up",
-    icon: Users,
-    description: "clientes activos",
-  },
-  {
-    title: "Productos",
-    value: "89",
-    change: "-2.4%",
-    trend: "down",
-    icon: Package,
-    description: "en inventario",
-  },
-]
+interface MetricsCardsProps {
+  metrics: DashboardMetrics
+  type: BusinessType
+}
 
-export function MetricsCards() {
+export function MetricsCards({ metrics, type }: MetricsCardsProps) {
+  const commonMetrics = [
+    {
+      title: "Ingresos Totales",
+      value: new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(metrics.totalRevenue),
+      change: "+12.5%",
+      trend: "up",
+      icon: DollarSign,
+      description: "vs mes anterior",
+    },
+    {
+      title: "Pedidos Totales",
+      value: metrics.totalOrders.toString(),
+      change: "+8.2%",
+      trend: "up",
+      icon: ShoppingCart,
+      description: "este mes",
+    },
+  ]
+
+  const retailMetrics = [
+    {
+      title: "Clientes en Local",
+      value: metrics.walkInCustomers?.toString() || "0",
+      change: "+3.1%",
+      trend: "up",
+      icon: Users,
+      description: "hoy",
+    },
+    {
+      title: "Caja Diaria",
+      value: new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(metrics.dailyCashbox || 0),
+      change: "+2.4%",
+      trend: "up",
+      icon: Wallet,
+      description: "saldo actual",
+    },
+  ]
+
+  const wholesaleMetrics = [
+    {
+      title: "Clientes Mayoristas",
+      value: metrics.activeCustomers.toString(),
+      change: "+1.2%",
+      trend: "up",
+      icon: Users,
+      description: "activos",
+    },
+    {
+      title: "Pedidos Pendientes",
+      value: metrics.pendingBulkOrders?.toString() || "0",
+      change: "-5%",
+      trend: "down",
+      icon: FileText,
+      description: "por procesar",
+    },
+    {
+      title: "Crédito Utilizado",
+      value: new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(metrics.creditUtilized || 0),
+      change: "+15%",
+      trend: "up",
+      icon: CreditCard,
+      description: "cuenta corriente",
+    },
+  ]
+
+  const specificMetrics = type === "retail" ? retailMetrics : wholesaleMetrics
+  
+  // Combine: Common + Specific + Stock (Common)
+  const displayMetrics = [
+    ...commonMetrics,
+    ...specificMetrics,
+    {
+        title: "Bajo Stock",
+        value: metrics.lowStockItems.toString(),
+        change: metrics.lowStockItems > 10 ? "Alerta" : "Normal",
+        trend: metrics.lowStockItems > 10 ? "down" : "up",
+        icon: Package,
+        description: "productos",
+    }
+  ]
+
   return (
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-      {metrics.map((metric) => {
+      {displayMetrics.map((metric) => {
         const Icon = metric.icon
         const TrendIcon = metric.trend === "up" ? TrendingUp : TrendingDown
 

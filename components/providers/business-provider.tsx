@@ -3,7 +3,7 @@
 import type React from "react"
 import { createContext, useContext, useState } from "react"
 
-type BusinessType = "restaurant" | "retail" | "services"
+export type BusinessType = "retail" | "wholesale"
 
 interface BusinessContextType {
   businessType: BusinessType
@@ -13,7 +13,7 @@ interface BusinessContextType {
 const BusinessContext = createContext<BusinessContextType | undefined>(undefined)
 
 export function BusinessProvider({ children }: { children: React.ReactNode }) {
-  const [businessType, setBusinessType] = useState<BusinessType>("restaurant")
+  const [businessType, setBusinessType] = useState<BusinessType>("retail")
 
   return <BusinessContext.Provider value={{ businessType, setBusinessType }}>{children}</BusinessContext.Provider>
 }

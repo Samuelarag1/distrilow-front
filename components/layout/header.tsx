@@ -1,64 +1,51 @@
-"use client"
+"use client";
 
-import type React from "react"
+import type React from "react";
 
-import { SidebarTrigger } from "@/components/ui/sidebar"
-import { Button } from "@/components/ui/button"
-import { Bell, Search, Moon, Sun, Filter, Download } from "lucide-react"
-import { useTheme } from "next-themes"
-import { Input } from "@/components/ui/input"
-import { Badge } from "@/components/ui/badge"
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Button } from "@/components/ui/button";
+import { Bell, Moon, Sun, Filter, Download } from "lucide-react";
+import { useTheme } from "next-themes";
+import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuTrigger,
   DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu"
-import { useState } from "react"
-import { useToast } from "@/hooks/use-toast"
+} from "@/components/ui/dropdown-menu";
+import { useToast } from "@/hooks/use-toast";
 
 export function Header() {
-  const { setTheme, theme } = useTheme()
-  const [searchQuery, setSearchQuery] = useState("")
-  const { toast } = useToast()
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault()
-    if (searchQuery.trim()) {
-      toast({
-        title: "Búsqueda realizada",
-        description: `Buscando: "${searchQuery}"`,
-      })
-    }
-  }
+  const { setTheme, theme } = useTheme();
+  const { toast } = useToast();
 
   const handleExport = (format: string) => {
     toast({
       title: "Exportando datos",
       description: `Generando archivo ${format.toUpperCase()}...`,
-    })
-  }
+    });
+  };
+
+  const showToaster = () => {
+    toast({
+      title: "Filtros activados",
+      description: `Filtros aplicados correctamente`,
+      duration: 1000
+    });
+  };
 
   return (
     <header className="sticky top-0 z-50 flex h-16 shrink-0 items-center gap-2 border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 px-4 ">
       <SidebarTrigger className="-ml-1 md:hidden" />
 
-      <div className="flex flex-1 items-center gap-2 px-3">
-        <form onSubmit={handleSearch} className="relative flex-1 max-w-md">
-          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground pointer-events-none" />
-          <Input
-            type="search"
-            placeholder="Buscar productos, clientes, pedidos..."
-            className="pl-8 pr-4 h-10 w-full bg-muted/50 border-0 focus-visible:ring-1 focus-visible:ring-ring"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-          />
-        </form>
-      </div>
-
-      <div className="flex items-center gap-1">
-        <Button variant="ghost" size="icon" className="h-9 w-9">
+      <div className="flex items-center gap-1 justify-end w-full">
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-9 w-9"
+          onClick={() => showToaster()}
+        >
           <Filter className="h-4 w-4" />
           <span className="sr-only">Filtros</span>
         </Button>
@@ -71,9 +58,15 @@ export function Header() {
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
-            <DropdownMenuItem onClick={() => handleExport("csv")}>Exportar CSV</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleExport("pdf")}>Exportar PDF</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => handleExport("excel")}>Exportar Excel</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleExport("csv")}>
+              Exportar CSV
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleExport("pdf")}>
+              Exportar PDF
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => handleExport("excel")}>
+              Exportar Excel
+            </DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -95,19 +88,25 @@ export function Header() {
             <DropdownMenuItem className="p-3">
               <div className="flex flex-col gap-1 w-full">
                 <p className="text-sm font-medium">Nuevo pedido recibido</p>
-                <p className="text-xs text-muted-foreground">Mesa 5 - $45.50 • hace 5 min</p>
+                <p className="text-xs text-muted-foreground">
+                  Mesa 5 - $45.50 • hace 5 min
+                </p>
               </div>
             </DropdownMenuItem>
             <DropdownMenuItem className="p-3">
               <div className="flex flex-col gap-1 w-full">
                 <p className="text-sm font-medium">Stock bajo</p>
-                <p className="text-xs text-muted-foreground">Quedan 3 unidades de Pasta Carbonara • hace 15 min</p>
+                <p className="text-xs text-muted-foreground">
+                  Quedan 3 unidades de Pasta Carbonara • hace 15 min
+                </p>
               </div>
             </DropdownMenuItem>
             <DropdownMenuItem className="p-3">
               <div className="flex flex-col gap-1 w-full">
                 <p className="text-sm font-medium">Nueva reserva</p>
-                <p className="text-xs text-muted-foreground">Juan Pérez - 20:00 para 4 personas • hace 30 min</p>
+                <p className="text-xs text-muted-foreground">
+                  Juan Pérez - 20:00 para 4 personas • hace 30 min
+                </p>
               </div>
             </DropdownMenuItem>
           </DropdownMenuContent>
@@ -125,5 +124,5 @@ export function Header() {
         </Button>
       </div>
     </header>
-  )
+  );
 }

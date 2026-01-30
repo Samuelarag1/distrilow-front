@@ -1,20 +1,16 @@
 "use client";
 import { usePathname } from "next/navigation";
+import Link from "next/link";
 import {
   BarChart3,
   Package,
-  Users,
-  ShoppingCart,
-  Calendar,
   Bell,
   Settings,
   FileText,
   TrendingUp,
   UserCheck,
-  Wrench,
   CreditCard,
   Package2,
-  Martini,
 } from "lucide-react";
 import {
   Sidebar,
@@ -32,39 +28,19 @@ import {
 import { BusinessTypeSelector } from "@/components/business/business-type-selector";
 import { UserProfile } from "@/components/layout/user-profile";
 import { useBusiness } from "@/components/providers/business-provider";
-import Link from "next/link";
 
-const businessMenus = {
-  restaurant: [
-    { title: "Dashboard", url: "/", icon: BarChart3 },
-    { title: "Punto de Venta", url: "/pos", icon: CreditCard },
-    { title: "Productos", url: "/products", icon: Martini },
-    { title: "Inventario", url: "/inventory", icon: Package2 },
-    { title: "Ventas", url: "/sales", icon: TrendingUp },
-    { title: "Pedidos", url: "/orders", icon: ShoppingCart },
-    { title: "Reservas", url: "/reservations", icon: Calendar },
-    { title: "Clientes", url: "/customers", icon: Users },
-    { title: "Reportes", url: "/reports", icon: FileText },
-  ],
+import type { ISidebarMenu } from "@/types/Sidebar";
+
+const businessMenus: { [key: string]: ISidebarMenu[] } = {
   retail: [
     { title: "Dashboard", url: "/", icon: BarChart3 },
     { title: "Punto de Venta", url: "/pos", icon: CreditCard },
     { title: "Productos", url: "/products", icon: Package },
     { title: "Inventario", url: "/inventory", icon: Package2 },
     { title: "Ventas", url: "/sales", icon: TrendingUp },
-    { title: "Clientes", url: "/customers", icon: Users },
     { title: "Reportes", url: "/reports", icon: FileText },
   ],
-  services: [
-    { title: "Dashboard", url: "/", icon: BarChart3 },
-    { title: "Punto de Venta", url: "/pos", icon: CreditCard },
-    { title: "Servicios", url: "/products", icon: Wrench },
-    { title: "Ventas", url: "/sales", icon: TrendingUp },
-    { title: "Citas", url: "/appointments", icon: Calendar },
-    { title: "Clientes", url: "/customers", icon: Users },
-    { title: "Facturación", url: "/billing", icon: FileText },
-    { title: "Reportes", url: "/reports", icon: TrendingUp },
-  ],
+
 };
 
 export function AppSidebar() {
@@ -108,7 +84,7 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        <SidebarGroup className="mt-8">
+        {/* <SidebarGroup className="mt-8">
           <SidebarGroupLabel className="px-3 py-2 text-xs font-semibold text-sidebar-foreground/70 uppercase tracking-wider mb-2">
             Sistema
           </SidebarGroupLabel>
@@ -164,7 +140,7 @@ export function AppSidebar() {
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
-        </SidebarGroup>
+        </SidebarGroup> */}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-3">

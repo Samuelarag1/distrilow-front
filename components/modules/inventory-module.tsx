@@ -140,9 +140,8 @@ export function InventoryModule() {
 
     toast({
       title: "Stock actualizado",
-      description: `Stock ${
-        change > 0 ? "aumentado" : "reducido"
-      } correctamente`,
+      description: `Stock ${change > 0 ? "aumentado" : "reducido"
+        } correctamente`,
     });
   };
 
@@ -166,6 +165,85 @@ export function InventoryModule() {
   const getProgressValue = (item: InventoryItem) => {
     return (item.currentStock / item.maxStock) * 100;
   };
+
+  function InventoryItemCard({
+    item,
+    onUpdate,
+  }: {
+    item: InventoryItem;
+    onUpdate: (id: string, change: number) => void;
+  }) {
+    const [amount, setAmount] = useState<string>("1");
+    const status = getStockStatus(item);
+    const progressValue = getProgressValue(item);
+
+    const handleUpdate = (sign: 1 | -1) => {
+      const val = parseInt(amount);
+      if (!isNaN(val) && val > 0) {
+        onUpdate(item.id, val * sign);
+        setAmount("1");
+      }
+    };
+
+    return (
+      <Card className="p-4">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-4">
+          <div className="flex-1 space-y-2">
+            <div className="flex items-center justify-between">
+              <h3 className="font-semibold">{item.name}</h3>
+              <Badge variant="outline">{item.category}</Badge>
+            </div>
+
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-sm">
+                <span>Stock actual:</span>
+                <span className={`font-medium ${getStockColor(status)}`}>
+                  {item.currentStock} {item.unit}
+                </span>
+              </div>
+              <Progress value={progressValue} className="h-2" />
+              <div className="flex justify-between text-xs text-muted-foreground">
+                <span>Min: {item.minStock}</span>
+                <span>Max: {item.maxStock}</span>
+              </div>
+            </div>
+
+            <div className="flex items-center justify-between text-sm">
+              <span>Costo unitario: ${item.cost.toFixed(2)}</span>
+              <span>
+                Valor total: ${(item.currentStock * item.cost).toFixed(2)}
+              </span>
+            </div>
+          </div>
+
+          <div className="flex items-center space-x-2">
+            <Input
+              type="number"
+              min="1"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              className="w-20 h-8"
+            />
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleUpdate(-1)}
+              disabled={item.currentStock <= 0}
+            >
+              <Minus className="h-4 w-4" />
+            </Button>
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => handleUpdate(1)}
+            >
+              <Plus className="h-4 w-4" />
+            </Button>
+          </div>
+        </div>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -297,65 +375,13 @@ export function InventoryModule() {
         </CardHeader>
         <CardContent>
           <div className="space-y-4">
-            {filteredInventory.map((item) => {
-              const status = getStockStatus(item);
-              const progressValue = getProgressValue(item);
-
-              return (
-                <Card key={item.id} className="p-4">
-                  <div className="flex flex-col sm:flex-row sm:items-center gap-4">
-                    <div className="flex-1 space-y-2">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-semibold">{item.name}</h3>
-                        <Badge variant="outline">{item.category}</Badge>
-                      </div>
-
-                      <div className="space-y-1">
-                        <div className="flex items-center justify-between text-sm">
-                          <span>Stock actual:</span>
-                          <span
-                            className={`font-medium ${getStockColor(status)}`}
-                          >
-                            {item.currentStock} {item.unit}
-                          </span>
-                        </div>
-                        <Progress value={progressValue} className="h-2" />
-                        <div className="flex justify-between text-xs text-muted-foreground">
-                          <span>Min: {item.minStock}</span>
-                          <span>Max: {item.maxStock}</span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center justify-between text-sm">
-                        <span>Costo unitario: ${item.cost.toFixed(2)}</span>
-                        <span>
-                          Valor total: $
-                          {(item.currentStock * item.cost).toFixed(2)}
-                        </span>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center space-x-2">
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => updateStock(item.id, -1)}
-                        disabled={item.currentStock <= 0}
-                      >
-                        <Minus className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="outline"
-                        onClick={() => updateStock(item.id, 1)}
-                      >
-                        <Plus className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </div>
-                </Card>
-              );
-            })}
+            {filteredInventory.map((item) => (
+              <InventoryItemCard
+                key={item.id}
+                item={item}
+                onUpdate={updateStock}
+              />
+            ))}
           </div>
 
           {filteredInventory.length === 0 && (
