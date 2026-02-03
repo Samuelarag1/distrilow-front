@@ -37,8 +37,10 @@ model Branch {
   name       String
   company    Company      @relation(fields: [companyId], references: [id])
   companyId  String
+  companyId  String
   sales      Sale[]
   stockItems StockItem[]
+  movements  StockMovement[]
   createdAt  DateTime     @default(now())
   CashboxLog CashboxLog[]
 }
@@ -52,8 +54,10 @@ model User {
   company    Company      @relation(fields: [companyId], references: [id])
   companyId  String
   createdAt  DateTime     @default(now())
+  createdAt  DateTime     @default(now())
   Sale       Sale[]
   CashboxLog CashboxLog[]
+  StockMovement StockMovement[]
 }
 
 enum Role {
@@ -75,8 +79,11 @@ model Product {
   category   Category     @relation(fields: [categoryId], references: [id])
   categoryId String
   price      Float
+  price      Float
   cost       Float        @default(0)
+  minStock   Int          @default(5)
   stockItems StockItem[]
+  movements  StockMovement[]
   company    Company      @relation(fields: [companyId], references: [id])
   companyId  String
   SaleDetail SaleDetail[]
@@ -112,7 +119,9 @@ model Sale {
   client      Client?      @relation(fields: [clientId], references: [id])
   clientId    String?
   saleDetails SaleDetail[]
+  saleDetails SaleDetail[]
   total       Float
+  paymentMethod PaymentMethod @default(CASH)
   createdAt   DateTime     @default(now())
 }
 
@@ -158,4 +167,33 @@ model MetricRecord {
   income     Float
   expenses   Float
   projection Float // calculated
+}
+
+model StockMovement {
+  id          String       @id @default(cuid())
+  productId   String
+  product     Product      @relation(fields: [productId], references: [id])
+  branchId    String
+  branch      Branch       @relation(fields: [branchId], references: [id])
+  quantity    Int
+  type        MovementType
+  referenceId String?
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  createdAt   DateTime     @default(now())
+}
+
+enum MovementType {
+  SALE
+  PURCHASE
+  ADJUSTMENT
+  RETURN
+}
+
+enum PaymentMethod {
+  CASH
+  CARD
+  TRANSFER
+  QR
+  OTHER
 }

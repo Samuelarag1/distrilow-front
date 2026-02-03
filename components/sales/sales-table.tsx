@@ -7,103 +7,31 @@ import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Search, Filter, Download, Eye } from "lucide-react"
 
-interface SaleRecord {
-  id: string
-  date: string
-  customer: string
-  products: string[]
-  total: number
-  method: "cash" | "card"
-  status: "completed" | "pending" | "cancelled"
-}
-
-const salesData: SaleRecord[] = [
-  {
-    id: "V2024001",
-    date: "2024-01-15 14:30",
-    customer: "María García",
-    products: ["Pasta Carbonara", "Coca Cola"],
-    total: 22.0,
-    method: "card",
-    status: "completed",
-  },
-  {
-    id: "V2024002",
-    date: "2024-01-15 13:45",
-    customer: "Carlos López",
-    products: ["Pizza Margherita", "Ensalada César"],
-    total: 36.5,
-    method: "cash",
-    status: "completed",
-  },
-  {
-    id: "V2024003",
-    date: "2024-01-15 12:30",
-    customer: "Ana Martín",
-    products: ["Hamburguesa Clásica"],
-    total: 16.0,
-    method: "card",
-    status: "completed",
-  },
-  {
-    id: "V2024004",
-    date: "2024-01-14 19:15",
-    customer: "Pedro Ruiz",
-    products: ["Pasta Carbonara", "Tiramisu", "Coca Cola"],
-    total: 30.5,
-    method: "cash",
-    status: "completed",
-  },
-  {
-    id: "V2024005",
-    date: "2024-01-14 18:00",
-    customer: "Laura Sánchez",
-    products: ["Pizza Margherita", "Coca Cola"],
-    total: 25.5,
-    method: "card",
-    status: "completed",
-  },
-]
+import { useTransactions } from "@/components/providers/transactions-provider"
+import { useBusiness } from "@/components/providers/business-provider"
 
 export function SalesTable() {
+  const { sales } = useTransactions()
+  const { businessType } = useBusiness()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedStatus, setSelectedStatus] = useState("all")
 
-  const filteredSales = salesData.filter((sale) => {
+  const filteredSales = sales.filter((sale) => {
+    if (sale.businessType !== businessType) return false
+
     const matchesSearch =
-      sale.customer.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      sale.id.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      sale.products.some((product) => product.toLowerCase().includes(searchQuery.toLowerCase()))
+      sale.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      sale.id.toLowerCase().includes(searchQuery.toLowerCase())
 
-    const matchesStatus = selectedStatus === "all" || sale.status === selectedStatus
-
-    return matchesSearch && matchesStatus
+    return matchesSearch
   })
 
   const getStatusColor = (status: string) => {
-    switch (status) {
-      case "completed":
-        return "bg-green-100 text-green-800"
-      case "pending":
-        return "bg-yellow-100 text-yellow-800"
-      case "cancelled":
-        return "bg-red-100 text-red-800"
-      default:
-        return "bg-gray-100 text-gray-800"
-    }
+    return "bg-green-100 text-green-800"
   }
 
   const getStatusText = (status: string) => {
-    switch (status) {
-      case "completed":
-        return "Completado"
-      case "pending":
-        return "Pendiente"
-      case "cancelled":
-        return "Cancelado"
-      default:
-        return "Desconocido"
-    }
+    return "Completado"
   }
 
   return (
@@ -167,19 +95,19 @@ export function SalesTable() {
                     <tr key={sale.id} className="border-t hover:bg-muted/25 transition-colors">
                       <td className="p-3 font-mono text-sm">{sale.id}</td>
                       <td className="p-3 text-sm">{new Date(sale.date).toLocaleString()}</td>
-                      <td className="p-3 font-medium">{sale.customer}</td>
+                      <td className="p-3 font-medium">{sale.customerName}</td>
                       <td className="p-3">
                         <div className="max-w-48">
-                          <p className="text-sm truncate">{sale.products.join(", ")}</p>
-                          <p className="text-xs text-muted-foreground">{sale.products.length} productos</p>
+                          <p className="text-sm truncate">{sale.items} productos</p>
+                          <p className="text-xs text-muted-foreground">Vendido por {sale.userName}</p>
                         </div>
                       </td>
-                      <td className="p-3 font-bold">${sale.total.toFixed(2)}</td>
+                      <td className="p-3 font-bold">${sale.amount.toLocaleString()}</td>
                       <td className="p-3">
-                        <Badge variant="outline">{sale.method === "card" ? "💳 Tarjeta" : "💵 Efectivo"}</Badge>
+                        <Badge variant="outline">💳 Tarjeta</Badge>
                       </td>
                       <td className="p-3">
-                        <Badge className={getStatusColor(sale.status)}>{getStatusText(sale.status)}</Badge>
+                        <Badge className={getStatusColor("completed")}>{getStatusText("completed")}</Badge>
                       </td>
                       <td className="p-3">
                         <Button variant="ghost" size="sm">

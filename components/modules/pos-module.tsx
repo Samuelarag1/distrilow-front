@@ -16,69 +16,26 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
-interface Product {
-  id: string;
-  name: string;
-  price: number;
-  category: string;
-  image: string;
-}
+import { useProducts, Product } from "@/components/providers/product-provider";
+import { useTransactions } from "@/components/providers/transactions-provider";
+import { useUser } from "@/components/providers/user-provider";
+import { useBusiness } from "@/components/providers/business-provider";
 
 interface CartItem extends Product {
   quantity: number;
 }
-const mockProducts: Product[] = [
-  {
-    id: "1",
-    name: "Cerveza Rubia",
-    price: 4000,
-    category: "Cervezas",
-    image: "/products/cerveza.jpg",
-  },
-  {
-    id: "2",
-    name: "Vino Tinto",
-    price: 15000,
-    category: "Vinos",
-    image: "/products/vino.jpg",
-  },
-  {
-    id: "3",
-    name: "Fernet Branca",
-    price: 12000,
-    category: "Tragos",
-    image: "/products/fernet.webp",
-  },
-  {
-    id: "4",
-    name: "Vodka",
-    price: 12.0,
-    category: "Destilados",
-    image: "/products/vodka.webp",
-  },
-  {
-    id: "5",
-    name: "Gin Tonic",
-    price: 9.0,
-    category: "Tragos",
-    image: "/products/gin.png",
-  },
-  {
-    id: "6",
-    name: "Whisky",
-    price: 15.0,
-    category: "Destilados",
-    image: "/products/blue.jpg",
-  },
-];
 
 export function POSModule() {
+  const { products, adjustStock } = useProducts();
+  const { addSale } = useTransactions();
+  const { currentUser } = useUser();
+  const { businessType } = useBusiness();
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const { toast } = useToast();
 
-  const filteredProducts = mockProducts.filter((product) => {
+  const filteredProducts = products.filter((product) => {
     const matchesSearch = product.name
       .toLowerCase()
       .includes(searchQuery.toLowerCase());
@@ -87,12 +44,29 @@ export function POSModule() {
     return matchesSearch && matchesCategory;
   });
 
-  const categories = Array.from(new Set(mockProducts.map((p) => p.category)));
+  const categories = Array.from(new Set(products.map((p) => p.category)));
 
   const addToCart = (product: Product) => {
+    if (product.stock <= 0) {
+      toast({
+        title: "Sin stock",
+        description: `No hay unidades disponibles de ${product.name}`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
+        if (existing.quantity >= product.stock) {
+          toast({
+            title: "Stock limitado",
+            description: `Solo hay ${product.stock} unidades de ${product.name}`,
+            variant: "destructive",
+          });
+          return prev;
+        }
         return prev.map((item) =>
           item.id === product.id
             ? { ...item, quantity: item.quantity + 1 }
@@ -104,6 +78,16 @@ export function POSModule() {
   };
 
   const updateQuantity = (id: string, quantity: number) => {
+    const product = products.find(p => p.id === id);
+    if (product && quantity > product.stock) {
+      toast({
+        title: "Stock insuficiente",
+        description: `No puedes agregar más de ${product.stock} unidades`,
+        variant: "destructive",
+      });
+      return;
+    }
+
     if (quantity <= 0) {
       setCart((prev) => prev.filter((item) => item.id !== id));
     } else {
@@ -134,9 +118,24 @@ export function POSModule() {
       return;
     }
 
+    // Record Sale
+    addSale({
+      amount: total,
+      customerName: "Consumidor Final",
+      items: itemCount,
+      userId: currentUser?.id || "unknown",
+      userName: currentUser?.name || "Anónimo",
+      businessType
+    });
+
+    // Update Stock
+    cart.forEach(item => {
+      adjustStock(item.id, -item.quantity);
+    });
+
     toast({
-      title: "Pago procesado",
-      description: `Pago de $${total.toFixed(2)} procesado con ${method}`,
+      title: "Venta Exitosa",
+      description: `Venta por $${total.toLocaleString()} registrada con ${method}`,
     });
     clearCart();
   };
@@ -297,14 +296,14 @@ export function POSModule() {
                       <span>Subtotal:</span>
                       <span>${total.toFixed(2)}</span>
                     </div>
-                    <div className="flex justify-between text-sm">
+                    {/* <div className="flex justify-between text-sm">
                       <span>Impuestos:</span>
                       <span>${(total * 0.1).toFixed(2)}</span>
-                    </div>
+                    </div> */}
                     <Separator />
                     <div className="flex justify-between font-bold">
                       <span>Total:</span>
-                      <span>${(total * 1.1).toFixed(2)}</span>
+                      <span>${(total).toFixed(2)}</span>
                     </div>
                   </div>
 

@@ -40,7 +40,14 @@ const businessMenus: { [key: string]: ISidebarMenu[] } = {
     { title: "Ventas", url: "/sales", icon: TrendingUp },
     { title: "Reportes", url: "/reports", icon: FileText },
   ],
-
+  wholesale: [
+    { title: "Dashboard", url: "/", icon: BarChart3 },
+    { title: "Punto de Venta", url: "/pos", icon: CreditCard },
+    { title: "Productos", url: "/products", icon: Package },
+    { title: "Inventario", url: "/inventory", icon: Package2 },
+    { title: "Ventas", url: "/sales", icon: TrendingUp },
+    { title: "Reportes", url: "/reports", icon: FileText },
+  ],
 };
 
 export function AppSidebar() {

@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, MoreHorizontal, Edit, Trash2, Eye } from "lucide-react";
+import { Plus, Search, MoreHorizontal, Edit, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,97 +15,47 @@ import {
 import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
 import Image from "next/image";
+import { useProducts, Product } from "@/components/providers/product-provider";
 
-interface Product {
-  id: string;
-  name: string;
-  description: string;
-  price: number;
-  category: string;
-  stock: number;
-  status: "active" | "inactive";
-  image: string;
-}
-
-const mockProducts: Product[] = [
-  {
-    id: "1",
-    name: "Cerveza Rubia",
-    description: "Cerveza refrescante, ideal para compartir bien fría.",
-    price: 4000,
-    category: "Cervezas",
-    stock: 30,
-    status: "active",
-    image: "/products/cerveza.jpg",
-  },
-  {
-    id: "2",
-    name: "Vino Tinto",
-    description: "Vino tinto suave, perfecto para carnes o pastas.",
-    price: 15000,
-    category: "Vinos",
-    stock: 20,
-    status: "active",
-    image: "/products/vino.jpg",
-  },
-  {
-    id: "3",
-    name: "Fernet Branca",
-    description: "El clásico fernet argentino, ideal con cola.",
-    price: 12000,
-    category: "Tragos",
-    stock: 10,
-    status: "active",
-    image: "/products/fernet.webp",
-  },
-  {
-    id: "4",
-    name: "Vodka",
-    description: "Vodka neutro, ideal para tragos o solo con hielo.",
-    price: 12000,
-    category: "Destilados",
-    stock: 12,
-    status: "inactive",
-    image: "/products/vodka.webp",
-  },
-  {
-    id: "5",
-    name: "Gin Tonic",
-    description: "Trago fresco de gin con tónica y rodaja de limón.",
-    price: 9000,
-    category: "Tragos",
-    stock: 18,
-    status: "active",
-    image: "/products/gin.png",
-  },
-  {
-    id: "6",
-    name: "Whisky",
-    description: "Whisky añejado, ideal para tomar solo o con hielo.",
-    price: 15000,
-    category: "Destilados",
-    stock: 9,
-    status: "active",
-    image: "/products/blue.jpg",
-  },
-];
+type SortKey = "name" | "price" | "stock" | "category";
+type SortOrder = "asc" | "desc";
 
 export function ProductsModule() {
-  const [products, setProducts] = useState<Product[]>(mockProducts);
+  const { products, addProduct, updateProduct, removeProduct, updateStock } = useProducts();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const { toast } = useToast();
 
-  const filteredProducts = products.filter((product) => {
-    const matchesSearch =
-      product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      product.description.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesCategory =
-      selectedCategory === "all" || product.category === selectedCategory;
-    return matchesSearch && matchesCategory;
-  });
+  const handleSort = (key: SortKey) => {
+    if (sortKey === key) {
+      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+    } else {
+      setSortKey(key);
+      setSortOrder("asc");
+    }
+  };
+
+  const filteredProducts = products
+    .filter((product) => {
+      const matchesSearch =
+        product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        product.description.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchesCategory =
+        selectedCategory === "all" || product.category === selectedCategory;
+      return matchesSearch && matchesCategory;
+    })
+    .sort((a, b) => {
+      const factor = sortOrder === "asc" ? 1 : -1;
+      const valA = a[sortKey] || 0;
+      const valB = b[sortKey] || 0;
+      if (valA < valB) return -1 * factor;
+      if (valA > valB) return 1 * factor;
+      return 0;
+    });
 
   const categories = Array.from(new Set(products.map((p) => p.category)));
 
@@ -115,7 +65,7 @@ export function ProductsModule() {
   };
 
   const handleDelete = (productId: string) => {
-    setProducts(products.filter((p) => p.id !== productId));
+    removeProduct(productId);
     toast({
       title: "Producto eliminado",
       description: "El producto ha sido eliminado correctamente.",
@@ -124,21 +74,13 @@ export function ProductsModule() {
 
   const handleSave = (productData: Partial<Product>) => {
     if (editingProduct) {
-      setProducts(
-        products.map((p) =>
-          p.id === editingProduct.id ? { ...p, ...productData } : p
-        )
-      );
+      updateProduct(editingProduct.id, productData);
       toast({
         title: "Producto actualizado",
         description: "Los cambios han sido guardados correctamente.",
       });
     } else {
-      const newProduct: Product = {
-        ...(productData as Product),
-        id: Date.now().toString(),
-      };
-      setProducts([...products, newProduct]);
+      addProduct(productData as Omit<Product, "id">);
       toast({
         title: "Producto creado",
         description: "El nuevo producto ha sido agregado correctamente.",
@@ -148,15 +90,34 @@ export function ProductsModule() {
     setEditingProduct(null);
   };
 
+  function SortButton({ label, sortKey: key }: { label: string, sortKey: SortKey }) {
+    const isActive = sortKey === key;
+    return (
+      <Button
+        variant={isActive ? "secondary" : "ghost"}
+        size="sm"
+        className="h-8 text-xs font-medium"
+        onClick={() => handleSort(key)}
+      >
+        {label}
+        {isActive ? (
+          sortOrder === "asc" ? <ArrowUp className="ml-1 h-3 w-3" /> : <ArrowDown className="ml-1 h-3 w-3" />
+        ) : (
+          <ArrowUpDown className="ml-1 h-3 w-3 opacity-50" />
+        )}
+      </Button>
+    )
+  }
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight bg-gradient-to-r from-primary to-blue-600 bg-clip-text text-transparent">
             Productos
           </h1>
           <p className="text-muted-foreground">
-            Gestiona tu catálogo de productos
+            Gestiona tu catálogo de productos y existencias
           </p>
         </div>
         <Button
@@ -164,7 +125,7 @@ export function ProductsModule() {
             setEditingProduct(null);
             setIsDialogOpen(true);
           }}
-          className="w-full sm:w-auto"
+          className="w-full sm:w-auto shadow-sm hover:shadow-md transition-all"
         >
           <Plus className="mr-2 h-4 w-4" />
           Nuevo Producto
@@ -173,114 +134,52 @@ export function ProductsModule() {
 
       <Card>
         <CardHeader className="pb-4">
-          <div className="flex flex-col sm:flex-row gap-4">
-            <div className="relative flex-1">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                placeholder="Buscar productos..."
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="pl-8"
-              />
+          <div className="flex flex-col space-y-4">
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  placeholder="Buscar productos por nombre o descripción..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="pl-8"
+                />
+              </div>
+              <select
+                value={selectedCategory}
+                onChange={(e) => setSelectedCategory(e.target.value)}
+                className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="all">Todas las categorías</option>
+                {categories.map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
             </div>
-            <select
-              value={selectedCategory}
-              onChange={(e) => setSelectedCategory(e.target.value)}
-              className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="all">Todas las categorías</option>
-              {categories.map((category) => (
-                <option key={category} value={category}>
-                  {category}
-                </option>
-              ))}
-            </select>
+
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+              <span className="text-sm text-muted-foreground font-medium mr-2">Ordenar por:</span>
+              <SortButton label="Nombre" sortKey="name" />
+              <SortButton label="Precio" sortKey="price" />
+              <SortButton label="Stock" sortKey="stock" />
+              <SortButton label="Categoría" sortKey="category" />
+            </div>
           </div>
         </CardHeader>
         <CardContent>
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {filteredProducts.map((product) => (
-              <Card
+              <ProductCard
                 key={product.id}
-                className="overflow-hidden hover:shadow-md transition-shadow"
-              >
-                <div className="aspect-video bg-muted relative">
-                  <Image
-                    src={product.image || "/placeholder.svg"}
-                    alt={product.name}
-                    width={100}
-                    height={100}
-                    loading="lazy"
-                    className="w-full h-full object-contain"
-                  />
-                  <Badge
-                    className={`absolute top-2 right-2 ${
-                      product.status === "active"
-                        ? "bg-green-500"
-                        : "bg-gray-500"
-                    }`}
-                  >
-                    {product.status === "active" ? "Activo" : "Inactivo"}
-                  </Badge>
-                </div>
-                <CardContent className="p-4">
-                  <div className="space-y-2">
-                    <div className="flex items-start justify-between">
-                      <h3 className="font-semibold text-sm leading-tight">
-                        {product.name}
-                      </h3>
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <Button
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8"
-                          >
-                            <MoreHorizontal className="h-4 w-4" />
-                          </Button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent align="end">
-                          <DropdownMenuItem onClick={() => handleEdit(product)}>
-                            <Edit className="mr-2 h-4 w-4" />
-                            Editar
-                          </DropdownMenuItem>
-                          <DropdownMenuItem
-                            onClick={() => handleDelete(product.id)}
-                            className="text-destructive"
-                          >
-                            <Trash2 className="mr-2 h-4 w-4" />
-                            Eliminar
-                          </DropdownMenuItem>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                    <p className="text-xs text-muted-foreground line-clamp-2">
-                      {product.description}
-                    </p>
-                    <div className="flex items-center justify-between">
-                      <span className="font-bold text-lg">
-                        ${product.price.toFixed(2)}
-                      </span>
-                      <Badge variant="outline" className="text-xs">
-                        Stock: {product.stock}
-                      </Badge>
-                    </div>
-                    <Badge variant="secondary" className="text-xs">
-                      {product.category}
-                    </Badge>
-                  </div>
-                </CardContent>
-              </Card>
+                product={product}
+                onEdit={handleEdit}
+                onDelete={handleDelete}
+                onStockUpdate={updateStock}
+              />
             ))}
           </div>
-
-          {filteredProducts.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">
-                No se encontraron productos
-              </p>
-            </div>
-          )}
         </CardContent>
       </Card>
 
@@ -291,5 +190,116 @@ export function ProductsModule() {
         onSave={handleSave}
       />
     </div>
+  );
+}
+
+function ProductCard({
+  product,
+  onEdit,
+  onDelete,
+  onStockUpdate
+}: {
+  product: Product,
+  onEdit: (p: Product) => void,
+  onDelete: (id: string) => void,
+  onStockUpdate: (id: string, val: number) => void
+}) {
+  const [stockInput, setStockInput] = useState<string>(product.stock.toString());
+  const { toast } = useToast();
+
+  const handleBlur = () => {
+    const val = parseInt(stockInput);
+    if (!isNaN(val) && val >= 0 && val !== product.stock) {
+      onStockUpdate(product.id, val);
+      toast({
+        title: "Stock actualizado",
+        description: `${product.name} actualizado a ${val} uds.`,
+      });
+    } else {
+      setStockInput(product.stock.toString());
+    }
+  };
+
+  return (
+    <Card className="overflow-hidden group hover:shadow-lg transition-all duration-300 border-t-4 border-t-transparent hover:border-t-primary">
+      <div className="aspect-video bg-muted relative overflow-hidden">
+        <Image
+          src={product.image || "/placeholder.svg"}
+          alt={product.name}
+          width={400}
+          height={225}
+          loading="lazy"
+          className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
+        />
+        <div className="absolute top-2 right-2 flex flex-col gap-2">
+          <Badge
+            className={`${product.status === "active"
+              ? "bg-green-500 hover:bg-green-600 border-none"
+              : "bg-gray-500 hover:bg-gray-600 border-none"
+              } shadow-sm`}
+          >
+            {product.status === "active" ? "Activo" : "Inactivo"}
+          </Badge>
+          <Badge variant="secondary" className="backdrop-blur-md bg-white/70 dark:bg-black/70 border-none shadow-sm text-xs">
+            {product.category}
+          </Badge>
+        </div>
+      </div>
+      <CardContent className="p-5">
+        <div className="space-y-4">
+          <div className="flex items-start justify-between min-h-[3rem]">
+            <h3 className="font-bold text-base leading-tight group-hover:text-primary transition-colors">
+              {product.name}
+            </h3>
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon" className="h-8 w-8 -mr-2">
+                  <MoreHorizontal className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onClick={() => onEdit(product)}>
+                  <Edit className="mr-2 h-4 w-4" />
+                  Editar Detalles
+                </DropdownMenuItem>
+                <DropdownMenuItem
+                  onClick={() => onDelete(product.id)}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  Eliminar Producto
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </div>
+
+          <p className="text-sm text-muted-foreground line-clamp-2 min-h-[2.5rem]">
+            {product.description}
+          </p>
+
+          <div className="flex items-end justify-between pt-2">
+            <div className="flex flex-col">
+              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Precio</span>
+              <span className="font-black text-2xl text-primary">
+                ${product.price.toLocaleString()}
+              </span>
+            </div>
+            <div className="flex flex-col items-end">
+              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">Stock</span>
+              <div className="flex items-center gap-1 bg-muted px-2 py-1 rounded-md">
+                <Input
+                  className="w-12 h-6 p-1 text-xs border-none bg-transparent text-right font-bold focus-visible:ring-0"
+                  value={stockInput}
+                  onChange={(e) => setStockInput(e.target.value)}
+                  onBlur={handleBlur}
+                  onKeyDown={(e) => e.key === 'Enter' && handleBlur()}
+                />
+                <span className="text-[10px] text-muted-foreground font-bold">U.</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

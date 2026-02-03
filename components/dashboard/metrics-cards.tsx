@@ -1,8 +1,9 @@
 "use client"
-
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Users, Package, Wallet, FileText, CreditCard } from "lucide-react"
+import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Users, Package, Wallet, FileText, CreditCard, Receipt, PiggyBank } from "lucide-react"
 import { DashboardMetrics, BusinessType } from "@/lib/data-service"
+import { useTransactions } from "@/components/providers/transactions-provider"
+import { useProducts } from "@/components/providers/product-provider"
 
 interface MetricsCardsProps {
   metrics: DashboardMetrics
@@ -10,6 +11,14 @@ interface MetricsCardsProps {
 }
 
 export function MetricsCards({ metrics, type }: MetricsCardsProps) {
+  const { getTotalExpensesByType } = useTransactions()
+  const { products } = useProducts()
+
+  const totalExpenses = getTotalExpensesByType(type)
+  const netProfit = metrics.totalRevenue - totalExpenses
+
+  const lowStockCount = products.filter(p => p.stock <= (p.minStock || 0)).length
+
   const commonMetrics = [
     {
       title: "Ingresos Totales",
@@ -18,26 +27,42 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
       trend: "up",
       icon: DollarSign,
       description: "vs mes anterior",
+      color: "text-blue-500",
+      bg: "bg-blue-500/10",
     },
     {
-      title: "Pedidos Totales",
-      value: metrics.totalOrders.toString(),
-      change: "+8.2%",
+      title: "Gastos Operativos",
+      value: new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(totalExpenses),
+      change: "+5.2%",
+      trend: "down",
+      icon: Receipt,
+      description: "mes actual",
+      color: "text-red-500",
+      bg: "bg-red-500/10",
+    },
+    {
+      title: "Ganancia Neta",
+      value: new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(netProfit),
+      change: "+8.4%",
       trend: "up",
-      icon: ShoppingCart,
-      description: "este mes",
+      icon: PiggyBank,
+      description: "margen proyectado",
+      color: "text-green-500",
+      bg: "bg-green-500/10",
+    },
+    {
+      title: "Bajo Stock",
+      value: lowStockCount.toString(),
+      change: lowStockCount > 3 ? "¡Atención!" : "Normal",
+      trend: lowStockCount > 3 ? "down" : "up",
+      icon: Package,
+      description: "productos",
+      color: lowStockCount > 3 ? "text-red-600" : "text-orange-500",
+      bg: "bg-orange-500/10",
     },
   ]
 
   const retailMetrics = [
-    {
-      title: "Clientes en Local",
-      value: metrics.walkInCustomers?.toString() || "0",
-      change: "+3.1%",
-      trend: "up",
-      icon: Users,
-      description: "hoy",
-    },
     {
       title: "Caja Diaria",
       value: new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(metrics.dailyCashbox || 0),
@@ -45,26 +70,12 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
       trend: "up",
       icon: Wallet,
       description: "saldo actual",
+      color: "text-purple-500",
+      bg: "bg-purple-500/10",
     },
   ]
 
   const wholesaleMetrics = [
-    {
-      title: "Clientes Mayoristas",
-      value: metrics.activeCustomers.toString(),
-      change: "+1.2%",
-      trend: "up",
-      icon: Users,
-      description: "activos",
-    },
-    {
-      title: "Pedidos Pendientes",
-      value: metrics.pendingBulkOrders?.toString() || "0",
-      change: "-5%",
-      trend: "down",
-      icon: FileText,
-      description: "por procesar",
-    },
     {
       title: "Crédito Utilizado",
       value: new Intl.NumberFormat("es-AR", { style: "currency", currency: "ARS" }).format(metrics.creditUtilized || 0),
@@ -72,23 +83,17 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
       trend: "up",
       icon: CreditCard,
       description: "cuenta corriente",
+      color: "text-orange-500",
+      bg: "bg-orange-500/10",
     },
   ]
 
   const specificMetrics = type === "retail" ? retailMetrics : wholesaleMetrics
-  
-  // Combine: Common + Specific + Stock (Common)
+
+  // Combine all metrics
   const displayMetrics = [
     ...commonMetrics,
     ...specificMetrics,
-    {
-        title: "Bajo Stock",
-        value: metrics.lowStockItems.toString(),
-        change: metrics.lowStockItems > 10 ? "Alerta" : "Normal",
-        trend: metrics.lowStockItems > 10 ? "down" : "up",
-        icon: Package,
-        description: "productos",
-    }
   ]
 
   return (
@@ -96,13 +101,15 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
       {displayMetrics.map((metric) => {
         const Icon = metric.icon
         const TrendIcon = metric.trend === "up" ? TrendingUp : TrendingDown
+        const iconColor = metric.color || "text-primary"
+        const iconBg = metric.bg || "bg-primary/10"
 
         return (
-          <Card key={metric.title} className="transition-all hover:shadow-md cursor-pointer">
+          <Card key={metric.title} className="transition-all hover:shadow-md cursor-pointer border-l-4 hover:-translate-y-1 duration-200" style={{ borderLeftColor: metric.trend === "up" ? "#22c55e" : "#ef4444" }}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-sm font-medium text-muted-foreground">{metric.title}</CardTitle>
-              <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center">
-                <Icon className="h-4 w-4 text-primary" />
+              <div className={`h-8 w-8 rounded-full ${iconBg} flex items-center justify-center`}>
+                <Icon className={`h-4 w-4 ${iconColor}`} />
               </div>
             </CardHeader>
             <CardContent className="space-y-1">
