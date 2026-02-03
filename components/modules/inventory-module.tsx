@@ -13,6 +13,7 @@ import {
   TrendingUp,
   Search,
   Plus,
+  Minus,
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
@@ -48,29 +49,34 @@ const getCategoryColor = (category: string) => {
   return CATEGORY_COLORS[category] || "bg-blue-100 text-blue-700 border-blue-200";
 };
 
-function AddStockDialog({ item, onAdd }: { item: Product, onAdd: (amount: number) => void }) {
+function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amount: number) => void }) {
   const [amount, setAmount] = useState<string>("");
+  const [mode, setMode] = useState<"add" | "subtract">("add");
   const [open, setOpen] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     const val = parseInt(amount);
     if (!isNaN(val) && val > 0) {
-      onAdd(val);
+      onAdjust(mode === "add" ? val : -val);
       setAmount("");
       setOpen(false);
     }
   };
+
+  const currentTotal = mode === "add"
+    ? item.stock + (parseInt(amount) || 0)
+    : Math.max(0, item.stock - (parseInt(amount) || 0));
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
         <Button
           size="sm"
-          className="h-10 px-4 bg-primary hover:bg-primary/90 shadow-md transition-all font-bold group"
+          className="h-10 px-4 shadow-md transition-all font-bold group gap-2"
         >
-          <Plus className="h-4 w-4 mr-2 group-hover:rotate-90 transition-transform" />
-          Sumar Stock
+          <History className="h-4 w-4" />
+          Ajustar Stock
         </Button>
       </DialogTrigger>
       <DialogContent className="sm:max-w-[425px]">
@@ -78,38 +84,70 @@ function AddStockDialog({ item, onAdd }: { item: Product, onAdd: (amount: number
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <History className="h-5 w-5 text-primary" />
-              Actualizar Stock
+              Ajuste de Existencias
             </DialogTitle>
             <DialogDescription>
-              Ingresa la cantidad que deseas <strong>sumar</strong> a las existencias actuales de <strong>{item.name}</strong>.
+              Modifica el stock actual de <strong>{item.name}</strong> seleccionando el tipo de movimiento.
             </DialogDescription>
           </DialogHeader>
+
           <div className="grid gap-6 py-6">
-            <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
+            <div className="flex p-1 bg-muted rounded-lg">
+              <button
+                type="button"
+                onClick={() => setMode("add")}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-all ${mode === "add" ? "bg-white shadow-sm text-green-600" : "text-muted-foreground hover:text-foreground"
+                  }`}
+              >
+                <Plus className="h-4 w-4" />
+                Ingreso
+              </button>
+              <button
+                type="button"
+                onClick={() => setMode("subtract")}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-all ${mode === "subtract" ? "bg-white shadow-sm text-red-600" : "text-muted-foreground hover:text-foreground"
+                  }`}
+              >
+                <Minus className="h-4 w-4" />
+                Egreso/Desecho
+              </button>
+            </div>
+
+            <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border border-dashed border-muted-foreground/30">
               <div className="space-y-1">
-                <p className="text-xs text-muted-foreground font-bold uppercase">Stock Actual</p>
-                <p className="text-2xl font-black">{item.stock} {item.unit || 'uds'}</p>
+                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Existencia</p>
+                <p className="text-xl font-black">{item.stock} {item.unit || 'uds'}</p>
               </div>
+              <div className="h-8 w-px bg-muted-foreground/20" />
               <div className="text-right space-y-1">
-                <p className="text-xs text-muted-foreground font-bold uppercase">Nuevo Total</p>
-                <p className="text-2xl font-black text-primary">
-                  {item.stock + (parseInt(amount) || 0)} {item.unit || 'uds'}
+                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Proyectado</p>
+                <p className={`text-xl font-black ${mode === 'add' ? 'text-green-600' : 'text-red-600'}`}>
+                  {currentTotal} {item.unit || 'uds'}
                 </p>
               </div>
             </div>
+
             <div className="grid gap-2">
-              <Label htmlFor="amount" className="font-bold">Cantidad a agregar</Label>
-              <Input
-                id="amount"
-                type="number"
-                placeholder="Ej: 50"
-                value={amount}
-                onChange={(e) => setAmount(e.target.value)}
-                autoFocus
-                className="text-lg font-bold h-12"
-              />
+              <Label htmlFor="amount" className="font-bold text-sm">
+                Cantidad a {mode === 'add' ? 'sumar' : 'restar'}
+              </Label>
+              <div className="relative">
+                <Input
+                  id="amount"
+                  type="number"
+                  placeholder="0"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  autoFocus
+                  className="text-2xl font-black h-14 pl-12 focus-visible:ring-primary/20"
+                />
+                <div className="absolute left-4 top-1/2 -translate-y-1/2">
+                  {mode === 'add' ? <Plus className="h-6 w-6 text-green-500" /> : <Minus className="h-6 w-6 text-red-500" />}
+                </div>
+              </div>
             </div>
           </div>
+
           <DialogFooter>
             <Button
               type="button"
@@ -119,8 +157,11 @@ function AddStockDialog({ item, onAdd }: { item: Product, onAdd: (amount: number
             >
               Cancelar
             </Button>
-            <Button type="submit" className="font-bold px-8">
-              Confirmar Ingreso
+            <Button
+              type="submit"
+              className={`font-bold px-8 ${mode === 'add' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+            >
+              Confirmar {mode === 'add' ? 'Ingreso' : 'Egreso'}
             </Button>
           </DialogFooter>
         </form>
@@ -203,11 +244,11 @@ export function InventoryModule() {
     const status = getStockStatus(item);
     const progressValue = getProgressValue(item);
 
-    const handleAddStock = (amountToAdd: number) => {
-      adjustStock(item.id, amountToAdd);
+    const handleAdjustStock = (amountToAdjust: number) => {
+      adjustStock(item.id, amountToAdjust);
       toast({
-        title: "Stock Incrementado",
-        description: `Se han sumado ${amountToAdd} ${item.unit || 'unidades'} a ${item.name}.`,
+        title: "Stock Ajustado",
+        description: `Se ha modificado el stock de ${item.name} en ${amountToAdjust} ${item.unit || 'unidades'}.`,
       });
     };
 
@@ -280,7 +321,7 @@ export function InventoryModule() {
 
           {/* New Control Flow */}
           <div className="flex items-center gap-3 w-full md:w-auto md:pl-4 border-t md:border-t-0 md:border-l pt-4 md:pt-0">
-            <AddStockDialog item={item} onAdd={handleAddStock} />
+            <AdjustStockDialog item={item} onAdjust={handleAdjustStock} />
           </div>
         </div>
       </Card>
@@ -376,6 +417,27 @@ export function InventoryModule() {
           </CardContent>
         </Card>
       </div>
+
+      {lowStockItems.length > 0 && (
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+          <div className="bg-red-500 p-2 rounded-lg">
+            <AlertTriangle className="h-5 w-5 text-white" />
+          </div>
+          <div className="flex-1">
+            <h4 className="text-red-900 font-bold">Resumen de Reposición</h4>
+            <p className="text-red-700 text-sm">
+              Hay {lowStockItems.length} productos con stock crítico. Se recomienda revisar:
+              <span className="font-bold ml-1">
+                {lowStockItems.slice(0, 3).map(i => i.name).join(", ")}
+                {lowStockItems.length > 3 ? ` y ${lowStockItems.length - 3} más...` : ""}
+              </span>
+            </p>
+          </div>
+          <Button variant="outline" size="sm" className="border-red-200 text-red-700 hover:bg-red-100 font-bold" onClick={() => setSelectedCategory("all")}>
+            Ver Todo
+          </Button>
+        </div>
+      )}
 
       <Card>
         <CardHeader className="pb-4">

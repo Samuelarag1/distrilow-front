@@ -204,22 +204,6 @@ function ProductCard({
   onDelete: (id: string) => void,
   onStockUpdate: (id: string, val: number) => void
 }) {
-  const [stockInput, setStockInput] = useState<string>(product.stock.toString());
-  const { toast } = useToast();
-
-  const handleBlur = () => {
-    const val = parseInt(stockInput);
-    if (!isNaN(val) && val >= 0 && val !== product.stock) {
-      onStockUpdate(product.id, val);
-      toast({
-        title: "Stock actualizado",
-        description: `${product.name} actualizado a ${val} uds.`,
-      });
-    } else {
-      setStockInput(product.stock.toString());
-    }
-  };
-
   return (
     <Card className="overflow-hidden group hover:shadow-lg transition-all duration-300 border-t-4 border-t-transparent hover:border-t-primary">
       <div className="aspect-video bg-muted relative overflow-hidden">
@@ -286,15 +270,11 @@ function ProductCard({
             </div>
             <div className="flex flex-col items-end">
               <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">Stock</span>
-              <div className="flex items-center gap-1 bg-muted px-2 py-1 rounded-md">
-                <Input
-                  className="w-12 h-6 p-1 text-xs border-none bg-transparent text-right font-bold focus-visible:ring-0"
-                  value={stockInput}
-                  onChange={(e) => setStockInput(e.target.value)}
-                  onBlur={handleBlur}
-                  onKeyDown={(e) => e.key === 'Enter' && handleBlur()}
-                />
-                <span className="text-[10px] text-muted-foreground font-bold">U.</span>
+              <div className="flex items-center gap-1.5 bg-muted px-3 py-1 rounded-full border border-dashed">
+                <span className={`font-black text-sm ${product.stock <= (product.minStock || 0) ? 'text-red-500' : 'text-foreground'}`}>
+                  {product.stock}
+                </span>
+                <span className="text-[10px] text-muted-foreground font-bold uppercase">{product.unit || 'U.'}</span>
               </div>
             </div>
           </div>
