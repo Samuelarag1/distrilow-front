@@ -16,16 +16,31 @@ import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
 import Image from "next/image";
 import { useProducts, Product } from "@/components/providers/product-provider";
+import { useBusiness } from "@/components/providers/business-provider";
+
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 type SortKey = "name" | "price" | "stock" | "category";
 type SortOrder = "asc" | "desc";
 
 export function ProductsModule() {
   const { products, addProduct, updateProduct, removeProduct, updateStock } = useProducts();
+  const { businessType } = useBusiness();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+  const [productToDelete, setProductToDelete] = useState<string | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const { toast } = useToast();
@@ -64,12 +79,21 @@ export function ProductsModule() {
     setIsDialogOpen(true);
   };
 
-  const handleDelete = (productId: string) => {
-    removeProduct(productId);
-    toast({
-      title: "Producto eliminado",
-      description: "El producto ha sido eliminado correctamente.",
-    });
+  const handleDeleteTrigger = (productId: string) => {
+    setProductToDelete(productId);
+    setIsDeleteDialogOpen(true);
+  };
+
+  const handleDeleteConfirm = () => {
+    if (productToDelete) {
+      removeProduct(productToDelete);
+      toast({
+        title: "Producto eliminado",
+        description: "El producto ha sido eliminado correctamente.",
+      });
+      setIsDeleteDialogOpen(false);
+      setProductToDelete(null);
+    }
   };
 
   const handleSave = (productData: Partial<Product>) => {
@@ -175,8 +199,9 @@ export function ProductsModule() {
                 key={product.id}
                 product={product}
                 onEdit={handleEdit}
-                onDelete={handleDelete}
+                onDelete={handleDeleteTrigger}
                 onStockUpdate={updateStock}
+                businessType={businessType}
               />
             ))}
           </div>
@@ -189,6 +214,23 @@ export function ProductsModule() {
         product={editingProduct}
         onSave={handleSave}
       />
+
+      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>¿Está seguro de eliminar este producto?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Esta acción no se puede deshacer. El producto se eliminará permanentemente de su catálogo.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Eliminar
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -197,12 +239,14 @@ function ProductCard({
   product,
   onEdit,
   onDelete,
-  onStockUpdate
+  onStockUpdate,
+  businessType
 }: {
   product: Product,
   onEdit: (p: Product) => void,
   onDelete: (id: string) => void,
-  onStockUpdate: (id: string, val: number) => void
+  onStockUpdate: (id: string, val: number) => void,
+  businessType: string
 }) {
   return (
     <Card className="overflow-hidden group hover:shadow-lg transition-all duration-300 border-t-4 border-t-transparent hover:border-t-primary">
@@ -262,19 +306,37 @@ function ProductCard({
           </p>
 
           <div className="flex items-end justify-between pt-2">
+            <div className="flex flex-col gap-1 w-full">
+              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Precios Unitarios</span>
+              <div className="flex items-center justify-between w-full border-b border-dashed pb-1">
+                <span className="text-xs font-bold text-muted-foreground">Minorista</span>
+                <span className={`font-black text-sm ${businessType === 'retail' ? 'text-primary' : 'text-foreground'}`}>
+                  ${product.price.toLocaleString()}
+                </span>
+              </div>
+              <div className="flex items-center justify-between w-full">
+                <span className="text-xs font-bold text-muted-foreground">Mayorista</span>
+                <span className={`font-black text-sm ${businessType === 'wholesale' ? 'text-primary' : 'text-foreground'}`}>
+                  ${product.wholesalePrice.toLocaleString()}
+                </span>
+              </div>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-2 border-t mt-2">
             <div className="flex flex-col">
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider">Precio</span>
-              <span className="font-black text-2xl text-primary">
-                ${product.price.toLocaleString()}
-              </span>
+              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Envasado</span>
+              <Badge variant="secondary" className="font-black text-[10px] py-0 px-2 mt-1">
+                {product.unit || 'U.'}
+              </Badge>
             </div>
             <div className="flex flex-col items-end">
-              <span className="text-xs text-muted-foreground font-medium uppercase tracking-wider mb-1">Stock</span>
+              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-1">Existencia</span>
               <div className="flex items-center gap-1.5 bg-muted px-3 py-1 rounded-full border border-dashed">
                 <span className={`font-black text-sm ${product.stock <= (product.minStock || 0) ? 'text-red-500' : 'text-foreground'}`}>
                   {product.stock}
                 </span>
-                <span className="text-[10px] text-muted-foreground font-bold uppercase">{product.unit || 'U.'}</span>
+                <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-tighter">unidades</span>
               </div>
             </div>
           </div>

@@ -11,6 +11,7 @@ import {
   UserCheck,
   CreditCard,
   Package2,
+  Receipt,
 } from "lucide-react";
 import {
   Sidebar,
@@ -38,6 +39,7 @@ const businessMenus: { [key: string]: ISidebarMenu[] } = {
     { title: "Productos", url: "/products", icon: Package },
     { title: "Inventario", url: "/inventory", icon: Package2 },
     { title: "Ventas", url: "/sales", icon: TrendingUp },
+    { title: "Gastos", url: "/expenses", icon: Receipt },
     { title: "Reportes", url: "/reports", icon: FileText },
   ],
   wholesale: [
@@ -46,6 +48,7 @@ const businessMenus: { [key: string]: ISidebarMenu[] } = {
     { title: "Productos", url: "/products", icon: Package },
     { title: "Inventario", url: "/inventory", icon: Package2 },
     { title: "Ventas", url: "/sales", icon: TrendingUp },
+    { title: "Gastos", url: "/expenses", icon: Receipt },
     { title: "Reportes", url: "/reports", icon: FileText },
   ],
 };

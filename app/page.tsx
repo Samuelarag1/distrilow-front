@@ -2,9 +2,6 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { Header } from "@/components/layout/header";
 import { Dashboard } from "@/components/dashboard/dashboard";
-import { BusinessProvider } from "@/components/providers/business-provider";
-import { TransactionsProvider } from "@/components/providers/transactions-provider";
-import { ProductProvider } from "@/components/providers/product-provider";
 import { getDashboardMetrics } from "@/lib/data-service";
 
 export const dynamic = 'force-dynamic'; // SSR

@@ -10,44 +10,10 @@ import {
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
-const activities = [
-  {
-    id: 1,
-    type: "order",
-    customer: "María García",
-    action: "realizó un pedido",
-    amount: "$45.50",
-    time: "hace 5 min",
-    status: "pending",
-  },
-  {
-    id: 2,
-    type: "reservation",
-    customer: "Carlos López",
-    action: "hizo una reserva",
-    amount: "4 personas",
-    time: "hace 15 min",
-    status: "confirmed",
-  },
-  {
-    id: 3,
-    type: "payment",
-    customer: "Ana Martín",
-    action: "completó el pago",
-    amount: "$78.20",
-    time: "hace 30 min",
-    status: "completed",
-  },
-  {
-    id: 4,
-    type: "order",
-    customer: "Pedro Ruiz",
-    action: "canceló un pedido",
-    amount: "$23.10",
-    time: "hace 1 hora",
-    status: "cancelled",
-  },
-];
+import { useTransactions } from "@/components/providers/transactions-provider";
+import { useBusiness } from "@/components/providers/business-provider";
+import { formatDistanceToNow } from "date-fns";
+import { es } from "date-fns/locale";
 
 const statusColors = {
   pending: "bg-yellow-100 text-yellow-800",
@@ -57,6 +23,14 @@ const statusColors = {
 };
 
 export function RecentActivity() {
+  const { sales } = useTransactions();
+  const { businessType } = useBusiness();
+
+  const filteredSales = sales
+    .filter(s => s.businessType === businessType)
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .slice(0, 5);
+
   return (
     <Card className="w-full">
       <CardHeader>
@@ -68,42 +42,44 @@ export function RecentActivity() {
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 px-4 sm:px-6">
-        {activities.map((activity) => (
+        {filteredSales.map((sale) => (
           <div
-            key={activity.id}
-            className="flex flex-wrap items-center justify-between gap-2 sm:gap-4"
+            key={sale.id}
+            className="flex flex-wrap items-center justify-between gap-2 sm:gap-4 border-b pb-4 last:border-0 last:pb-0"
           >
             <div className="flex items-center gap-3 min-w-0">
-              <Avatar className="h-9 w-9 shrink-0">
-                <AvatarImage src="/placeholder.svg?height=36&width=36" />
-                <AvatarFallback>
-                  {activity.customer
+              <Avatar className="h-9 w-9 shrink-0 border">
+                <AvatarFallback className="bg-primary/5 text-primary font-bold">
+                  {sale.customerName
                     .split(" ")
-                    .map((n) => n[0])
+                    .map((n: string) => n[0])
                     .join("")}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0">
-                <p className="text-sm font-medium leading-none truncate">
-                  {activity.customer}
+                <p className="text-sm font-bold leading-none truncate">
+                  {sale.customerName}
                 </p>
-                <p className="text-sm text-muted-foreground truncate">
-                  {activity.action} • {activity.time}
+                <p className="text-xs text-muted-foreground truncate first-letter:uppercase mt-1">
+                  Venta realizada • {formatDistanceToNow(new Date(sale.date), { addSuffix: true, locale: es })}
                 </p>
               </div>
             </div>
             <div className="flex items-center gap-2 text-sm">
               <Badge
-                className={`text-xs ${
-                  statusColors[activity.status as keyof typeof statusColors]
-                }`}
+                className={`text-[10px] font-black uppercase tracking-tighter ${statusColors.completed}`}
               >
-                {activity.status}
+                Completado
               </Badge>
-              <div className="font-medium">{activity.amount}</div>
+              <div className="font-black text-primary">${sale.amount.toLocaleString()}</div>
             </div>
           </div>
         ))}
+        {filteredSales.length === 0 && (
+          <div className="text-center py-6">
+            <p className="text-sm text-muted-foreground italic">No hay actividad reciente aún.</p>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

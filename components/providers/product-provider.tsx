@@ -6,7 +6,8 @@ export interface Product {
     id: string;
     name: string;
     description: string;
-    price: number;
+    price: number; // Precio Minorista
+    wholesalePrice: number; // Precio Mayorista
     category: string;
     stock: number;
     status: "active" | "inactive";
@@ -28,84 +29,30 @@ interface ProductContextType {
 const ProductContext = createContext<ProductContextType | undefined>(undefined)
 
 const initialProducts: Product[] = [
-    {
-        id: "1",
-        name: "Cerveza Rubia",
-        description: "Cerveza refrescante, ideal para compartir bien fría.",
-        price: 4000,
-        category: "Cervezas",
-        stock: 30,
-        minStock: 10,
-        maxStock: 100,
-        unit: "botellas",
-        status: "active",
-        image: "/products/cerveza.jpg",
-    },
-    {
-        id: "2",
-        name: "Vino Tinto",
-        description: "Vino tinto suave, perfecto para carnes o pastas.",
-        price: 15000,
-        category: "Vinos",
-        stock: 20,
-        minStock: 8,
-        maxStock: 50,
-        unit: "botellas",
-        status: "active",
-        image: "/products/vino.jpg",
-    },
-    {
-        id: "3",
-        name: "Fernet Branca",
-        description: "El clásico fernet argentino, ideal con cola.",
-        price: 12000,
-        category: "Tragos",
-        stock: 10,
-        minStock: 5,
-        maxStock: 30,
-        unit: "botellas",
-        status: "active",
-        image: "/products/fernet.webp",
-    },
-    {
-        id: "4",
-        name: "Vodka",
-        description: "Vodka neutro, ideal para tragos o solo con hielo.",
-        price: 12000,
-        category: "Destilados",
-        stock: 12,
-        minStock: 6,
-        maxStock: 25,
-        unit: "botellas",
-        status: "inactive",
-        image: "/products/vodka.webp",
-    },
-    {
-        id: "5",
-        name: "Gin Tonic",
-        description: "Trago fresco de gin con tónica y rodaja de limón.",
-        price: 9000,
-        category: "Tragos",
-        stock: 18,
-        minStock: 10,
-        maxStock: 40,
-        unit: "tragos",
-        status: "active",
-        image: "/products/gin.png",
-    },
-    {
-        id: "6",
-        name: "Whisky",
-        description: "Whisky añejado, ideal para tomar solo o con hielo.",
-        price: 15000,
-        category: "Destilados",
-        stock: 9,
-        minStock: 4,
-        maxStock: 20,
-        unit: "botellas",
-        status: "active",
-        image: "/products/blue.jpg",
-    },
+    // Almacén
+    { id: "a1", name: "Alfajor Rasta 70g", description: "Caja/Pack 18u", price: 1000, wholesalePrice: 950, category: "Almacén", stock: 100, minStock: 20, maxStock: 200, unit: "18u", status: "active", image: "/placeholder.svg" },
+    { id: "a2", name: "Alfajor Sol Serrano", description: "Pack 6u", price: 350, wholesalePrice: 300, category: "Almacén", stock: 150, minStock: 30, maxStock: 300, unit: "6u", status: "active", image: "/placeholder.svg" },
+    { id: "a3", name: "Arroz Mandisovi 1kg", description: "Bolsa 1kg", price: 1000, wholesalePrice: 900, category: "Almacén", stock: 80, minStock: 20, maxStock: 200, unit: "10u", status: "active", image: "/placeholder.svg" },
+    { id: "a4", name: "Atún Cumana Aceite 170g", description: "Lata 170g", price: 1400, wholesalePrice: 1250, category: "Almacén", stock: 120, minStock: 48, maxStock: 480, unit: "48u", status: "active", image: "/placeholder.svg" },
+    { id: "a5", name: "Cafe Nescafe Dolca 170g", description: "Doypack 170g", price: 6700, wholesalePrice: 6300, category: "Almacén", stock: 45, minStock: 12, maxStock: 120, unit: "12u", status: "active", image: "/placeholder.svg" },
+    { id: "a6", name: "Fideo Celestial 500g Guisero", description: "Pack 500g", price: 599, wholesalePrice: 579, category: "Almacén", stock: 300, minStock: 60, maxStock: 600, unit: "15u", status: "active", image: "/placeholder.svg" },
+    { id: "a7", name: "Yerba La Hoja 500g", description: "Paquete 500g", price: 1500, wholesalePrice: 1350, category: "Almacén", stock: 180, minStock: 36, maxStock: 360, unit: "12u", status: "active", image: "/placeholder.svg" },
+
+    // Aceites
+    { id: "ac1", name: "Aceite Natura 900ml", description: "Botella 900ml", price: 3700, wholesalePrice: 3400, category: "Aceites", stock: 120, minStock: 30, maxStock: 300, unit: "15u", status: "active", image: "/placeholder.svg" },
+    { id: "ac2", name: "Aceite Bidón 9L", description: "Bidón 9L", price: 19500, wholesalePrice: 18500, category: "Aceites", stock: 15, minStock: 5, maxStock: 50, unit: "1u", status: "active", image: "/placeholder.svg" },
+
+    // Bebidas
+    { id: "b1", name: "Fernet Branca 750cc", description: "Botella 750cc", price: 14000, wholesalePrice: 13000, category: "Bebidas", stock: 48, minStock: 12, maxStock: 120, unit: "6u", status: "active", image: "/placeholder.svg" },
+    { id: "b2", name: "Energizante Monster", description: "Lata 473ml", price: 2700, wholesalePrice: 2500, category: "Bebidas", stock: 150, minStock: 24, maxStock: 240, unit: "1u", status: "active", image: "/placeholder.svg" },
+    { id: "b3", name: "Vino Toro tinto 1L", description: "Tetra 1L", price: 2000, wholesalePrice: 1750, category: "Bebidas", stock: 120, minStock: 24, maxStock: 240, unit: "6u", status: "active", image: "/placeholder.svg" },
+
+    // Fiambres
+    { id: "f1", name: "Jamón Cocido Tirolesa", description: "Horma x Kg", price: 9000, wholesalePrice: 7000, category: "Fiambres", stock: 12, minStock: 3, maxStock: 20, unit: "Horma", status: "active", image: "/placeholder.svg" },
+    { id: "f2", name: "Salame Bastón Tirolesa", description: "Unidad", price: 12000, wholesalePrice: 10000, category: "Fiambres", stock: 30, minStock: 10, maxStock: 100, unit: "1u", status: "active", image: "/placeholder.svg" },
+
+    // Quedos
+    { id: "q1", name: "Mozarella La Severina", description: "Horma x Kg", price: 6500, wholesalePrice: 5500, category: "Quesos", stock: 20, minStock: 5, maxStock: 40, unit: "Horma", status: "active", image: "/placeholder.svg" },
 ];
 
 import { useAudit } from "./audit-provider"
@@ -134,7 +81,8 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     const addProduct = (productData: Omit<Product, "id">) => {
         const newProduct: Product = {
             ...productData,
-            id: Math.random().toString(36).substr(2, 9)
+            id: Math.random().toString(36).substr(2, 9),
+            wholesalePrice: (productData as any).wholesalePrice || productData.price
         }
         logEvent("create", "product", `Agregó nuevo producto: ${newProduct.name}`, newProduct.id)
         setProducts(prev => [...prev, newProduct])

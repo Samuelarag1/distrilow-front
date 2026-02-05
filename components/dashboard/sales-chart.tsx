@@ -14,36 +14,49 @@ import {
 } from "@/components/ui/chart";
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
-const data = [
-  { name: "Ene", ventas: 4000, pedidos: 240 },
-  { name: "Feb", ventas: 3000, pedidos: 139 },
-  { name: "Mar", ventas: 2000, pedidos: 980 },
-  { name: "Abr", ventas: 2780, pedidos: 390 },
-  { name: "May", ventas: 1890, pedidos: 480 },
-  { name: "Jun", ventas: 2390, pedidos: 380 },
-  { name: "Jul", ventas: 3490, pedidos: 430 },
-];
-
-const chartConfig = {
-  ventas: {
-    label: "Ventas",
-    color: "hsl(var(--chart-1))",
-  },
-  pedidos: {
-    label: "Pedidos",
-    color: "hsl(var(--chart-2))",
-  },
-};
+import { useTransactions } from "@/components/providers/transactions-provider";
+import { useBusiness } from "@/components/providers/business-provider";
+import { format, subDays, isSameDay } from "date-fns";
+import { es } from "date-fns/locale";
 
 export function SalesChart() {
+  const { sales } = useTransactions();
+  const { businessType } = useBusiness();
+
+  // Generate chart data for the last 7 days from real transactions
+  const chartData = Array.from({ length: 7 }).map((_, i) => {
+    const date = subDays(new Date(), 6 - i);
+    const daySales = sales.filter(s =>
+      s.businessType === businessType &&
+      isSameDay(new Date(s.date), date)
+    );
+
+    return {
+      name: format(date, "EEE", { locale: es }),
+      ventas: daySales.reduce((sum, s) => sum + s.amount, 0),
+      pedidos: daySales.length
+    };
+  });
+
+  const chartConfig = {
+    ventas: {
+      label: "Ventas",
+      color: "hsl(var(--chart-1))",
+    },
+    pedidos: {
+      label: "Pedidos",
+      color: "hsl(var(--chart-2))",
+    },
+  };
+
   return (
     <Card className="w-full overflow-hidden">
       <CardHeader>
         <CardTitle className="text-base sm:text-lg">
-          Resumen de Ventas
+          Desempeño de Ventas (7 días)
         </CardTitle>
         <CardDescription className="text-sm">
-          Ventas y pedidos de los últimos 7 meses
+          Basado en transacciones reales del sistema
         </CardDescription>
       </CardHeader>
       <CardContent className="p-4 sm:p-6">
@@ -51,7 +64,7 @@ export function SalesChart() {
           <ChartContainer config={chartConfig} className="w-full h-full">
             <ResponsiveContainer width="100%" height="100%">
               <AreaChart
-                data={data}
+                data={chartData}
                 margin={{ top: 10, right: 10, left: -10, bottom: 10 }}
               >
                 <XAxis
