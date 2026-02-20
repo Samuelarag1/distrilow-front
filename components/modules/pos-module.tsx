@@ -31,6 +31,7 @@ import { useProducts, Product } from "@/components/providers/product-provider";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { useBusiness } from "@/components/providers/business-provider";
+import { useBranches } from "@/components/providers/branch-provider";
 
 interface CartItem extends Product {
   quantity: number;
@@ -41,9 +42,11 @@ export function POSModule() {
   const { addSale } = useTransactions();
   const { currentUser } = useUser();
   const { businessType } = useBusiness();
+  const { branches } = useBranches();
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedBranch, setSelectedBranch] = useState(branches[0]?.id || "all");
   const [pendingPaymentMethod, setPendingPaymentMethod] = useState<string | null>(null);
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const { toast } = useToast();
@@ -54,7 +57,9 @@ export function POSModule() {
       .includes(searchQuery.toLowerCase());
     const matchesCategory =
       selectedCategory === "all" || product.category === selectedCategory;
-    return matchesSearch && matchesCategory;
+    const matchesBranch =
+      selectedBranch === "all" || product.branchId === selectedBranch;
+    return matchesSearch && matchesCategory && matchesBranch;
   });
 
   const categories = Array.from(new Set(products.map((p) => p.category)));
@@ -138,8 +143,14 @@ export function POSModule() {
       amount: total,
       customerName: "Consumidor Final",
       items: itemCount,
+      lineItems: cart.map(item => ({
+        productId: item.id,
+        quantity: item.quantity,
+        price: item.price
+      })),
       userId: currentUser?.id || "unknown",
       userName: currentUser?.name || "Anónimo",
+      branchId: selectedBranch,
       businessType
     });
 
@@ -202,6 +213,19 @@ export function POSModule() {
                   {categories.map((category) => (
                     <option key={category} value={category}>
                       {category}
+                    </option>
+                  ))}
+                </select>
+
+                <select
+                  value={selectedBranch}
+                  onChange={(e) => setSelectedBranch(e.target.value)}
+                  className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="all">Todas las sucursales</option>
+                  {branches.map((branch) => (
+                    <option key={branch.id} value={branch.id}>
+                      {branch.name}
                     </option>
                   ))}
                 </select>

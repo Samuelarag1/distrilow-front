@@ -12,6 +12,7 @@ import {
   CreditCard,
   Package2,
   Receipt,
+  MapPin,
 } from "lucide-react";
 import {
   Sidebar,
@@ -29,6 +30,7 @@ import {
 import { BusinessTypeSelector } from "@/components/business/business-type-selector";
 import { UserProfile } from "@/components/layout/user-profile";
 import { useBusiness } from "@/components/providers/business-provider";
+import { useUser } from "@/components/providers/user-provider";
 
 import type { ISidebarMenu } from "@/types/Sidebar";
 
@@ -41,6 +43,7 @@ const businessMenus: { [key: string]: ISidebarMenu[] } = {
     { title: "Ventas", url: "/sales", icon: TrendingUp },
     { title: "Gastos", url: "/expenses", icon: Receipt },
     { title: "Reportes", url: "/reports", icon: FileText },
+    { title: "Sucursales", url: "/branches", icon: MapPin },
   ],
   wholesale: [
     { title: "Dashboard", url: "/", icon: BarChart3 },
@@ -50,11 +53,13 @@ const businessMenus: { [key: string]: ISidebarMenu[] } = {
     { title: "Ventas", url: "/sales", icon: TrendingUp },
     { title: "Gastos", url: "/expenses", icon: Receipt },
     { title: "Reportes", url: "/reports", icon: FileText },
+    { title: "Sucursales", url: "/branches", icon: MapPin },
   ],
 };
 
 export function AppSidebar() {
   const { businessType } = useBusiness();
+  const { currentUser } = useUser();
   const pathname = usePathname();
   const menuItems = businessMenus[businessType];
 
@@ -94,47 +99,35 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
 
-        {/* <SidebarGroup className="mt-8">
+        <SidebarGroup className="mt-8">
           <SidebarGroupLabel className="px-3 py-2 text-xs font-semibold text-sidebar-foreground/70 uppercase tracking-wider mb-2">
             Sistema
           </SidebarGroupLabel>
           <SidebarGroupContent>
             <SidebarMenu className="space-y-1">
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  className="w-full justify-start px-3 py-2.5 text-sm font-medium transition-all duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-lg group"
-                >
-                  <Link
-                    href="/notifications"
-                    className="flex items-center gap-3 w-full"
+              {currentUser?.role === "admin" && (
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={pathname === "/users"}
+                    className="w-full justify-start px-3 py-2.5 text-sm font-medium transition-all duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-lg group"
                   >
-                    <div className="flex h-5 w-5 items-center justify-center">
-                      <Bell className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
-                    </div>
-                    <span className="truncate">Notificaciones</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
+                    <Link
+                      href="/users"
+                      className="flex items-center gap-3 w-full"
+                    >
+                      <div className="flex h-5 w-5 items-center justify-center">
+                        <UserCheck className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
+                      </div>
+                      <span className="truncate">Usuarios</span>
+                    </Link>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              )}
               <SidebarMenuItem>
                 <SidebarMenuButton
                   asChild
-                  className="w-full justify-start px-3 py-2.5 text-sm font-medium transition-all duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-lg group"
-                >
-                  <Link
-                    href="/users"
-                    className="flex items-center gap-3 w-full"
-                  >
-                    <div className="flex h-5 w-5 items-center justify-center">
-                      <UserCheck className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
-                    </div>
-                    <span className="truncate">Usuarios</span>
-                  </Link>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
+                  isActive={pathname === "/settings"}
                   className="w-full justify-start px-3 py-2.5 text-sm font-medium transition-all duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground rounded-lg group"
                 >
                   <Link
@@ -150,7 +143,7 @@ export function AppSidebar() {
               </SidebarMenuItem>
             </SidebarMenu>
           </SidebarGroupContent>
-        </SidebarGroup> */}
+        </SidebarGroup>
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border p-3">

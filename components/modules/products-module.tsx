@@ -16,6 +16,7 @@ import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
 import Image from "next/image";
 import { useProducts, Product } from "@/components/providers/product-provider";
+import { useBranches } from "@/components/providers/branch-provider";
 import { useBusiness } from "@/components/providers/business-provider";
 
 import {
@@ -34,9 +35,11 @@ type SortOrder = "asc" | "desc";
 
 export function ProductsModule() {
   const { products, addProduct, updateProduct, removeProduct, updateStock } = useProducts();
+  const { branches } = useBranches();
   const { businessType } = useBusiness();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedBranch, setSelectedBranch] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
@@ -61,7 +64,9 @@ export function ProductsModule() {
         product.description.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory =
         selectedCategory === "all" || product.category === selectedCategory;
-      return matchesSearch && matchesCategory;
+      const matchesBranch =
+        selectedBranch === "all" || product.branchId === selectedBranch;
+      return matchesSearch && matchesCategory && matchesBranch;
     })
     .sort((a, b) => {
       const factor = sortOrder === "asc" ? 1 : -1;
@@ -181,6 +186,19 @@ export function ProductsModule() {
                   </option>
                 ))}
               </select>
+
+              <select
+                value={selectedBranch}
+                onChange={(e) => setSelectedBranch(e.target.value)}
+                className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="all">Todas las sucursales</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
@@ -202,6 +220,7 @@ export function ProductsModule() {
                 onDelete={handleDeleteTrigger}
                 onStockUpdate={updateStock}
                 businessType={businessType}
+                branches={branches}
               />
             ))}
           </div>
@@ -240,13 +259,15 @@ function ProductCard({
   onEdit,
   onDelete,
   onStockUpdate,
-  businessType
+  businessType,
+  branches
 }: {
   product: Product,
   onEdit: (p: Product) => void,
   onDelete: (id: string) => void,
   onStockUpdate: (id: string, val: number) => void,
-  businessType: string
+  businessType: string,
+  branches: any[]
 }) {
   return (
     <Card className="overflow-hidden group hover:shadow-lg transition-all duration-300 border-t-4 border-t-transparent hover:border-t-primary">
@@ -270,6 +291,9 @@ function ProductCard({
           </Badge>
           <Badge variant="secondary" className="backdrop-blur-md bg-white/70 dark:bg-black/70 border-none shadow-sm text-xs">
             {product.category}
+          </Badge>
+          <Badge variant="outline" className="backdrop-blur-md bg-white/50 dark:bg-black/50 border-none shadow-sm text-[10px] font-bold">
+            {branches.find(b => b.id === product.branchId)?.name || 'Sin Sucursal'}
           </Badge>
         </div>
       </div>

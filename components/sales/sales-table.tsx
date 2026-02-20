@@ -26,11 +26,15 @@ export function SalesTable() {
     return matchesSearch
   })
 
-  const getStatusColor = (status: string) => {
+  const getStatusColor = (status?: string) => {
+    if (status === 'PENDING') return "bg-yellow-100 text-yellow-800"
+    if (status === 'CANCELLED') return "bg-red-100 text-red-800"
     return "bg-green-100 text-green-800"
   }
 
-  const getStatusText = (status: string) => {
+  const getStatusText = (status?: string) => {
+    if (status === 'PENDING') return "Pendiente Sync"
+    if (status === 'CANCELLED') return "Cancelado"
     return "Completado"
   }
 
@@ -107,7 +111,7 @@ export function SalesTable() {
                         <Badge variant="outline">💳 Tarjeta</Badge>
                       </td>
                       <td className="p-3">
-                        <Badge className={getStatusColor("completed")}>{getStatusText("completed")}</Badge>
+                        <Badge className={getStatusColor(sale.status)}>{getStatusText(sale.status)}</Badge>
                       </td>
                       <td className="p-3">
                         <Button variant="ghost" size="sm">

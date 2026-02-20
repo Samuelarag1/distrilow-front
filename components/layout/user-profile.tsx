@@ -14,6 +14,7 @@ import { LogOut, Settings, User } from "lucide-react"
 
 import { useUser } from "@/components/providers/user-provider"
 import { useState } from "react"
+import { useRouter } from "next/navigation"
 import {
   Dialog,
   DialogContent,
@@ -25,12 +26,14 @@ import {
 import { Button } from "@/components/ui/button"
 
 export function UserProfile() {
-  const { currentUser, setCurrentUser } = useUser()
+  const { currentUser, logout } = useUser()
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
+  const router = useRouter()
 
   const handleLogout = () => {
-    setCurrentUser(null)
+    logout()
     setShowLogoutConfirm(false)
+    router.push("/login")
   }
 
   if (!currentUser) return null

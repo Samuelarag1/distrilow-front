@@ -1,3 +1,4 @@
+
 "use client"
 
 import React from "react"
@@ -6,19 +7,26 @@ import { TransactionsProvider } from "./transactions-provider"
 import { ProductProvider } from "./product-provider"
 import { UserProvider } from "./user-provider"
 import { AuditProvider } from "./audit-provider"
+import { OfflineProvider } from "./offline-provider"
+
+import { BranchProvider } from "./branch-provider"
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
     return (
-        <BusinessProvider>
-            <UserProvider>
-                <AuditProvider>
-                    <TransactionsProvider>
-                        <ProductProvider>
-                            {children}
-                        </ProductProvider>
-                    </TransactionsProvider>
-                </AuditProvider>
-            </UserProvider>
-        </BusinessProvider>
+        <OfflineProvider>
+            <BusinessProvider>
+                <UserProvider>
+                    <AuditProvider>
+                        <BranchProvider>
+                            <TransactionsProvider>
+                                <ProductProvider>
+                                    {children}
+                                </ProductProvider>
+                            </TransactionsProvider>
+                        </BranchProvider>
+                    </AuditProvider>
+                </UserProvider>
+            </BusinessProvider>
+        </OfflineProvider>
     )
 }

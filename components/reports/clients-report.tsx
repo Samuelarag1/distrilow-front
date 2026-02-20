@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import {
     Card,
     CardContent,
@@ -12,75 +12,40 @@ import {
     Bar,
     BarChart,
     CartesianGrid,
-    Legend,
     ResponsiveContainer,
     Tooltip,
     XAxis,
     YAxis,
 } from "recharts";
-import { useToast } from "@/hooks/use-toast";
-
-interface Sale {
-    id: string;
-    total: number;
-    client?: {
-        id: string;
-        name: string;
-    };
-    createdAt: string;
-}
+import { useTransactions } from "@/components/providers/transactions-provider";
+import { useBusiness } from "@/components/providers/business-provider";
 
 export function ClientsReport({ dateRange }: { dateRange: any }) {
-    const [sales, setSales] = useState<Sale[]>([]);
-    const [isLoading, setIsLoading] = useState(true);
-    const { toast } = useToast();
+    const { sales } = useTransactions();
+    const { businessType } = useBusiness();
 
-    useEffect(() => {
-        const fetchData = async () => {
-            try {
-                const response = await fetch("/api/sales");
-                if (!response.ok) throw new Error("Failed to fetch sales");
-                const data = await response.json();
-                setSales(data);
-            } catch (error) {
-                toast({
-                    title: "Error",
-                    description: "No se pudieron cargar los datos de clientes.",
-                    variant: "destructive",
-                });
-            } finally {
-                setIsLoading(false);
-            }
-        };
-        fetchData();
-    }, [toast]);
-
-    const getClientRanking = () => {
+    const clientData = useMemo(() => {
         const clientMap: Record<string, number> = {};
+
         const filteredSales = sales.filter((sale) => {
+            if (sale.businessType !== businessType) return false;
             if (!dateRange?.from) return true;
-            const saleDate = new Date(sale.createdAt);
+            const saleDate = new Date(sale.date);
             const from = new Date(dateRange.from);
             const to = dateRange.to ? new Date(dateRange.to) : new Date();
             return saleDate >= from && saleDate <= to;
         });
 
         filteredSales.forEach((sale) => {
-            const clientName = sale.client?.name || "Cliente Final";
-            clientMap[clientName] = (clientMap[clientName] || 0) + sale.total;
+            const clientName = sale.customerName || "Cliente Final";
+            clientMap[clientName] = (clientMap[clientName] || 0) + sale.amount;
         });
 
         return Object.entries(clientMap)
             .map(([name, total]) => ({ name, total }))
             .sort((a, b) => b.total - a.total)
             .slice(0, 10);
-    };
-
-    const clientData = getClientRanking();
-
-    if (isLoading) {
-        return <div className="p-8 text-center text-muted-foreground">Cargando reporte de clientes...</div>;
-    }
+    }, [sales, dateRange, businessType]);
 
     return (
         <div className="space-y-4">
@@ -107,9 +72,9 @@ export function ClientsReport({ dateRange }: { dateRange: any }) {
                             <BarChart data={clientData} layout="vertical" margin={{ top: 5, right: 30, left: 40, bottom: 5 }}>
                                 <CartesianGrid strokeDasharray="3 3" horizontal={false} />
                                 <XAxis type="number" tickFormatter={(value) => `$${value}`} />
-                                <YAxis dataKey="name" type="category" width={100} />
-                                <Tooltip formatter={(value) => `$${value}`} cursor={{ fill: 'transparent' }} />
-                                <Bar dataKey="total" fill="#8884d8" radius={[0, 4, 4, 0]} barSize={20} name="Total Facturado" />
+                                <YAxis dataKey="name" type="category" width={100} tick={{ fontSize: 12 }} />
+                                <Tooltip formatter={(value) => `$${Number(value).toLocaleString()}`} cursor={{ fill: 'transparent' }} />
+                                <Bar dataKey="total" fill="var(--primary)" radius={[0, 4, 4, 0]} barSize={20} name="Total Facturado" />
                             </BarChart>
                         </ResponsiveContainer>
                     </CardContent>

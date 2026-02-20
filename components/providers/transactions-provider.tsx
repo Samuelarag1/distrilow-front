@@ -5,6 +5,8 @@ import { BusinessType } from "@/lib/data-service"
 import { useBusiness } from "./business-provider"
 import { useAudit } from "./audit-provider"
 import { useUser } from "./user-provider"
+import { db } from "@/lib/db"
+import { useNetworkStatus } from "@/hooks/use-network"
 
 export interface Expense {
     id: string
@@ -20,11 +22,14 @@ export interface Sale {
     id: string
     amount: number
     customerName: string
-    items: number
+    items: number // count
+    lineItems?: any[] // details
     date: string
     businessType: BusinessType
     userId: string
     userName: string
+    branchId: string
+    status?: 'PENDING' | 'COMPLETED'
 }
 
 interface TransactionsContextType {
@@ -45,62 +50,38 @@ export function TransactionsProvider({ children }: { children: React.ReactNode }
     const [sales, setSales] = useState<Sale[]>([])
     const { logEvent } = useAudit()
     const { currentUser } = useUser()
+    const isOnline = useNetworkStatus()
 
-    // Initialize with some dummy data for demonstration
+    // Load from DB on mount
     useEffect(() => {
-        setExpenses([
-            {
-                id: "1",
-                amount: 50000,
-                category: "Servicios",
-                description: "Pago de Luz",
-                date: new Date().toISOString(),
-                businessType: "retail",
-                userId: "1"
-            },
-            {
-                id: "2",
-                amount: 120000,
-                category: "Mantenimiento",
-                description: "Reparación AA",
-                date: new Date().toISOString(),
-                businessType: "retail",
-                userId: "1"
-            },
-            {
-                id: "3",
-                amount: 350000,
-                category: "Logística",
-                description: "Flete Distribución",
-                date: new Date().toISOString(),
-                businessType: "wholesale",
-                userId: "1"
-            }
-        ])
+        const loadData = async () => {
+            try {
+                const dbSales = await db.sales.toArray();
+                const mappedSales = dbSales.map(s => ({
+                    id: s.id,
+                    amount: s.total,
+                    customerName: "Cliente Local",
+                    items: s.items ? s.items.length : 0,
+                    lineItems: s.items,
+                    date: s.createdAt.toISOString(),
+                    businessType: "retail" as BusinessType,
+                    userId: s.userId || "unknown",
+                    userName: "User",
+                    status: s.status === 'PENDING' ? 'PENDING' : 'COMPLETED'
+                } as Sale));
 
-        setSales([
-            {
-                id: "s1",
-                amount: 45000,
-                customerName: "Ana Lopez",
-                items: 3,
-                date: new Date().toISOString(),
-                businessType: "retail",
-                userId: "2",
-                userName: "Maria"
-            },
-            {
-                id: "s2",
-                amount: 890000,
-                customerName: "Distribuidora Sur",
-                items: 45,
-                date: new Date().toISOString(),
-                businessType: "wholesale",
-                userId: "1",
-                userName: "Samuel"
+                // Sort by date desc
+                mappedSales.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+                if (mappedSales.length > 0) {
+                    setSales(mappedSales);
+                }
+            } catch (e) {
+                console.error("Failed to load local sales", e);
             }
-        ])
-    }, [])
+        };
+        loadData();
+    }, []);
 
     const addExpense = (newExpense: Omit<Expense, "id" | "date">) => {
         const expense: Expense = {
@@ -113,14 +94,47 @@ export function TransactionsProvider({ children }: { children: React.ReactNode }
         setExpenses((prev) => [expense, ...prev])
     }
 
-    const addSale = (newSale: Omit<Sale, "id" | "date">) => {
+    const addSale = async (newSale: Omit<Sale, "id" | "date">) => {
+        const saleId = crypto.randomUUID();
         const sale: Sale = {
             ...newSale,
-            id: Math.random().toString(36).substr(2, 9),
-            date: new Date().toISOString()
+            id: saleId,
+            date: new Date().toISOString(),
+            status: isOnline ? 'COMPLETED' : 'PENDING'
         }
-        logEvent("create", "sale", `Realizó una venta de $${sale.amount.toLocaleString()} a ${sale.customerName}`, sale.id)
+
+        // Update UI immediately (Optimistic UI)
         setSales((prev) => [sale, ...prev])
+        logEvent("create", "sale", `Realizó una venta de $${sale.amount.toLocaleString()} a ${sale.customerName}`, sale.id)
+
+        // Save to Local DB
+        try {
+            await db.sales.add({
+                id: saleId,
+                branchId: sale.branchId,
+                total: sale.amount,
+                createdAt: new Date(),
+                status: isOnline ? 'COMPLETED' : 'PENDING',
+                userId: sale.userId,
+                items: sale.lineItems || []
+            });
+
+            if (!isOnline) {
+                await db.pendingActions.add({
+                    id: crypto.randomUUID(),
+                    type: 'CREATE_SALE',
+                    payload: { ...sale, tempId: saleId },
+                    createdAt: Date.now(),
+                    synced: false,
+                    failedCount: 0
+                });
+            } else {
+                // Here we would call the API if online
+                // await api.sales.create(sale)...
+            }
+        } catch (e) {
+            console.error("Failed to save sale locally", e);
+        }
     }
 
     const getExpensesByType = (type: BusinessType) => {

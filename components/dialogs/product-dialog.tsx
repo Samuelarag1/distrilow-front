@@ -18,6 +18,8 @@ import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { Switch } from "@/components/ui/switch"
 
+import { useBranches } from "@/components/providers/branch-provider"
+
 interface Product {
   id: string
   name: string
@@ -27,6 +29,7 @@ interface Product {
   stock: number
   status: "active" | "inactive"
   image: string
+  branchId: string
 }
 
 interface ProductDialogProps {
@@ -36,9 +39,10 @@ interface ProductDialogProps {
   onSave: (product: Partial<Product>) => void
 }
 
-const categories = ["Platos Principales", "Pizzas", "Ensaladas", "Postres", "Bebidas", "Aperitivos"]
+const categories = ["Almacén", "Aceites", "Bebidas", "Fiambres", "Quesos", "Otros"]
 
 export function ProductDialog({ open, onOpenChange, product, onSave }: ProductDialogProps) {
+  const { branches } = useBranches();
   const [formData, setFormData] = useState({
     name: "",
     description: "",
@@ -47,6 +51,7 @@ export function ProductDialog({ open, onOpenChange, product, onSave }: ProductDi
     stock: 0,
     status: "active" as "active" | "inactive",
     image: "/placeholder.svg?height=100&width=100",
+    branchId: "",
   })
 
   useEffect(() => {
@@ -59,6 +64,7 @@ export function ProductDialog({ open, onOpenChange, product, onSave }: ProductDi
         stock: product.stock,
         status: product.status,
         image: product.image,
+        branchId: product.branchId || "",
       })
     } else {
       setFormData({
@@ -69,9 +75,10 @@ export function ProductDialog({ open, onOpenChange, product, onSave }: ProductDi
         stock: 0,
         status: "active",
         image: "/placeholder.svg?height=100&width=100",
+        branchId: branches[0]?.id || "",
       })
     }
-  }, [product, open])
+  }, [product, open, branches])
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
@@ -90,6 +97,26 @@ export function ProductDialog({ open, onOpenChange, product, onSave }: ProductDi
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid gap-4">
+            <div className="space-y-2">
+              <Label htmlFor="branchId">Sucursal *</Label>
+              <Select
+                value={formData.branchId}
+                onValueChange={(value) => setFormData({ ...formData, branchId: value })}
+                required
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecciona una sucursal" />
+                </SelectTrigger>
+                <SelectContent>
+                  {branches.map((branch) => (
+                    <SelectItem key={branch.id} value={branch.id}>
+                      {branch.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="space-y-2">
               <Label htmlFor="name">Nombre *</Label>
               <Input

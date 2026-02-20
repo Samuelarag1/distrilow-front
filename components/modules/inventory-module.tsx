@@ -22,6 +22,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { useProducts, Product } from "@/components/providers/product-provider";
+import { useBranches } from "@/components/providers/branch-provider";
 import {
   Dialog,
   DialogContent,
@@ -172,8 +173,10 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
 
 export function InventoryModule() {
   const { products: inventory, adjustStock, updateStock: setStockValue } = useProducts();
+  const { branches } = useBranches();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedBranch, setSelectedBranch] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const { toast } = useToast();
@@ -194,7 +197,9 @@ export function InventoryModule() {
         .includes(searchQuery.toLowerCase());
       const matchesCategory =
         selectedCategory === "all" || item.category === selectedCategory;
-      return matchesSearch && matchesCategory;
+      const matchesBranch =
+        selectedBranch === "all" || item.branchId === selectedBranch;
+      return matchesSearch && matchesCategory && matchesBranch;
     })
     .sort((a, b) => {
       const factor = sortOrder === "asc" ? 1 : -1;
@@ -461,6 +466,19 @@ export function InventoryModule() {
                 {categories.map((category) => (
                   <option key={category} value={category}>
                     {category}
+                  </option>
+                ))}
+              </select>
+
+              <select
+                value={selectedBranch}
+                onChange={(e) => setSelectedBranch(e.target.value)}
+                className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="all">Todas las sucursales</option>
+                {branches.map((branch) => (
+                  <option key={branch.id} value={branch.id}>
+                    {branch.name}
                   </option>
                 ))}
               </select>
