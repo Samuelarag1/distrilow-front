@@ -13,17 +13,32 @@ import {
     DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useUser, User } from "@/components/providers/user-provider";
+import { api } from "@/lib/api-client";
+import { useEffect } from "react";
 
 export function UsersModule() {
     const { currentUser } = useUser();
     const [searchQuery, setSearchQuery] = useState("");
+    const [users, setUsers] = useState<User[]>([]);
+    const [isLoading, setIsLoading] = useState(true);
 
-    // Mock users for demonstration
-    const [users, setUsers] = useState<User[]>([
-        { id: "1", name: "Samuel", role: "admin" },
-        { id: "2", name: "Maria", role: "cashier" },
-        { id: "3", name: "Juan", role: "manager" },
-    ]);
+    useEffect(() => {
+        const fetchUsers = async () => {
+            try {
+                setIsLoading(true);
+                const data = await api.get("/users");
+                setUsers(data);
+            } catch (error) {
+                console.error("Failed to fetch users:", error);
+            } finally {
+                setIsLoading(false);
+            }
+        };
+
+        if (currentUser?.role === "admin") {
+            fetchUsers();
+        }
+    }, [currentUser]);
 
     if (currentUser?.role !== "admin") {
         return (

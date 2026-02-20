@@ -1,4 +1,5 @@
-import { db, PendingAction, Sale } from "@/lib/db";
+import { db } from "@/lib/db";
+import { api } from "./api-client";
 
 // Process pending actions when back online
 export async function syncPendingActions() {
@@ -10,36 +11,32 @@ export async function syncPendingActions() {
 
   for (const action of pending) {
     try {
-      // Mock processing sync - in real app would call API
-      console.log(`Syncing action: ${action.type}`, action.payload);
-
-      // Simulate API call based on action type
-      let success = false;
+      let result = null;
 
       switch (action.type) {
         case "CREATE_SALE":
-          success = await mockApiSync("/api/sales", "POST", action.payload);
+          result = await api.post("/sales", action.payload);
           break;
         case "CREATE_CLIENT":
-          success = await mockApiSync("/api/clients", "POST", action.payload);
+          result = await api.post("/clients", action.payload);
           break;
-        // Add other cases
+        case "UPDATE_STOCK":
+          result = await api.put("/products/stock", action.payload);
+          break;
+        // Add other cases as backend endpoints are defined
         default:
-          success = true;
+          console.warn(`Sync not implemented for action type: ${action.type}`);
+          result = true; // Mark as done to avoid stuck queue if not implemented
       }
 
-      if (success) {
-        // If synced, remove from queue or mark as synced
+      if (result) {
+        // If synced successfully
         await db.pendingActions.delete(action.id);
 
         // If sale, update status from PENDING to COMPLETED locally
         if (action.type === "CREATE_SALE" && action.payload.tempId) {
           await db.sales.update(action.payload.tempId, { status: "COMPLETED" });
         }
-      } else {
-        await db.pendingActions.update(action.id, {
-          failedCount: (action.failedCount || 0) + 1,
-        });
       }
     } catch (error: any) {
       console.error(`Failed to sync action ${action.id}:`, error);
@@ -49,11 +46,4 @@ export async function syncPendingActions() {
       });
     }
   }
-}
-
-async function mockApiSync(url: string, method: string, body: any) {
-  // Simulate network delay
-  await new Promise((resolve) => setTimeout(resolve, 1000));
-  console.log(`[Mock Sync] Processed ${method} to ${url}`, body);
-  return true;
 }

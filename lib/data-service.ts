@@ -1,3 +1,4 @@
+import { api } from "./api-client";
 
 export type BusinessType = "retail" | "wholesale";
 
@@ -14,40 +15,30 @@ export interface DashboardMetrics {
   creditUtilized?: number;
 }
 
-export const getDashboardMetrics = async (type: BusinessType): Promise<DashboardMetrics> => {
-  // Simulate API delay
-  await new Promise((resolve) => setTimeout(resolve, 500));
-
-  if (type === "wholesale") {
+export const getDashboardMetrics = async (
+  type: BusinessType,
+): Promise<DashboardMetrics> => {
+  try {
+    return await api.get(`/dashboard/metrics?type=${type}`);
+  } catch (error) {
+    console.error(
+      "Failed to fetch dashboard metrics, using fallback empty state",
+      error,
+    );
     return {
-      totalRevenue: 15600000,
-      totalOrders: 45,
-      activeCustomers: 120,
-      lowStockItems: 12,
-      pendingBulkOrders: 5,
-      creditUtilized: 4500000,
+      totalRevenue: 0,
+      totalOrders: 0,
+      activeCustomers: 0,
+      lowStockItems: 0,
     };
   }
-
-  // Retail
-  return {
-    totalRevenue: 2450000,
-    totalOrders: 320,
-    activeCustomers: 850,
-    lowStockItems: 25,
-    dailyCashbox: 150000,
-    walkInCustomers: 65,
-  };
 };
 
 export const getRecentSales = async (type: BusinessType) => {
-   await new Promise((resolve) => setTimeout(resolve, 500));
-   return Array.from({ length: 5 }).map((_, i) => ({
-      id: `sale-${i}`,
-      customer: type === 'wholesale' ? `Mayorista S.A. ${i}` : `Cliente Final ${i}`,
-      amount: type === 'wholesale' ? Math.random() * 100000 : Math.random() * 5000,
-      status: "completed",
-      date: new Date().toISOString(),
-      items: Math.floor(Math.random() * 10) + 1
-   }));
-}
+  try {
+    return await api.get(`/sales/recent?type=${type}`);
+  } catch (error) {
+    console.error("Failed to fetch recent sales", error);
+    return [];
+  }
+};

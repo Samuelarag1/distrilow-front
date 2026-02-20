@@ -31,7 +31,14 @@ export interface Sale {
 
 export interface PendingAction {
   id: string; // generated client-side
-  type: "CREATE_SALE" | "CREATE_CLIENT" | "UPDATE_CLIENT" | "DELETE_CLIENT";
+  type:
+    | "CREATE_SALE"
+    | "CREATE_CLIENT"
+    | "UPDATE_CLIENT"
+    | "DELETE_CLIENT"
+    | "UPDATE_STOCK"
+    | "UPDATE_PRODUCT"
+    | "CREATE_EXPENSE";
   payload: any;
   createdAt: number;
   synced: boolean;

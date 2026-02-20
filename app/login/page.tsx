@@ -9,6 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Lock } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
+import { api } from "@/lib/api-client";
 
 export default function LoginPage() {
     const [email, setEmail] = useState("");
@@ -23,52 +24,33 @@ export default function LoginPage() {
         setIsLoading(true);
 
         try {
-            const response = await fetch("http://localhost:3000/api/auth/login", {
-                method: "POST",
-                headers: {
-                    "Content-Type": "application/json",
-                },
-                body: JSON.stringify({ email, password }),
-            });
+            const data = await api.post("/auth/login", { email, password });
 
-            if (response.ok) {
-                const data = await response.json();
-                // data should contain { token: string, user: User }
-
-                // Guardar JWT, datos de usuario y branchId en cookies
-                document.cookie = `token=${data.token}; path=/; max-age=86400; SameSite=Strict`;
-                document.cookie = `user=${JSON.stringify(data.user)}; path=/; max-age=86400; SameSite=Strict`;
-                if (data.branchId) {
-                    document.cookie = `branchId=${data.branchId}; path=/; max-age=86400; SameSite=Strict`;
-                }
-
-                setCurrentUser(data.user);
-                setToken(data.token);
-                if (data.branchId) {
-                    setBranchId(data.branchId);
-                }
-
-                toast({
-                    title: "Inicio de sesión exitoso",
-                    description: `Bienvenido, ${data.user.name}.`,
-                });
-                router.push("/");
-            } else {
-                const errorData = await response.json();
-                toast({
-                    variant: "destructive",
-                    title: "Error de autenticación",
-                    description: errorData.message || "Credenciales inválidas. Intente nuevamente.",
-                });
+            // data should contain { token: string, user: User }
+            // Guardar JWT, datos de usuario y branchId en cookies
+            document.cookie = `token=${data.token}; path=/; max-age=86400; SameSite=Strict`;
+            document.cookie = `user=${JSON.stringify(data.user)}; path=/; max-age=86400; SameSite=Strict`;
+            if (data.branchId) {
+                document.cookie = `branchId=${data.branchId}; path=/; max-age=86400; SameSite=Strict`;
             }
-        } catch (error) {
+
+            setCurrentUser(data.user);
+            setToken(data.token);
+            if (data.branchId) {
+                setBranchId(data.branchId);
+            }
+
+            toast({
+                title: "Inicio de sesión exitoso",
+                description: `Bienvenido, ${data.user.name}.`,
+            });
+            router.push("/");
+        } catch (error: any) {
             console.error("Login error:", error);
-            // Si la API no está disponible, podemos dejar el mock para desarrollo si el usuario lo prefiere,
-            // pero el usuario pidió "cuando se haga el login se guarde el jwt que devuelve el backend".
             toast({
                 variant: "destructive",
-                title: "Error de conexión",
-                description: "No se pudo conectar con el servidor.",
+                title: "Error de autenticación",
+                description: error.message || "Credenciales inválidas. Intente nuevamente.",
             });
         } finally {
             setIsLoading(false);
