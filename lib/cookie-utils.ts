@@ -1,20 +1,29 @@
-export function setCookie(name: string, value: string, days: number = 7) {
-  const expires = new Date();
-  expires.setTime(expires.getTime() + days * 24 * 60 * 60 * 1000);
-  document.cookie = `${name}=${value};expires=${expires.toUTCString()};path=/;SameSite=Strict`;
+"use server";
+
+import { cookies } from "next/headers";
+
+export async function setServerCookie(
+  name: string,
+  value: string,
+  days: number = 7,
+) {
+  const cookieStore = await cookies();
+
+  cookieStore.set(name, value, {
+    httpOnly: true,
+    secure: true,
+    sameSite: "strict",
+    path: "/",
+    maxAge: days * 24 * 60 * 60,
+  });
 }
 
-export function getCookie(name: string): string | null {
-  const nameEQ = name + "=";
-  const ca = document.cookie.split(";");
-  for (let i = 0; i < ca.length; i++) {
-    let c = ca[i];
-    while (c.charAt(0) === " ") c = c.substring(1, c.length);
-    if (c.indexOf(nameEQ) === 0) return c.substring(nameEQ.length, c.length);
-  }
-  return null;
+export async function getServerCookie(name: string) {
+  const cookieStore = await cookies();
+  return cookieStore.get(name)?.value;
 }
 
-export function deleteCookie(name: string) {
-  document.cookie = `${name}=;expires=Thu, 01 Jan 1970 00:00:00 UTC;path=/;`;
+export async function deleteServerCookie(name: string) {
+  const cookieStore = await cookies();
+  cookieStore.delete(name);
 }

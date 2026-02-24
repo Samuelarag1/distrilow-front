@@ -6,12 +6,13 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Badge } from "@/components/ui/badge"
 import { Search, Filter, Download, Eye } from "lucide-react"
+import { Skeleton } from "@/components/ui/skeleton"
 
 import { useTransactions } from "@/components/providers/transactions-provider"
 import { useBusiness } from "@/components/providers/business-provider"
 
 export function SalesTable() {
-  const { sales } = useTransactions()
+  const { sales, isLoading } = useTransactions()
   const { businessType } = useBusiness()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedStatus, setSelectedStatus] = useState("all")
@@ -95,7 +96,20 @@ export function SalesTable() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredSales.map((sale) => (
+                  {isLoading ? (
+                    Array.from({ length: 5 }).map((_, i) => (
+                      <tr key={i} className="border-t">
+                        <td className="p-3"><Skeleton className="h-4 w-20" /></td>
+                        <td className="p-3"><Skeleton className="h-4 w-32" /></td>
+                        <td className="p-3"><Skeleton className="h-4 w-40" /></td>
+                        <td className="p-3"><Skeleton className="h-4 w-24" /></td>
+                        <td className="p-3"><Skeleton className="h-4 w-16" /></td>
+                        <td className="p-3"><Skeleton className="h-6 w-20" /></td>
+                        <td className="p-3"><Skeleton className="h-6 w-24" /></td>
+                        <td className="p-3"><Skeleton className="h-8 w-8" /></td>
+                      </tr>
+                    ))
+                  ) : filteredSales.map((sale) => (
                     <tr key={sale.id} className="border-t hover:bg-muted/25 transition-colors">
                       <td className="p-3 font-mono text-sm">{sale.id}</td>
                       <td className="p-3 text-sm">{new Date(sale.date).toLocaleString()}</td>

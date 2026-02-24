@@ -56,6 +56,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         document.cookie = "token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC";
         document.cookie = "user=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC";
         document.cookie = "branchId=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC";
+        document.cookie = "auth=; path=/; expires=Thu, 01 Jan 1970 00:00:00 UTC";
         setCurrentUser(null);
         setToken(null);
         setBranchId(null);

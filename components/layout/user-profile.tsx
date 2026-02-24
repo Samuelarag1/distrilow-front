@@ -44,12 +44,12 @@ export function UserProfile() {
         <DropdownMenuTrigger asChild>
           <SidebarMenuButton className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground">
             <Avatar className="h-8 w-8 rounded-lg">
-              <AvatarImage src={currentUser.avatar || "/placeholder.svg?height=32&width=32"} alt={currentUser.name} />
-              <AvatarFallback className="rounded-lg">{currentUser.name.substring(0, 2).toUpperCase()}</AvatarFallback>
+              <AvatarImage src={currentUser?.avatar || "/placeholder.svg?height=32&width=32"} alt={currentUser?.name} />
+              <AvatarFallback className="rounded-lg">{currentUser?.name?.substring(0, 2).toUpperCase()}</AvatarFallback>
             </Avatar>
             <div className="grid flex-1 text-left text-sm leading-tight">
-              <span className="truncate font-semibold">{currentUser.name}</span>
-              <span className="truncate text-xs text-muted-foreground capitalize">{currentUser.role}</span>
+              <span className="truncate font-semibold">{currentUser?.name}</span>
+              <span className="truncate text-xs text-muted-foreground capitalize">{currentUser?.role}</span>
             </div>
           </SidebarMenuButton>
         </DropdownMenuTrigger>
@@ -62,12 +62,12 @@ export function UserProfile() {
           <DropdownMenuLabel className="p-0 font-normal">
             <div className="flex items-center gap-2 px-1 py-1.5 text-left text-sm">
               <Avatar className="h-8 w-8 rounded-lg">
-                <AvatarImage src={currentUser.avatar || "/placeholder.svg?height=32&width=32"} alt={currentUser.name} />
-                <AvatarFallback className="rounded-lg">{currentUser.name.substring(0, 2).toUpperCase()}</AvatarFallback>
+                <AvatarImage src={currentUser?.avatar || "/placeholder.svg?height=32&width=32"} alt={currentUser?.name} />
+                <AvatarFallback className="rounded-lg">{currentUser?.name?.substring(0, 2).toUpperCase()}</AvatarFallback>
               </Avatar>
               <div className="grid flex-1 text-left text-sm leading-tight">
-                <span className="truncate font-semibold">{currentUser.name}</span>
-                <span className="truncate text-xs text-muted-foreground capitalize">{currentUser.role}</span>
+                <span className="truncate font-semibold">{currentUser?.name}</span>
+                <span className="truncate text-xs text-muted-foreground capitalize">{currentUser?.role}</span>
               </div>
             </div>
           </DropdownMenuLabel>

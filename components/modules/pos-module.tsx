@@ -15,6 +15,7 @@ import {
   Search,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -38,7 +39,7 @@ interface CartItem extends Product {
 }
 
 export function POSModule() {
-  const { products, adjustStock } = useProducts();
+  const { products, isLoading, adjustStock } = useProducts();
   const { addSale } = useTransactions();
   const { currentUser } = useUser();
   const { businessType } = useBusiness();
@@ -233,47 +234,68 @@ export function POSModule() {
             </CardHeader>
             <CardContent>
               <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {filteredProducts.map((product) => {
-                  const activePrice = businessType === "wholesale" ? product.wholesalePrice : product.price;
-                  return (
-                    <Card
-                      key={product.id}
-                      className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden"
-                      onClick={() => addToCart({ ...product, price: activePrice })}
-                    >
+                {isLoading ? (
+                  Array.from({ length: 6 }).map((_, i) => (
+                    <Card key={i} className="overflow-hidden">
                       <CardContent className="p-3">
                         <div className="flex items-center space-x-3">
-                          <div className="w-12 h-12 rounded-md bg-muted flex items-center justify-center overflow-hidden shrink-0">
-                            <img
-                              src={product.image || "/placeholder.svg"}
-                              alt={product.name}
-                              className="w-full h-full object-cover"
-                            />
+                          <Skeleton className="w-12 h-12 rounded-md shrink-0" />
+                          <div className="flex-1 space-y-2">
+                            <Skeleton className="h-4 w-3/4" />
+                            <Skeleton className="h-3 w-1/2" />
+                            <Skeleton className="h-4 w-1/4" />
                           </div>
-                          <div className="flex-1 min-w-0">
-                            <h3 className="font-bold text-sm truncate group-hover:text-primary transition-colors">
-                              {product.name}
-                            </h3>
-                            <div className="flex items-center gap-2">
-                              <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 uppercase font-black">
-                                {product.unit || "u"}
-                              </Badge>
-                              <p className="text-[10px] text-muted-foreground truncate uppercase font-bold">
-                                {product.category}
-                              </p>
-                            </div>
-                            <p className="font-black text-sm text-primary">
-                              ${activePrice.toLocaleString()}
-                            </p>
-                          </div>
-                          <Button size="sm" variant="ghost" className="h-8 w-8 p-0 hover:bg-primary/10">
-                            <Plus className="h-4 w-4" />
-                          </Button>
                         </div>
                       </CardContent>
                     </Card>
-                  );
-                })}
+                  ))
+                ) : filteredProducts.length > 0 ? (
+                  filteredProducts.map((product) => {
+                    const activePrice = businessType === "wholesale" ? product.wholesalePrice : product.price;
+                    return (
+                      <Card
+                        key={product.id}
+                        className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden"
+                        onClick={() => addToCart({ ...product, price: activePrice })}
+                      >
+                        <CardContent className="p-3">
+                          <div className="flex items-center space-x-3">
+                            <div className="w-12 h-12 rounded-md bg-muted flex items-center justify-center overflow-hidden shrink-0">
+                              <img
+                                src={product.image || "/placeholder.svg"}
+                                alt={product.name}
+                                className="w-full h-full object-cover"
+                              />
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <h3 className="font-bold text-sm truncate group-hover:text-primary transition-colors">
+                                {product.name}
+                              </h3>
+                              <div className="flex items-center gap-2">
+                                <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 uppercase font-black">
+                                  {product.unit || "u"}
+                                </Badge>
+                                <p className="text-[10px] text-muted-foreground truncate uppercase font-bold">
+                                  {product.category}
+                                </p>
+                              </div>
+                              <p className="font-black text-sm text-primary">
+                                ${activePrice.toLocaleString()}
+                              </p>
+                            </div>
+                            <Button size="sm" variant="ghost" className="h-8 w-8 p-0 hover:bg-primary/10">
+                              <Plus className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </CardContent>
+                      </Card>
+                    );
+                  })
+                ) : (
+                  <div className="col-span-full py-12 text-center">
+                    <p className="text-muted-foreground">No se encontraron productos.</p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

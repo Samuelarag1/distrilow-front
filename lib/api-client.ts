@@ -1,83 +1,42 @@
-import { getCookie, deleteCookie } from "./cookie-utils";
+let authToken: string | null = null;
+let activeBranchId: string | null = null;
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000/api";
-
-interface RequestOptions extends RequestInit {
-  body?: any;
+export function setApiSession(token: string, branchId?: string) {
+  authToken = token;
+  activeBranchId = branchId || null;
 }
 
-async function fetchWithErrorHandling(
-  url: string,
-  options: RequestOptions = {},
-) {
-  const token = getCookie("token");
-  const branchId = getCookie("branchId");
-
+async function request(url: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers);
+
   headers.set("Content-Type", "application/json");
 
-  if (token) {
-    headers.set("Authorization", `Bearer ${token}`);
+  if (authToken) {
+    headers.set("Authorization", `Bearer ${authToken}`);
   }
 
-  if (branchId) {
-    headers.set("X-Branch-Id", branchId);
+  if (activeBranchId) {
+    headers.set("X-Branch-Id", activeBranchId);
   }
 
-  const config: RequestInit = {
+  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${url}`, {
     ...options,
     headers,
-  };
+  });
 
-  if (options.body && typeof options.body !== "string") {
-    config.body = JSON.stringify(options.body);
+  if (!res.ok) {
+    const error = await res.text();
+    throw new Error(error);
   }
 
-  try {
-    const response = await fetch(`${API_URL}${url}`, config);
-
-    if (response.status === 401) {
-      // Unauthorized - Could handle token refresh here or logout
-      console.warn("Unauthorized request, logging out...");
-      // For now, let's just clear cookies and redirect if in browser
-      if (typeof window !== "undefined") {
-        deleteCookie("token");
-        deleteCookie("user");
-        deleteCookie("branchId");
-        window.location.href = "/login";
-      }
-    }
-
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(
-        errorData.message || `Request failed with status ${response.status}`,
-      );
-    }
-
-    // Check if response is empty
-    const contentType = response.headers.get("content-type");
-    if (contentType && contentType.includes("application/json")) {
-      return await response.json();
-    }
-
-    return null;
-  } catch (error) {
-    console.error(`API Error (${url}):`, error);
-    throw error;
-  }
+  return res.json();
 }
 
-export const api = {
-  get: (url: string, options?: RequestOptions) =>
-    fetchWithErrorHandling(url, { ...options, method: "GET" }),
-
-  post: (url: string, body: any, options?: RequestOptions) =>
-    fetchWithErrorHandling(url, { ...options, method: "POST", body }),
-
-  put: (url: string, body: any, options?: RequestOptions) =>
-    fetchWithErrorHandling(url, { ...options, method: "PUT", body }),
-
-  delete: (url: string, options?: RequestOptions) =>
-    fetchWithErrorHandling(url, { ...options, method: "DELETE" }),
+export const apiClientFetch = {
+  get: (url: string) => request(url),
+  post: (url: string, body: any) =>
+    request(url, { method: "POST", body: JSON.stringify(body) }),
+  put: (url: string, body: any) =>
+    request(url, { method: "PUT", body: JSON.stringify(body) }),
+  delete: (url: string) => request(url, { method: "DELETE" }),
 };

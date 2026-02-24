@@ -15,9 +15,14 @@ const OfflineContext = createContext<OfflineContextType>({ isOnline: true });
 export function OfflineProvider({ children }: { children: React.ReactNode }) {
     const isOnline = useNetworkStatus();
     const { toast } = useToast();
+    const [isMounted, setIsMounted] = React.useState(false);
+
+    React.useEffect(() => {
+        setIsMounted(true);
+    }, []);
 
     useEffect(() => {
-        if (isOnline) {
+        if (isOnline && isMounted) {
             syncPendingActions().then(() => {
                 // Optionally toast "Sync complete"
             });
@@ -28,9 +33,11 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
 
             return () => clearInterval(interval);
         }
-    }, [isOnline]);
+    }, [isOnline, isMounted]);
 
     useEffect(() => {
+        if (!isMounted) return;
+
         if (!isOnline) {
             toast({
                 title: "Estás Offline",
@@ -46,12 +53,12 @@ export function OfflineProvider({ children }: { children: React.ReactNode }) {
                 duration: 3000,
             });
         }
-    }, [isOnline, toast]);
+    }, [isOnline, toast, isMounted]);
 
     return (
         <OfflineContext.Provider value={{ isOnline }}>
             {children}
-            {!isOnline && (
+            {isMounted && !isOnline && (
                 <div className="fixed bottom-4 right-4 z-50 bg-yellow-500 text-white px-4 py-2 rounded-full shadow-lg text-sm font-medium animate-pulse">
                     Modo Offline
                 </div>

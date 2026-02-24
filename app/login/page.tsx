@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Lock } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
-import { api } from "@/lib/api-client";
+import { apiClientFetch } from "@/lib/api-client";
 
 export default function LoginPage() {
     const [email, setEmail] = useState("");
@@ -24,33 +24,35 @@ export default function LoginPage() {
         setIsLoading(true);
 
         try {
-            const data = await api.post("/auth/login", { email, password });
+            const res = await fetch(`/api/auth/login`, {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json",
+                },
+                body: JSON.stringify({ email, password }),
+            });
 
-            // data should contain { token: string, user: User }
-            // Guardar JWT, datos de usuario y branchId en cookies
-            document.cookie = `token=${data.token}; path=/; max-age=86400; SameSite=Strict`;
-            document.cookie = `user=${JSON.stringify(data.user)}; path=/; max-age=86400; SameSite=Strict`;
-            if (data.branchId) {
-                document.cookie = `branchId=${data.branchId}; path=/; max-age=86400; SameSite=Strict`;
+            if (!res.ok) {
+                throw new Error("Credenciales inválidas");
             }
+
+            const data = await res.json();
 
             setCurrentUser(data.user);
-            setToken(data.token);
-            if (data.branchId) {
-                setBranchId(data.branchId);
-            }
-
+            console.log("ANTES");
+            router.replace("/dashboard");
+            console.log("DESPUES");
+            router.refresh();
             toast({
                 title: "Inicio de sesión exitoso",
                 description: `Bienvenido, ${data.user.name}.`,
             });
-            router.push("/");
+
         } catch (error: any) {
-            console.error("Login error:", error);
             toast({
                 variant: "destructive",
                 title: "Error de autenticación",
-                description: error.message || "Credenciales inválidas. Intente nuevamente.",
+                description: error.message,
             });
         } finally {
             setIsLoading(false);
@@ -71,7 +73,14 @@ export default function LoginPage() {
                         Ingrese sus credenciales para acceder al sistema
                     </CardDescription>
                 </CardHeader>
-                <form onSubmit={handleLogin}>
+                <form
+                    onSubmit={(e) => {
+                        // e.preventDefault();
+                        // e.stopPropagation();
+                        // handleLogin(e);
+                        router.replace("/dashboard");
+                    }}
+                >
                     <CardContent className="space-y-4">
                         <div className="space-y-2">
                             <Label htmlFor="email">Usuario</Label>

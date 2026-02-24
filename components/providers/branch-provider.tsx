@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useState, useEffect } from "react"
 import { useAudit } from "./audit-provider"
-import { api } from "@/lib/api-client"
+import { apiClientFetch } from "@/lib/api-client"
 import { useUser } from "./user-provider"
 
 export interface Branch {
@@ -38,7 +38,7 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
         const fetchBranches = async () => {
             try {
                 setIsLoading(true);
-                const data = await api.get("/branches");
+                const data = await apiClientFetch.get("/branches");
                 setBranches(data);
 
                 // If there's a branchId in the user session, set it as active
@@ -62,7 +62,7 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
 
     const addBranch = async (branchData: Omit<Branch, "id" | "createdAt">) => {
         try {
-            const newBranch = await api.post("/branches", branchData);
+            const newBranch = await apiClientFetch.post("/branches", branchData);
             logEvent("create", "branch", `Creó nueva sucursal: ${newBranch.name}`, newBranch.id)
             setBranches(prev => [...prev, newBranch])
         } catch (error) {
@@ -74,7 +74,7 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     const updateBranch = async (id: string, branchData: Partial<Branch>) => {
         const branch = branches.find(b => b.id === id)
         try {
-            const updatedBranch = await api.put(`/branches/${id}`, branchData);
+            const updatedBranch = await apiClientFetch.put(`/branches/${id}`, branchData);
             if (branch) {
                 logEvent("update", "branch", `Modificó detalles de sucursal ${branch.name}`, id, { branchData })
             }
@@ -90,7 +90,7 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     const removeBranch = async (id: string) => {
         const branch = branches.find(b => b.id === id)
         try {
-            await api.delete(`/branches/${id}`);
+            await apiClientFetch.delete(`/branches/${id}`);
             if (branch) {
                 logEvent("delete", "branch", `Eliminó la sucursal ${branch.name}`, id)
             }

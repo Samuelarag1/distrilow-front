@@ -14,6 +14,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
 import { useProducts, Product } from "@/components/providers/product-provider";
 import { useBranches } from "@/components/providers/branch-provider";
@@ -34,7 +35,7 @@ type SortKey = "name" | "price" | "stock" | "category";
 type SortOrder = "asc" | "desc";
 
 export function ProductsModule() {
-  const { products, addProduct, updateProduct, removeProduct, updateStock } = useProducts();
+  const { products, isLoading, addProduct, updateProduct, removeProduct, updateStock } = useProducts();
   const { branches } = useBranches();
   const { businessType } = useBusiness();
   const [searchQuery, setSearchQuery] = useState("");
@@ -46,6 +47,7 @@ export function ProductsModule() {
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
+  const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
   const handleSort = (key: SortKey) => {
@@ -101,22 +103,33 @@ export function ProductsModule() {
     }
   };
 
-  const handleSave = (productData: Partial<Product>) => {
-    if (editingProduct) {
-      updateProduct(editingProduct.id, productData);
+  const handleSave = async (productData: Partial<Product>) => {
+    setIsSaving(true);
+    try {
+      if (editingProduct) {
+        await updateProduct(editingProduct.id, productData);
+        toast({
+          title: "Producto actualizado",
+          description: "Los cambios han sido guardados correctamente.",
+        });
+      } else {
+        await addProduct(productData as Omit<Product, "id">);
+        toast({
+          title: "Producto creado",
+          description: "El nuevo producto ha sido agregado correctamente.",
+        });
+      }
+      setIsDialogOpen(false);
+      setEditingProduct(null);
+    } catch (error: any) {
       toast({
-        title: "Producto actualizado",
-        description: "Los cambios han sido guardados correctamente.",
+        variant: "destructive",
+        title: "Error al guardar",
+        description: error.message || "Ocurrió un error inesperado.",
       });
-    } else {
-      addProduct(productData as Omit<Product, "id">);
-      toast({
-        title: "Producto creado",
-        description: "El nuevo producto ha sido agregado correctamente.",
-      });
+    } finally {
+      setIsSaving(false);
     }
-    setIsDialogOpen(false);
-    setEditingProduct(null);
   };
 
   function SortButton({ label, sortKey: key }: { label: string, sortKey: SortKey }) {
@@ -212,17 +225,37 @@ export function ProductsModule() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
-            {filteredProducts.map((product) => (
-              <ProductCard
-                key={product.id}
-                product={product}
-                onEdit={handleEdit}
-                onDelete={handleDeleteTrigger}
-                onStockUpdate={updateStock}
-                businessType={businessType}
-                branches={branches}
-              />
-            ))}
+            {isLoading ? (
+              Array.from({ length: 6 }).map((_, i) => (
+                <div key={i} className="space-y-4">
+                  <Skeleton className="aspect-video w-full rounded-xl" />
+                  <div className="space-y-2">
+                    <Skeleton className="h-4 w-3/4" />
+                    <Skeleton className="h-4 w-full" />
+                  </div>
+                  <div className="flex justify-between">
+                    <Skeleton className="h-8 w-20" />
+                    <Skeleton className="h-8 w-20" />
+                  </div>
+                </div>
+              ))
+            ) : filteredProducts.length > 0 ? (
+              filteredProducts.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onEdit={handleEdit}
+                  onDelete={handleDeleteTrigger}
+                  onStockUpdate={updateStock}
+                  businessType={businessType}
+                  branches={branches}
+                />
+              ))
+            ) : (
+              <div className="col-span-full py-12 text-center">
+                <p className="text-muted-foreground">No se encontraron productos.</p>
+              </div>
+            )}
           </div>
         </CardContent>
       </Card>

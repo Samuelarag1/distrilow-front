@@ -21,6 +21,7 @@ import {
   History,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { Skeleton } from "@/components/ui/skeleton";
 import { useProducts, Product } from "@/components/providers/product-provider";
 import { useBranches } from "@/components/providers/branch-provider";
 import {
@@ -172,7 +173,7 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
 }
 
 export function InventoryModule() {
-  const { products: inventory, adjustStock, updateStock: setStockValue } = useProducts();
+  const { products: inventory, isLoading, adjustStock, updateStock: setStockValue } = useProducts();
   const { branches } = useBranches();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -495,21 +496,39 @@ export function InventoryModule() {
         </CardHeader>
         <CardContent>
           <div className="flex flex-col gap-4">
-            {filteredInventory.map((item) => (
-              <InventoryItemCard
-                key={item.id}
-                item={item}
-              />
-            ))}
+            {isLoading ? (
+              Array.from({ length: 5 }).map((_, i) => (
+                <Card key={i} className="w-full p-4">
+                  <div className="flex flex-col md:flex-row items-center gap-6">
+                    <div className="flex-1 w-full space-y-4">
+                      <div className="flex items-center gap-3">
+                        <Skeleton className="h-10 w-10 rounded-xl" />
+                        <div className="space-y-2">
+                          <Skeleton className="h-5 w-40" />
+                          <Skeleton className="h-3 w-20" />
+                        </div>
+                      </div>
+                      <Skeleton className="h-2 w-full" />
+                    </div>
+                    <Skeleton className="h-10 w-28 shrink-0" />
+                  </div>
+                </Card>
+              ))
+            ) : filteredInventory.length > 0 ? (
+              filteredInventory.map((item) => (
+                <InventoryItemCard
+                  key={item.id}
+                  item={item}
+                />
+              ))
+            ) : (
+              <div className="text-center py-12">
+                <p className="text-muted-foreground">
+                  No se encontraron productos con los filtros aplicados
+                </p>
+              </div>
+            )}
           </div>
-
-          {filteredInventory.length === 0 && (
-            <div className="text-center py-12">
-              <p className="text-muted-foreground">
-                No se encontraron productos con los filtros aplicados
-              </p>
-            </div>
-          )}
         </CardContent>
       </Card>
     </div>
