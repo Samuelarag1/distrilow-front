@@ -1,143 +1,98 @@
-"use client"
+"use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react"
-import { api } from "@/lib/api-client"
-import { useAudit } from "./audit-provider"
-import { useUser } from "./user-provider"
-
-export interface Product {
-    id: string;
-    name: string;
-    description: string;
-    price: number; // Precio Minorista
-    wholesalePrice: number; // Precio Mayorista
-    category: string;
-    stock: number;
-    status: "active" | "inactive";
-    image: string;
-    minStock?: number;
-    maxStock?: number;
-    unit?: string;
-    branchId: string;
-}
+import React, { createContext, useContext } from "react";
+import { mutate } from "swr";
+import { useAudit } from "./audit-provider";
+import { productsApi, Product } from "@/lib/products";
 
 interface ProductContextType {
-    products: Product[]
-    isLoading: boolean
-    updateStock: (id: string, newStock: number) => Promise<void>
-    adjustStock: (id: string, delta: number) => Promise<void>
-    addProduct: (product: Omit<Product, "id">) => Promise<void>
-    updateProduct: (id: string, productData: Partial<Product>) => Promise<void>
-    removeProduct: (id: string) => Promise<void>
+  //   updateStock: (id: string, newStock: number) => Promise<void>;
+  //   adjustStock: (id: string, delta: number) => Promise<void>;
+  addProduct: (product: Partial<Product>) => Promise<void>;
+  updateProduct: (id: string, productData: Partial<Product>) => Promise<void>;
+  removeProduct: (id: string) => Promise<void>;
 }
 
-const ProductContext = createContext<ProductContextType | undefined>(undefined)
+const ProductContext = createContext<ProductContextType | undefined>(undefined);
 
 export function ProductProvider({ children }: { children: React.ReactNode }) {
-    const [products, setProducts] = useState<Product[]>([])
-    const [isLoading, setIsLoading] = useState(true)
-    const { logEvent } = useAudit()
-    const { token } = useUser()
+  const { logEvent } = useAudit();
 
-    useEffect(() => {
-        const fetchProducts = async () => {
-            try {
-                setIsLoading(true);
-                const data = await api.get("/products");
-                setProducts(data);
-            } catch (error) {
-                console.error("Failed to fetch products:", error);
-            } finally {
-                setIsLoading(false);
-            }
-        };
+  const invalidateProducts = () =>
+    mutate((key) => Array.isArray(key) && key[0] === "products");
 
-        if (token) {
-            fetchProducts();
-        }
-    }, [token])
+  //   const updateStock = async (id: string, newStock: number) => {
+  //     await productsApi.update(id, { stock: Math.max(0, newStock) });
 
-    const updateStock = async (id: string, newStock: number) => {
-        const product = products.find(p => p.id === id)
-        if (!product) return;
+  //     logEvent("adjust_stock", "product", `Actualizó stock`, id, {
+  //       newStock,
+  //     });
 
-        try {
-            await api.put(`/products/${id}/stock`, { stock: Math.max(0, newStock) });
+  //     invalidateProducts();
+  //     mutate(["product", id]);
+  //   };
 
-            logEvent("adjust_stock", "product", `Actualizó stock de ${product.name} a ${newStock} ${product.unit}`, id, { oldStock: product.stock, newStock })
-            setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: Math.max(0, newStock) } : p))
-        } catch (error) {
-            console.error("Failed to update stock:", error);
-        }
-    }
+  //   const adjustStock = async (id: string, delta: number) => {
+  //     const product = await productsApi.getById(id);
+  //     const newStock = Math.max(0, (product as any).stock + delta);
 
-    const adjustStock = async (id: string, delta: number) => {
-        const product = products.find(p => p.id === id)
-        if (!product) return;
+  //     await productsApi.update(id, { stock: newStock });
 
-        const newStock = Math.max(0, product.stock + delta);
+  //     logEvent("adjust_stock", "product", `Ajustó stock`, id, {
+  //       delta,
+  //       newStock,
+  //     });
 
-        try {
-            await api.put(`/products/${id}/stock`, { stock: newStock });
+  //     invalidateProducts();
+  //     mutate(["product", id]);
+  //   };
 
-            logEvent("adjust_stock", "product", `${delta > 0 ? "Sumó" : "Restó"} ${Math.abs(delta)} a ${product.name}`, id, { delta, oldStock: product.stock, newStock })
-            setProducts(prev => prev.map(p => p.id === id ? { ...p, stock: newStock } : p))
-        } catch (error) {
-            console.error("Failed to adjust stock:", error);
-        }
-    }
+  const addProduct = async (productData: Partial<Product>) => {
+    const created = await productsApi.create(productData);
 
-    const addProduct = async (productData: Omit<Product, "id">) => {
-        try {
-            const newProduct = await api.post("/products", productData);
+    logEvent("create", "product", `Agregó nuevo producto`, created.id);
 
-            logEvent("create", "product", `Agregó nuevo producto: ${newProduct.name}`, newProduct.id)
-            setProducts(prev => [...prev, newProduct])
-        } catch (error) {
-            console.error("Error creating product:", error);
-            throw error;
-        }
-    }
+    invalidateProducts();
+  };
 
-    const updateProduct = async (id: string, productData: Partial<Product>) => {
-        const product = products.find(p => p.id === id)
-        if (!product) return;
+  const updateProduct = async (id: string, productData: Partial<Product>) => {
+    await productsApi.update(id, productData);
 
-        try {
-            const updatedProduct = await api.put(`/products/${id}`, productData);
+    logEvent("update", "product", `Modificó producto`, id, {
+      productData,
+    });
 
-            logEvent("update", "product", `Modificó detalles de ${product.name}`, id, { productData })
-            setProducts(prev => prev.map(p => p.id === id ? { ...p, ...updatedProduct } : p))
-        } catch (error) {
-            console.error("Error updating product:", error);
-        }
-    }
+    invalidateProducts();
+    mutate(["product", id]);
+  };
 
-    const removeProduct = async (id: string) => {
-        const product = products.find(p => p.id === id)
-        if (!product) return;
+  const removeProduct = async (id: string) => {
+    await productsApi.remove(id);
 
-        try {
-            await api.delete(`/products/${id}`);
+    logEvent("delete", "product", `Eliminó producto`, id);
 
-            logEvent("delete", "product", `Eliminó el producto ${product.name}`, id)
-            setProducts(prev => prev.filter(p => p.id !== id))
-        } catch (error) {
-            console.error("Error removing product:", error);
-        }
-    }
+    invalidateProducts();
+  };
 
-    return (
-        <ProductContext.Provider value={{ products, isLoading, updateStock, adjustStock, addProduct, updateProduct, removeProduct }}>
-            {children}
-        </ProductContext.Provider>
-    )
+  return (
+    <ProductContext.Provider
+      value={{
+        // updateStock,
+        // adjustStock,
+        addProduct,
+        updateProduct,
+        removeProduct,
+      }}
+    >
+      {children}
+    </ProductContext.Provider>
+  );
 }
 
-export function useProducts() {
-    const context = useContext(ProductContext)
-    if (context === undefined) {
-        throw new Error("useProducts must be used within a ProductProvider")
-    }
-    return context
+export function useProductActions() {
+  const context = useContext(ProductContext);
+  if (!context) {
+    throw new Error("useProductActions must be used within ProductProvider");
+  }
+  return context;
 }

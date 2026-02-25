@@ -28,18 +28,19 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 
-import { useProducts, Product } from "@/components/providers/product-provider";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useBranches } from "@/components/providers/branch-provider";
+import { Product } from "@/lib/products";
+import { useProducts } from "@/hooks/useProducts";
 
 interface CartItem extends Product {
   quantity: number;
 }
 
 export function POSModule() {
-  const { products, isLoading, adjustStock } = useProducts();
+  const { products, isLoading } = useProducts();
   const { addSale } = useTransactions();
   const { currentUser } = useUser();
   const { businessType } = useBusiness();
@@ -47,8 +48,12 @@ export function POSModule() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [selectedBranch, setSelectedBranch] = useState(branches[0]?.id || "all");
-  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<string | null>(null);
+  const [selectedBranch, setSelectedBranch] = useState(
+    branches[0]?.id || "all"
+  );
+  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<
+    string | null
+  >(null);
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const { toast } = useToast();
 
@@ -57,16 +62,16 @@ export function POSModule() {
       .toLowerCase()
       .includes(searchQuery.toLowerCase());
     const matchesCategory =
-      selectedCategory === "all" || product.category === selectedCategory;
+      selectedCategory === "all" || product.categoryId === selectedCategory;
     const matchesBranch =
-      selectedBranch === "all" || product.branchId === selectedBranch;
+      selectedBranch === "all" || product.brand === selectedBranch;
     return matchesSearch && matchesCategory && matchesBranch;
   });
 
-  const categories = Array.from(new Set(products.map((p) => p.category)));
+  const categories = Array.from(new Set(products.map((p) => p.categoryId)));
 
   const addToCart = (product: Product) => {
-    if (product.stock <= 0) {
+    if (product.costPrice <= 0) {
       toast({
         title: "Sin stock",
         description: `No hay unidades disponibles de ${product.name}`,
@@ -78,10 +83,10 @@ export function POSModule() {
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
-        if (existing.quantity >= product.stock) {
+        if (existing.quantity >= product.costPrice) {
           toast({
             title: "Stock limitado",
-            description: `Solo hay ${product.stock} unidades de ${product.name}`,
+            description: `Solo hay ${product.costPrice} unidades de ${product.name}`,
             variant: "destructive",
           });
           return prev;
@@ -97,11 +102,11 @@ export function POSModule() {
   };
 
   const updateQuantity = (id: string, quantity: number) => {
-    const product = products.find(p => p.id === id);
-    if (product && quantity > product.stock) {
+    const product = products.find((p) => p.id === id);
+    if (product && quantity > product.costPrice) {
       toast({
         title: "Stock insuficiente",
-        description: `No puedes agregar más de ${product.stock} unidades`,
+        description: `No puedes agregar más de ${product.costPrice} unidades`,
         variant: "destructive",
       });
       return;
@@ -120,7 +125,10 @@ export function POSModule() {
     setCart((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const total = cart.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const total = cart.reduce(
+    (sum, item) => sum + item.costPrice * item.quantity,
+    0
+  );
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const handlePayment = (method: string) => {
@@ -144,21 +152,21 @@ export function POSModule() {
       amount: total,
       customerName: "Consumidor Final",
       items: itemCount,
-      lineItems: cart.map(item => ({
+      lineItems: cart.map((item) => ({
         productId: item.id,
         quantity: item.quantity,
-        price: item.price
+        price: item.costPrice,
       })),
       userId: currentUser?.id || "unknown",
       userName: currentUser?.name || "Anónimo",
       branchId: selectedBranch,
-      businessType
+      businessType,
     });
 
     // Update Stock
-    cart.forEach(item => {
-      adjustStock(item.id, -item.quantity);
-    });
+    // cart.forEach(item => {
+    //   adjustStock(item.id, -item.quantity);
+    // });
 
     toast({
       title: "Venta Exitosa",
@@ -251,18 +259,23 @@ export function POSModule() {
                   ))
                 ) : filteredProducts.length > 0 ? (
                   filteredProducts.map((product) => {
-                    const activePrice = businessType === "wholesale" ? product.wholesalePrice : product.price;
+                    const activePrice =
+                      businessType === "wholesale"
+                        ? product.wholesalePrice
+                        : product.costPrice;
                     return (
                       <Card
                         key={product.id}
                         className="cursor-pointer hover:shadow-md transition-shadow group overflow-hidden"
-                        onClick={() => addToCart({ ...product, price: activePrice })}
+                        onClick={() =>
+                          addToCart({ ...product, costPrice: activePrice })
+                        }
                       >
                         <CardContent className="p-3">
                           <div className="flex items-center space-x-3">
                             <div className="w-12 h-12 rounded-md bg-muted flex items-center justify-center overflow-hidden shrink-0">
                               <img
-                                src={product.image || "/placeholder.svg"}
+                                src={product.brand || "/placeholder.svg"}
                                 alt={product.name}
                                 className="w-full h-full object-cover"
                               />
@@ -272,18 +285,25 @@ export function POSModule() {
                                 {product.name}
                               </h3>
                               <div className="flex items-center gap-2">
-                                <Badge variant="outline" className="text-[10px] px-1 py-0 h-4 uppercase font-black">
-                                  {product.unit || "u"}
+                                <Badge
+                                  variant="outline"
+                                  className="text-[10px] px-1 py-0 h-4 uppercase font-black"
+                                >
+                                  {product.costPrice || "u"}
                                 </Badge>
                                 <p className="text-[10px] text-muted-foreground truncate uppercase font-bold">
-                                  {product.category}
+                                  {product.categoryId}
                                 </p>
                               </div>
                               <p className="font-black text-sm text-primary">
                                 ${activePrice.toLocaleString()}
                               </p>
                             </div>
-                            <Button size="sm" variant="ghost" className="h-8 w-8 p-0 hover:bg-primary/10">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 w-8 p-0 hover:bg-primary/10"
+                            >
                               <Plus className="h-4 w-4" />
                             </Button>
                           </div>
@@ -293,7 +313,9 @@ export function POSModule() {
                   })
                 ) : (
                   <div className="col-span-full py-12 text-center">
-                    <p className="text-muted-foreground">No se encontraron productos.</p>
+                    <p className="text-muted-foreground">
+                      No se encontraron productos.
+                    </p>
                   </div>
                 )}
               </div>
@@ -324,7 +346,7 @@ export function POSModule() {
                         className="flex items-center space-x-2"
                       >
                         <img
-                          src={item.image || "/placeholder.svg"}
+                          src={item.name || "/placeholder.svg"}
                           alt={item.name}
                           className="w-10 h-10 rounded object-cover bg-muted"
                         />
@@ -333,7 +355,7 @@ export function POSModule() {
                             {item.name}
                           </h4>
                           <p className="text-xs text-muted-foreground">
-                            ${item.price.toFixed(2)}
+                            ${item.costPrice.toFixed(2)}
                           </p>
                         </div>
                         <div className="flex items-center space-x-1">
@@ -384,7 +406,7 @@ export function POSModule() {
                     <Separator />
                     <div className="flex justify-between font-bold">
                       <span>Total:</span>
-                      <span>${(total).toFixed(2)}</span>
+                      <span>${total.toFixed(2)}</span>
                     </div>
                   </div>
 
@@ -407,23 +429,26 @@ export function POSModule() {
 
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
-                        <Button
-                          className="w-full"
-                          variant="ghost"
-                        >
+                        <Button className="w-full" variant="ghost">
                           Limpiar Carrito
                         </Button>
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
-                          <AlertDialogTitle>¿Limpiar el carrito?</AlertDialogTitle>
+                          <AlertDialogTitle>
+                            ¿Limpiar el carrito?
+                          </AlertDialogTitle>
                           <AlertDialogDescription>
-                            Se quitarán todos los productos seleccionados. Esta acción no se puede deshacer.
+                            Se quitarán todos los productos seleccionados. Esta
+                            acción no se puede deshacer.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
                           <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                          <AlertDialogAction onClick={clearCart} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                          <AlertDialogAction
+                            onClick={clearCart}
+                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                          >
                             Limpiar
                           </AlertDialogAction>
                         </AlertDialogFooter>
@@ -437,17 +462,30 @@ export function POSModule() {
         </div>
       </div>
 
-      <AlertDialog open={isPaymentConfirmOpen} onOpenChange={setIsPaymentConfirmOpen}>
+      <AlertDialog
+        open={isPaymentConfirmOpen}
+        onOpenChange={setIsPaymentConfirmOpen}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar Pago</AlertDialogTitle>
             <AlertDialogDescription>
-              ¿Deseas procesar el pago de <strong>${total.toLocaleString()}</strong> usando <strong>{pendingPaymentMethod === 'Efectivo' ? 'Efectivo' : 'Tarjeta'}</strong>?
+              ¿Deseas procesar el pago de{" "}
+              <strong>${total.toLocaleString()}</strong> usando{" "}
+              <strong>
+                {pendingPaymentMethod === "Efectivo" ? "Efectivo" : "Tarjeta"}
+              </strong>
+              ?
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setPendingPaymentMethod(null)}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={processPayment} className="bg-primary hover:bg-primary/90">
+            <AlertDialogCancel onClick={() => setPendingPaymentMethod(null)}>
+              Cancelar
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={processPayment}
+              className="bg-primary hover:bg-primary/90"
+            >
               Confirmar y Registrar
             </AlertDialogAction>
           </AlertDialogFooter>

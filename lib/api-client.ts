@@ -2,7 +2,7 @@ let authToken: string | null = null;
 let activeBranchId: string | null = null;
 
 export function setApiSession(token: string, branchId?: string) {
-  authToken = token;
+  authToken = token || null;
   activeBranchId = branchId || null;
 }
 
@@ -26,7 +26,8 @@ async function request(url: string, options: RequestInit = {}) {
 
   if (!res.ok) {
     const error = await res.text();
-    throw new Error(error);
+    console.error("API Error:", error);
+    throw new Error(error || "API request failed");
   }
 
   return res.json();

@@ -16,15 +16,17 @@ export interface DashboardMetrics {
 }
 
 export const getDashboardMetrics = async (
-  type: BusinessType,
+  type: BusinessType
 ): Promise<DashboardMetrics> => {
   try {
-    const response = await apiClientFetch(`/dashboard/metrics?type=${type}`);
+    const response = await apiClientFetch.get(
+      `/dashboard/metrics?type=${type}`
+    );
     return await response.json();
   } catch (error) {
     console.error(
       "Failed to fetch dashboard metrics, using fallback empty state",
-      error,
+      error
     );
     return {
       totalRevenue: 0,
@@ -37,7 +39,7 @@ export const getDashboardMetrics = async (
 
 export const getRecentSales = async (type: BusinessType) => {
   try {
-    const response = await apiClientFetch(`/sales/recent?type=${type}`);
+    const response = await apiClientFetch.get(`/sales/recent?type=${type}`);
     return await response.json();
   } catch (error) {
     console.error("Failed to fetch recent sales", error);

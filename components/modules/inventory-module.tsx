@@ -22,7 +22,6 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useProducts, Product } from "@/components/providers/product-provider";
 import { useBranches } from "@/components/providers/branch-provider";
 import {
   Dialog,
@@ -34,6 +33,7 @@ import {
   DialogTrigger,
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
+import { Product } from "@/lib/products";
 
 type SortKey = "name" | "stock" | "category" | "price";
 type SortOrder = "asc" | "desc";
@@ -48,10 +48,18 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 const getCategoryColor = (category: string) => {
-  return CATEGORY_COLORS[category] || "bg-blue-100 text-blue-700 border-blue-200";
+  return (
+    CATEGORY_COLORS[category] || "bg-blue-100 text-blue-700 border-blue-200"
+  );
 };
 
-function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amount: number) => void }) {
+function AdjustStockDialog({
+  item,
+  onAdjust,
+}: {
+  item: Product;
+  onAdjust: (amount: number) => void;
+}) {
   const [amount, setAmount] = useState<string>("");
   const [mode, setMode] = useState<"add" | "subtract">("add");
   const [open, setOpen] = useState(false);
@@ -66,9 +74,10 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
     }
   };
 
-  const currentTotal = mode === "add"
-    ? item.stock + (parseInt(amount) || 0)
-    : Math.max(0, item.stock - (parseInt(amount) || 0));
+  const currentTotal =
+    mode === "add"
+      ? item.stock + (parseInt(amount) || 0)
+      : Math.max(0, item.stock - (parseInt(amount) || 0));
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -89,7 +98,8 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
               Ajuste de Existencias
             </DialogTitle>
             <DialogDescription>
-              Modifica el stock actual de <strong>{item.name}</strong> seleccionando el tipo de movimiento.
+              Modifica el stock actual de <strong>{item.name}</strong>{" "}
+              seleccionando el tipo de movimiento.
             </DialogDescription>
           </DialogHeader>
 
@@ -98,8 +108,11 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
               <button
                 type="button"
                 onClick={() => setMode("add")}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-all ${mode === "add" ? "bg-white shadow-sm text-green-600" : "text-muted-foreground hover:text-foreground"
-                  }`}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-all ${
+                  mode === "add"
+                    ? "bg-white shadow-sm text-green-600"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
               >
                 <Plus className="h-4 w-4" />
                 Ingreso
@@ -107,8 +120,11 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
               <button
                 type="button"
                 onClick={() => setMode("subtract")}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-all ${mode === "subtract" ? "bg-white shadow-sm text-red-600" : "text-muted-foreground hover:text-foreground"
-                  }`}
+                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-all ${
+                  mode === "subtract"
+                    ? "bg-white shadow-sm text-red-600"
+                    : "text-muted-foreground hover:text-foreground"
+                }`}
               >
                 <Minus className="h-4 w-4" />
                 Egreso/Desecho
@@ -117,21 +133,31 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
 
             <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border border-dashed border-muted-foreground/30">
               <div className="space-y-1">
-                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Existencia</p>
-                <p className="text-xl font-black">{item.stock} {item.unit || 'uds'}</p>
+                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
+                  Existencia
+                </p>
+                <p className="text-xl font-black">
+                  {item.stock} {item.unit || "uds"}
+                </p>
               </div>
               <div className="h-8 w-px bg-muted-foreground/20" />
               <div className="text-right space-y-1">
-                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Proyectado</p>
-                <p className={`text-xl font-black ${mode === 'add' ? 'text-green-600' : 'text-red-600'}`}>
-                  {currentTotal} {item.unit || 'uds'}
+                <p className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
+                  Proyectado
+                </p>
+                <p
+                  className={`text-xl font-black ${
+                    mode === "add" ? "text-green-600" : "text-red-600"
+                  }`}
+                >
+                  {currentTotal} {item.unit || "uds"}
                 </p>
               </div>
             </div>
 
             <div className="grid gap-2">
               <Label htmlFor="amount" className="font-bold text-sm">
-                Cantidad a {mode === 'add' ? 'sumar' : 'restar'}
+                Cantidad a {mode === "add" ? "sumar" : "restar"}
               </Label>
               <div className="relative">
                 <Input
@@ -144,7 +170,11 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
                   className="text-2xl font-black h-14 pl-12 focus-visible:ring-primary/20"
                 />
                 <div className="absolute left-4 top-1/2 -translate-y-1/2">
-                  {mode === 'add' ? <Plus className="h-6 w-6 text-green-500" /> : <Minus className="h-6 w-6 text-red-500" />}
+                  {mode === "add" ? (
+                    <Plus className="h-6 w-6 text-green-500" />
+                  ) : (
+                    <Minus className="h-6 w-6 text-red-500" />
+                  )}
                 </div>
               </div>
             </div>
@@ -161,9 +191,13 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
             </Button>
             <Button
               type="submit"
-              className={`font-bold px-8 ${mode === 'add' ? 'bg-green-600 hover:bg-green-700' : 'bg-red-600 hover:bg-red-700'}`}
+              className={`font-bold px-8 ${
+                mode === "add"
+                  ? "bg-green-600 hover:bg-green-700"
+                  : "bg-red-600 hover:bg-red-700"
+              }`}
             >
-              Confirmar {mode === 'add' ? 'Ingreso' : 'Egreso'}
+              Confirmar {mode === "add" ? "Ingreso" : "Egreso"}
             </Button>
           </DialogFooter>
         </form>
@@ -173,7 +207,12 @@ function AdjustStockDialog({ item, onAdjust }: { item: Product, onAdjust: (amoun
 }
 
 export function InventoryModule() {
-  const { products: inventory, isLoading, adjustStock, updateStock: setStockValue } = useProducts();
+  const {
+    products: inventory,
+    isLoading,
+    adjustStock,
+    updateStock: setStockValue,
+  } = useProducts();
   const { branches } = useBranches();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -192,7 +231,7 @@ export function InventoryModule() {
   };
 
   const filteredInventory = inventory
-    .filter((item) => {
+    .filter((item: Product) => {
       const matchesSearch = item.name
         .toLowerCase()
         .includes(searchQuery.toLowerCase());
@@ -202,7 +241,7 @@ export function InventoryModule() {
         selectedBranch === "all" || item.branchId === selectedBranch;
       return matchesSearch && matchesCategory && matchesBranch;
     })
-    .sort((a, b) => {
+    .sort((a: Product, b: Product) => {
       const factor = sortOrder === "asc" ? 1 : -1;
       const valA = a[sortKey] || 0;
       const valB = b[sortKey] || 0;
@@ -212,15 +251,15 @@ export function InventoryModule() {
     });
 
   const categories = Array.from(
-    new Set(inventory.map((item) => item.category))
-  );
+    new Set(inventory.map((item: Product) => item.category))
+  ) as string[];
 
   const lowStockItems = inventory.filter(
-    (item) => item.stock <= (item.minStock || 0)
+    (item: Product) => item.stock <= (item.minStock || 0)
   );
 
   const totalValue = inventory.reduce(
-    (sum, item) => sum + item.stock * item.price,
+    (sum: number, item: Product) => sum + item.stock * item.price,
     0
   );
 
@@ -254,7 +293,9 @@ export function InventoryModule() {
       adjustStock(item.id, amountToAdjust);
       toast({
         title: "Stock Ajustado",
-        description: `Se ha modificado el stock de ${item.name} en ${amountToAdjust} ${item.unit || 'unidades'}.`,
+        description: `Se ha modificado el stock de ${
+          item.name
+        } en ${amountToAdjust} ${item.unit || "unidades"}.`,
       });
     };
 
@@ -266,8 +307,8 @@ export function InventoryModule() {
             status === "low"
               ? "#ef4444"
               : status === "high"
-                ? "#22c55e"
-                : "#3b82f6",
+              ? "#22c55e"
+              : "#3b82f6",
         }}
       >
         {status === "low" && (
@@ -280,8 +321,16 @@ export function InventoryModule() {
           <div className="flex-1 min-w-0 w-full">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
-                <div className={`p-2.5 rounded-xl ${status === 'low' ? 'bg-red-500/10' : 'bg-primary/10'}`}>
-                  <Package className={`h-6 w-6 ${status === 'low' ? 'text-red-500' : 'text-primary'}`} />
+                <div
+                  className={`p-2.5 rounded-xl ${
+                    status === "low" ? "bg-red-500/10" : "bg-primary/10"
+                  }`}
+                >
+                  <Package
+                    className={`h-6 w-6 ${
+                      status === "low" ? "text-red-500" : "text-primary"
+                    }`}
+                  />
                 </div>
                 <div>
                   <h3 className="font-bold text-lg leading-tight truncate group-hover:text-primary transition-colors">
@@ -289,14 +338,20 @@ export function InventoryModule() {
                   </h3>
                   <Badge
                     variant="outline"
-                    className={`text-[10px] uppercase font-black tracking-widest mt-1 ${getCategoryColor(item.category)}`}
+                    className={`text-[10px] uppercase font-black tracking-widest mt-1 ${getCategoryColor(
+                      item.category
+                    )}`}
                   >
                     {item.category}
                   </Badge>
                 </div>
               </div>
               <div className="text-right flex flex-col items-end">
-                <div className={`text-3xl font-black leading-none ${getStockColor(status)}`}>
+                <div
+                  className={`text-3xl font-black leading-none ${getStockColor(
+                    status
+                  )}`}
+                >
                   {item.stock}
                 </div>
                 <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter mt-1">
@@ -306,9 +361,16 @@ export function InventoryModule() {
             </div>
 
             <div className="space-y-1.5 mt-4">
-              <Progress value={progressValue} className={`h-2 ${status === 'low' ? 'bg-red-100' : 'bg-secondary'}`} />
+              <Progress
+                value={progressValue}
+                className={`h-2 ${
+                  status === "low" ? "bg-red-100" : "bg-secondary"
+                }`}
+              />
               <div className="flex justify-between text-[10px] text-muted-foreground font-black uppercase tracking-wider">
-                <span className={status === 'low' ? 'text-red-500' : ''}>Mín: {item.minStock || 0}</span>
+                <span className={status === "low" ? "text-red-500" : ""}>
+                  Mín: {item.minStock || 0}
+                </span>
                 <span>Capacidad: {item.maxStock || 100}</span>
               </div>
             </div>
@@ -317,8 +379,12 @@ export function InventoryModule() {
           {/* Pricing & Valorization */}
           <div className="hidden lg:flex flex-col items-end justify-center px-8 border-l border-dashed min-w-[180px]">
             <div className="flex flex-col items-end">
-              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Valorización</span>
-              <span className="text-xl font-black text-primary">${(item.stock * item.price).toLocaleString()}</span>
+              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
+                Valorización
+              </span>
+              <span className="text-xl font-black text-primary">
+                ${(item.stock * item.price).toLocaleString()}
+              </span>
               <span className="text-[10px] text-muted-foreground font-medium italic mt-0.5">
                 (Calc. a ${item.price}/u)
               </span>
@@ -334,7 +400,13 @@ export function InventoryModule() {
     );
   }
 
-  function SortButton({ label, sortKey: key }: { label: string, sortKey: SortKey }) {
+  function SortButton({
+    label,
+    sortKey: key,
+  }: {
+    label: string;
+    sortKey: SortKey;
+  }) {
     const isActive = sortKey === key;
     return (
       <Button
@@ -345,12 +417,16 @@ export function InventoryModule() {
       >
         {label}
         {isActive ? (
-          sortOrder === "asc" ? <ArrowUp className="ml-1 h-3 w-3" /> : <ArrowDown className="ml-1 h-3 w-3" />
+          sortOrder === "asc" ? (
+            <ArrowUp className="ml-1 h-3 w-3" />
+          ) : (
+            <ArrowDown className="ml-1 h-3 w-3" />
+          )
         ) : (
           <ArrowUpDown className="ml-1 h-3 w-3 opacity-50" />
         )}
       </Button>
-    )
+    );
   }
 
   return (
@@ -371,7 +447,9 @@ export function InventoryModule() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Total Productos</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Total Productos
+                </p>
                 <p className="text-3xl font-bold mt-1">{inventory.length}</p>
               </div>
               <div className="h-12 w-12 rounded-full bg-blue-500/10 flex items-center justify-center">
@@ -385,8 +463,12 @@ export function InventoryModule() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Stock Bajo</p>
-                <p className="text-3xl font-bold mt-1 text-red-500">{lowStockItems.length}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Stock Bajo
+                </p>
+                <p className="text-3xl font-bold mt-1 text-red-500">
+                  {lowStockItems.length}
+                </p>
               </div>
               <div className="h-12 w-12 rounded-full bg-red-500/10 flex items-center justify-center">
                 <AlertTriangle className="h-6 w-6 text-red-500" />
@@ -399,8 +481,12 @@ export function InventoryModule() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Valor Total</p>
-                <p className="text-3xl font-bold mt-1">${totalValue.toLocaleString()}</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Valor Total
+                </p>
+                <p className="text-3xl font-bold mt-1">
+                  ${totalValue.toLocaleString()}
+                </p>
               </div>
               <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
                 <TrendingUp className="h-6 w-6 text-green-500" />
@@ -413,7 +499,9 @@ export function InventoryModule() {
           <CardContent className="p-6">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-sm font-medium text-muted-foreground">Categorías</p>
+                <p className="text-sm font-medium text-muted-foreground">
+                  Categorías
+                </p>
                 <p className="text-3xl font-bold mt-1">{categories.length}</p>
               </div>
               <div className="h-12 w-12 rounded-full bg-orange-500/10 flex items-center justify-center">
@@ -432,14 +520,25 @@ export function InventoryModule() {
           <div className="flex-1">
             <h4 className="text-red-900 font-bold">Resumen de Reposición</h4>
             <p className="text-red-700 text-sm">
-              Hay {lowStockItems.length} productos con stock crítico. Se recomienda revisar:
+              Hay {lowStockItems.length} productos con stock crítico. Se
+              recomienda revisar:
               <span className="font-bold ml-1">
-                {lowStockItems.slice(0, 3).map(i => i.name).join(", ")}
-                {lowStockItems.length > 3 ? ` y ${lowStockItems.length - 3} más...` : ""}
+                {lowStockItems
+                  .slice(0, 3)
+                  .map((item: Product) => item.name)
+                  .join(", ")}
+                {lowStockItems.length > 3
+                  ? ` y ${lowStockItems.length - 3} más...`
+                  : ""}
               </span>
             </p>
           </div>
-          <Button variant="outline" size="sm" className="border-red-200 text-red-700 hover:bg-red-100 font-bold" onClick={() => setSelectedCategory("all")}>
+          <Button
+            variant="outline"
+            size="sm"
+            className="border-red-200 text-red-700 hover:bg-red-100 font-bold"
+            onClick={() => setSelectedCategory("all")}
+          >
             Ver Todo
           </Button>
         </div>
@@ -486,7 +585,9 @@ export function InventoryModule() {
             </div>
 
             <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-              <span className="text-sm text-muted-foreground font-medium mr-2">Ordenar por:</span>
+              <span className="text-sm text-muted-foreground font-medium mr-2">
+                Ordenar por:
+              </span>
               <SortButton label="Nombre" sortKey="name" />
               <SortButton label="Stock" sortKey="stock" />
               <SortButton label="Categoría" sortKey="category" />
@@ -515,11 +616,8 @@ export function InventoryModule() {
                 </Card>
               ))
             ) : filteredInventory.length > 0 ? (
-              filteredInventory.map((item) => (
-                <InventoryItemCard
-                  key={item.id}
-                  item={item}
-                />
+              filteredInventory.map((item: Product) => (
+                <InventoryItemCard key={item.id} item={item} />
               ))
             ) : (
               <div className="text-center py-12">

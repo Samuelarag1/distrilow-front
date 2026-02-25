@@ -5,7 +5,16 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, MoreHorizontal, Edit, Trash2, ArrowUpDown, ArrowUp, ArrowDown } from "lucide-react";
+import {
+  Plus,
+  Search,
+  MoreHorizontal,
+  Edit,
+  Trash2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+} from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -16,7 +25,7 @@ import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
 import Image from "next/image";
-import { useProducts, Product } from "@/components/providers/product-provider";
+// import { useProducts, Product } from "@/components/providers/product-provider";
 import { useBranches } from "@/components/providers/branch-provider";
 import { useBusiness } from "@/components/providers/business-provider";
 
@@ -30,12 +39,24 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+// import { useProductMutations } from "@/app/providers/useProductsMutation";
+import { useProducts } from "@/hooks/useProducts";
+import { useProductActions } from "@/components/providers/product-provider";
+import { Product } from "@/lib/products";
+import { useProductMutations } from "@/app/providers/useProductsMutation";
 
 type SortKey = "name" | "price" | "stock" | "category";
 type SortOrder = "asc" | "desc";
 
 export function ProductsModule() {
-  const { products, isLoading, addProduct, updateProduct, removeProduct, updateStock } = useProducts();
+  const {
+    addProduct,
+    updateProduct,
+    removeProduct,
+    // updateStock,
+  } = useProductActions();
+  const { products, isLoading } = useProducts({ skip: 0, take: 20 });
+
   const { branches } = useBranches();
   const { businessType } = useBusiness();
   const [searchQuery, setSearchQuery] = useState("");
@@ -50,6 +71,8 @@ export function ProductsModule() {
   const [isSaving, setIsSaving] = useState(false);
   const { toast } = useToast();
 
+  // const { products, isLoading } = useProducts({ skip: 0, take: 20 });
+  const { createProduct } = useProductMutations();
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
       setSortOrder(sortOrder === "asc" ? "desc" : "asc");
@@ -62,24 +85,38 @@ export function ProductsModule() {
   const filteredProducts = products
     .filter((product) => {
       const matchesSearch =
-        product.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        product.description.toLowerCase().includes(searchQuery.toLowerCase());
+        product?.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        product?.description?.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesCategory =
-        selectedCategory === "all" || product.category === selectedCategory;
+        selectedCategory === "all" || product?.categoryId === selectedCategory;
       const matchesBranch =
-        selectedBranch === "all" || product.branchId === selectedBranch;
+        selectedBranch === "all" || product?.barcode === selectedBranch;
       return matchesSearch && matchesCategory && matchesBranch;
     })
     .sort((a, b) => {
       const factor = sortOrder === "asc" ? 1 : -1;
-      const valA = a[sortKey] || 0;
-      const valB = b[sortKey] || 0;
+      let valA: any = 0;
+      let valB: any = 0;
+
+      if (sortKey === "price") {
+        valA = a.costPrice || 0;
+        valB = b.costPrice || 0;
+      } else if (sortKey === "stock") {
+        valA = a.trackStock || 0;
+        valB = b.trackStock || 0;
+      } else {
+        valA = (a as any)[sortKey] || 0;
+        valB = (b as any)[sortKey] || 0;
+      }
+
       if (valA < valB) return -1 * factor;
       if (valA > valB) return 1 * factor;
       return 0;
     });
 
-  const categories = Array.from(new Set(products.map((p) => p.category)));
+  const categories = Array.from(
+    new Set(products.map((p) => p.categoryId).filter(Boolean))
+  ) as string[];
 
   const handleEdit = (product: Product) => {
     setEditingProduct(product);
@@ -91,16 +128,18 @@ export function ProductsModule() {
     setIsDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = () => {
-    if (productToDelete) {
-      removeProduct(productToDelete);
-      toast({
-        title: "Producto eliminado",
-        description: "El producto ha sido eliminado correctamente.",
-      });
-      setIsDeleteDialogOpen(false);
-      setProductToDelete(null);
-    }
+  const handleDeleteConfirm = async () => {
+    if (!productToDelete) return;
+
+    await removeProduct(productToDelete);
+
+    toast({
+      title: "Producto eliminado",
+      description: "El producto ha sido eliminado correctamente.",
+    });
+
+    setIsDeleteDialogOpen(false);
+    setProductToDelete(null);
   };
 
   const handleSave = async (productData: Partial<Product>) => {
@@ -113,12 +152,13 @@ export function ProductsModule() {
           description: "Los cambios han sido guardados correctamente.",
         });
       } else {
-        await addProduct(productData as Omit<Product, "id">);
+        await addProduct(productData);
         toast({
           title: "Producto creado",
           description: "El nuevo producto ha sido agregado correctamente.",
         });
       }
+
       setIsDialogOpen(false);
       setEditingProduct(null);
     } catch (error: any) {
@@ -132,7 +172,13 @@ export function ProductsModule() {
     }
   };
 
-  function SortButton({ label, sortKey: key }: { label: string, sortKey: SortKey }) {
+  function SortButton({
+    label,
+    sortKey: key,
+  }: {
+    label: string;
+    sortKey: SortKey;
+  }) {
     const isActive = sortKey === key;
     return (
       <Button
@@ -143,12 +189,16 @@ export function ProductsModule() {
       >
         {label}
         {isActive ? (
-          sortOrder === "asc" ? <ArrowUp className="ml-1 h-3 w-3" /> : <ArrowDown className="ml-1 h-3 w-3" />
+          sortOrder === "asc" ? (
+            <ArrowUp className="ml-1 h-3 w-3" />
+          ) : (
+            <ArrowDown className="ml-1 h-3 w-3" />
+          )
         ) : (
           <ArrowUpDown className="ml-1 h-3 w-3 opacity-50" />
         )}
       </Button>
-    )
+    );
   }
 
   return (
@@ -215,7 +265,9 @@ export function ProductsModule() {
             </div>
 
             <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
-              <span className="text-sm text-muted-foreground font-medium mr-2">Ordenar por:</span>
+              <span className="text-sm text-muted-foreground font-medium mr-2">
+                Ordenar por:
+              </span>
               <SortButton label="Nombre" sortKey="name" />
               <SortButton label="Precio" sortKey="price" />
               <SortButton label="Stock" sortKey="stock" />
@@ -246,14 +298,16 @@ export function ProductsModule() {
                   product={product}
                   onEdit={handleEdit}
                   onDelete={handleDeleteTrigger}
-                  onStockUpdate={updateStock}
+                  onStockUpdate={() => console.log("s")}
                   businessType={businessType}
                   branches={branches}
                 />
               ))
             ) : (
               <div className="col-span-full py-12 text-center">
-                <p className="text-muted-foreground">No se encontraron productos.</p>
+                <p className="text-muted-foreground">
+                  No se encontraron productos.
+                </p>
               </div>
             )}
           </div>
@@ -267,17 +321,26 @@ export function ProductsModule() {
         onSave={handleSave}
       />
 
-      <AlertDialog open={isDeleteDialogOpen} onOpenChange={setIsDeleteDialogOpen}>
+      <AlertDialog
+        open={isDeleteDialogOpen}
+        onOpenChange={setIsDeleteDialogOpen}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>¿Está seguro de eliminar este producto?</AlertDialogTitle>
+            <AlertDialogTitle>
+              ¿Está seguro de eliminar este producto?
+            </AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. El producto se eliminará permanentemente de su catálogo.
+              Esta acción no se puede deshacer. El producto se eliminará
+              permanentemente de su catálogo.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction onClick={handleDeleteConfirm} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+            <AlertDialogAction
+              onClick={handleDeleteConfirm}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
               Eliminar
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -293,20 +356,20 @@ function ProductCard({
   onDelete,
   onStockUpdate,
   businessType,
-  branches
+  branches,
 }: {
-  product: Product,
-  onEdit: (p: Product) => void,
-  onDelete: (id: string) => void,
-  onStockUpdate: (id: string, val: number) => void,
-  businessType: string,
-  branches: any[]
+  product: Product;
+  onEdit: (p: Product) => void;
+  onDelete: (id: string) => void;
+  onStockUpdate: (id: string, val: number) => void;
+  businessType: string;
+  branches: any[];
 }) {
   return (
     <Card className="overflow-hidden group hover:shadow-lg transition-all duration-300 border-t-4 border-t-transparent hover:border-t-primary">
       <div className="aspect-video bg-muted relative overflow-hidden">
         <Image
-          src={product.image || "/placeholder.svg"}
+          src={"/placeholder.svg"}
           alt={product.name}
           width={400}
           height={225}
@@ -314,20 +377,28 @@ function ProductCard({
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
         />
         <div className="absolute top-2 right-2 flex flex-col gap-2">
-          <Badge
-            className={`${product.status === "active"
-              ? "bg-green-500 hover:bg-green-600 border-none"
-              : "bg-gray-500 hover:bg-gray-600 border-none"
-              } shadow-sm`}
+          {/* <Badge
+            className={`${
+              product.isActive === "active"
+                ? "bg-green-500 hover:bg-green-600 border-none"
+                : "bg-gray-500 hover:bg-gray-600 border-none"
+            } shadow-sm`}
           >
-            {product.status === "active" ? "Activo" : "Inactivo"}
+            {product === "active" ? "Activo" : "Inactivo"}
+          </Badge> */}
+          <Badge
+            variant="secondary"
+            className="backdrop-blur-md bg-white/70 dark:bg-black/70 border-none shadow-sm text-xs"
+          >
+            {product.categoryId}
           </Badge>
-          <Badge variant="secondary" className="backdrop-blur-md bg-white/70 dark:bg-black/70 border-none shadow-sm text-xs">
-            {product.category}
-          </Badge>
-          <Badge variant="outline" className="backdrop-blur-md bg-white/50 dark:bg-black/50 border-none shadow-sm text-[10px] font-bold">
-            {branches.find(b => b.id === product.branchId)?.name || 'Sin Sucursal'}
-          </Badge>
+          {/* <Badge
+            variant="outline"
+            className="backdrop-blur-md bg-white/50 dark:bg-black/50 border-none shadow-sm text-[10px] font-bold"
+          >
+            {branches.find((b) => b.id === product.branchId)?.name ||
+              "Sin Sucursal"}
+          </Badge> */}
         </div>
       </div>
       <CardContent className="p-5">
@@ -364,16 +435,34 @@ function ProductCard({
 
           <div className="flex items-end justify-between pt-2">
             <div className="flex flex-col gap-1 w-full">
-              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Precios Unitarios</span>
+              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
+                Precios Unitarios
+              </span>
               <div className="flex items-center justify-between w-full border-b border-dashed pb-1">
-                <span className="text-xs font-bold text-muted-foreground">Minorista</span>
-                <span className={`font-black text-sm ${businessType === 'retail' ? 'text-primary' : 'text-foreground'}`}>
-                  ${product.price.toLocaleString()}
+                <span className="text-xs font-bold text-muted-foreground">
+                  Minorista
+                </span>
+                <span
+                  className={`font-black text-sm ${
+                    businessType === "retail"
+                      ? "text-primary"
+                      : "text-foreground"
+                  }`}
+                >
+                  ${product.costPrice.toLocaleString()}
                 </span>
               </div>
               <div className="flex items-center justify-between w-full">
-                <span className="text-xs font-bold text-muted-foreground">Mayorista</span>
-                <span className={`font-black text-sm ${businessType === 'wholesale' ? 'text-primary' : 'text-foreground'}`}>
+                <span className="text-xs font-bold text-muted-foreground">
+                  Mayorista
+                </span>
+                <span
+                  className={`font-black text-sm ${
+                    businessType === "wholesale"
+                      ? "text-primary"
+                      : "text-foreground"
+                  }`}
+                >
                   ${product.wholesalePrice.toLocaleString()}
                 </span>
               </div>
@@ -382,18 +471,33 @@ function ProductCard({
 
           <div className="flex items-center justify-between pt-2 border-t mt-2">
             <div className="flex flex-col">
-              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">Envasado</span>
-              <Badge variant="secondary" className="font-black text-[10px] py-0 px-2 mt-1">
-                {product.unit || 'U.'}
+              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
+                Envasado
+              </span>
+              <Badge
+                variant="secondary"
+                className="font-black text-[10px] py-0 px-2 mt-1"
+              >
+                {product.measurementType || "U."}
               </Badge>
             </div>
             <div className="flex flex-col items-end">
-              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-1">Existencia</span>
+              <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-1">
+                Existencia
+              </span>
               <div className="flex items-center gap-1.5 bg-muted px-3 py-1 rounded-full border border-dashed">
-                <span className={`font-black text-sm ${product.stock <= (product.minStock || 0) ? 'text-red-500' : 'text-foreground'}`}>
-                  {product.stock}
+                {/* <span
+                  className={`font-black text-sm ${
+                    product.trackStock <= (product.retailPrice || 0)
+                      ? "text-red-500"
+                      : "text-foreground"
+                  }`}
+                > */}
+                {/* {product.trackStock}
+                </span> */}
+                <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-tighter">
+                  unidades
                 </span>
-                <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-tighter">unidades</span>
               </div>
             </div>
           </div>
