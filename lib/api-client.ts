@@ -55,3 +55,6 @@ export const apiClientFetch = {
     request(url, { method: "PATCH", body: JSON.stringify(body) }),
   delete: (url: string) => request(url, { method: "DELETE" }),
 };
+export async function apiGet<T>(url: string): Promise<T> {
+  return apiClientFetch.get(url) as Promise<T>;
+}

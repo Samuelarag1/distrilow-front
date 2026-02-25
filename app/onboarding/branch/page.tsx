@@ -101,9 +101,8 @@ export default function OnboardingBranchesPage() {
 
     setIsSaving(true);
     try {
-      // ✅ Endpoint recomendado
-      const res = await apiClientFetch.post("/branches", formData);
-      // o /branches/bootstrap si existe
+      // ✅ Endpoint recomendadoconst
+      const res = await apiClientFetch.post("/branches/bootstrap", formData);
 
       const session = res?.session;
 
@@ -120,29 +119,31 @@ export default function OnboardingBranchesPage() {
       }
 
       // si no hay session (no es bootstrap), asignamos manualmente
-      if (!session?.activeBranchId) {
-        await apiClientFetch.patch(
-          `/user-branches/${currentUser?.id}/branches`,
-          {
-            branchIds: [createdBranchId],
-            defaultBranchId: createdBranchId,
-            replace: true,
-          }
-        );
-      }
+      //   if (!session?.activeBranchId) {
+      //     await apiClientFetch.patch(
+      //       `/user-branches/${currentUser?.id}/branches`,
+      //       {
+      //         branchIds: [createdBranchId],
+      //         defaultBranchId: createdBranchId,
+      //         replace: true,
+      //       }
+      //     );
+      //   }
 
-      const availableBranches = session?.availableBranches ?? [
-        {
-          id: createdBranchId,
-          name: createdBranch?.name ?? "Sucursal",
-          isDefault: true,
-        },
-      ];
+      //   const availableBranches = session?.availableBranches ?? [
+      //     {
+      //       id: createdBranchId,
+      //       name: createdBranch?.name ?? "Sucursal",
+      //       isDefault: true,
+      //     },
+      //   ];
+      const availableBranches = res.session.availableBranches;
+      const activeBranchId = res.session.activeBranchId;
 
       setBranches(availableBranches);
-      setBranchId(createdBranchId);
+      setBranchId(activeBranchId);
       setNeedsOnboarding(false);
-      setApiSession(token!, createdBranchId);
+      setApiSession(token!, activeBranchId);
 
       document.cookie = `branches=${encodeURIComponent(
         JSON.stringify(availableBranches)

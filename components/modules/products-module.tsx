@@ -1,33 +1,16 @@
-"use client";
+// "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import useSWRInfinite from "swr/infinite";
+import Image from "next/image";
+
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
-import {
-  Plus,
-  Search,
-  MoreHorizontal,
-  Edit,
-  Trash2,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-} from "lucide-react";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+import { Skeleton } from "@/components/ui/skeleton";
 import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { Skeleton } from "@/components/ui/skeleton";
-import Image from "next/image";
-// import { useProducts, Product } from "@/components/providers/product-provider";
-import { useBranches } from "@/components/providers/branch-provider";
-import { useBusiness } from "@/components/providers/business-provider";
 
 import {
   AlertDialog,
@@ -39,84 +22,269 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-// import { useProductMutations } from "@/app/providers/useProductsMutation";
-import { useProducts } from "@/hooks/useProducts";
+
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+
+import {
+  Plus,
+  Search,
+  MoreHorizontal,
+  Edit,
+  Trash2,
+  ArrowUpDown,
+  ArrowUp,
+  ArrowDown,
+  Loader2,
+} from "lucide-react";
+
 import { useProductActions } from "@/components/providers/product-provider";
+import { useBranch } from "@/components/providers/business-provider"; // <-- tu provider nuevo
 import { Product } from "@/lib/products";
-import { useProductMutations } from "@/app/providers/useProductsMutation";
+import { apiClientFetch, apiGet, setApiSession } from "@/lib/api-client"; // apiGet opcional
+import { useUser } from "../providers/user-provider";
+
+/**
+ * ------------------------------------------------------------
+ * Types / helpers
+ * ------------------------------------------------------------
+ */
 
 type SortKey = "name" | "price" | "stock" | "category";
 type SortOrder = "asc" | "desc";
 
-export function ProductsModule() {
-  const {
-    addProduct,
-    updateProduct,
-    removeProduct,
-    // updateStock,
-  } = useProductActions();
-  const { products, isLoading } = useProducts({ skip: 0, take: 20 });
+// backend soporta estos (según lo que armamos)
+type ApiSortBy =
+  | "name"
+  | "createdAt"
+  | "costPrice"
+  | "retailPrice"
+  | "wholesalePrice";
 
-  const { branches } = useBranches();
-  const { businessType } = useBusiness();
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
-  const [selectedBranch, setSelectedBranch] = useState("all");
-  const [isDialogOpen, setIsDialogOpen] = useState(false);
-  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-  const [productToDelete, setProductToDelete] = useState<string | null>(null);
-  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
-  const [sortKey, setSortKey] = useState<SortKey>("name");
-  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
-  const [isSaving, setIsSaving] = useState(false);
+type PageResponse = {
+  items: Product[];
+  total: number;
+  skip: number;
+  take: number;
+  nextSkip: number | null;
+  hasMore: boolean;
+};
+
+function useDebouncedValue<T>(value: T, ms: number) {
+  const [debounced, setDebounced] = useState(value);
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(value), ms);
+    return () => clearTimeout(id);
+  }, [value, ms]);
+  return debounced;
+}
+
+function buildQuery(params: Record<string, any>) {
+  const usp = new URLSearchParams();
+  Object.entries(params).forEach(([k, v]) => {
+    if (v === undefined || v === null || v === "" || v === "all") return;
+    usp.set(k, String(v));
+  });
+  const s = usp.toString();
+  return s ? `?${s}` : "";
+}
+
+function mapSort(
+  sortKey: SortKey,
+  sortOrder: SortOrder
+): { sortBy: ApiSortBy; sortOrder: SortOrder } {
+  if (sortKey === "price") return { sortBy: "retailPrice", sortOrder };
+  if (sortKey === "name") return { sortBy: "name", sortOrder };
+
+  // stock/category no son columnas reales ordenables en tu entidad (por ahora)
+  return { sortBy: "name", sortOrder };
+}
+
+function useInfiniteScroll(opts: {
+  enabled: boolean;
+  onLoadMore: () => void;
+  rootMargin?: string;
+}) {
+  const { enabled, onLoadMore, rootMargin = "900px" } = opts;
+  const [el, setEl] = useState<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!enabled) return;
+    if (!el) return;
+
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) onLoadMore();
+      },
+      { root: null, rootMargin }
+    );
+
+    io.observe(el);
+    return () => io.disconnect();
+  }, [enabled, onLoadMore, rootMargin, el]);
+
+  return setEl;
+}
+
+/**
+ * ------------------------------------------------------------
+ * Hook SWR Infinite: paginado + cache por branch + filtros
+ * ------------------------------------------------------------
+ */
+function useProductsInfinite(args: {
+  take?: number;
+  activeBranchId: string | null;
+  search?: string;
+  categoryId?: string | null;
+  sortBy: ApiSortBy;
+  sortOrder: SortOrder;
+}) {
+  const {
+    take = 20,
+    activeBranchId,
+    search,
+    categoryId,
+    sortBy,
+    sortOrder,
+  } = args;
+
+  const getKey = (pageIndex: number, previousPageData: PageResponse | null) => {
+    if (!activeBranchId) return null;
+    if (previousPageData && !previousPageData.hasMore) return null;
+
+    const skip = pageIndex * take;
+
+    // clave de cache: branch + filtros + pagina
+    return [
+      "/products",
+      activeBranchId,
+      skip,
+      take,
+      search ?? "",
+      categoryId ?? "",
+      sortBy,
+      sortOrder,
+    ] as const;
+  };
+
+  const fetchPage = async (key: readonly any[]) => {
+    const [, , skip, take, search, categoryId, sortBy, sortOrder] = key;
+
+    const qs = buildQuery({
+      skip,
+      take,
+      search,
+      categoryId,
+      sortBy,
+      sortOrder,
+    });
+
+    // ✅ ACÁ estaba tu error: apiClientFetch NO es callable.
+    // Usamos .get (o apiGet<PageResponse>)
+    return apiGet<PageResponse>(`/products${qs}`);
+    // si no querés apiGet:
+    // return apiClientFetch.get(`/products${qs}`) as Promise<PageResponse>;
+  };
+
+  const swr = useSWRInfinite<PageResponse>(getKey, fetchPage, {
+    revalidateOnFocus: false,
+    dedupingInterval: 30_000,
+    persistSize: true,
+    keepPreviousData: true,
+  });
+
+  const pages = swr.data ?? [];
+  const products = pages.flatMap((p) => p.items);
+  const total = pages[0]?.total ?? 0;
+  const hasMore = pages.length ? pages[pages.length - 1].hasMore : false;
+
+  const isLoadingInitial = !swr.data && swr.isLoading;
+  const isLoadingMore = !!swr.data && swr.isLoading;
+
+  const loadMore = () => swr.setSize((s) => s + 1);
+
+  return {
+    ...swr,
+    products,
+    total,
+    hasMore,
+    isLoadingInitial,
+    isLoadingMore,
+    loadMore,
+  };
+}
+
+/**
+ * ------------------------------------------------------------
+ * ProductsModule
+ * ------------------------------------------------------------
+ */
+
+export function ProductsModule() {
+  const { addProduct, updateProduct, removeProduct } = useProductActions();
+  const { activeBranchId, availableBranches, setActiveBranch } = useBranch();
+
+  const { token, branchId, branches, setBranchId } = useUser();
   const { toast } = useToast();
 
-  // const { products, isLoading } = useProducts({ skip: 0, take: 20 });
-  const { createProduct } = useProductMutations();
+  const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 350);
+
+  const [selectedCategory, setSelectedCategory] = useState("all");
+
+  const [sortKey, setSortKey] = useState<SortKey>("name");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
+
+  const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null);
+
+  const [productToDelete, setProductToDelete] = useState<string | null>(null);
+  const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
+
+  const [isSaving, setIsSaving] = useState(false);
+
+  const { sortBy, sortOrder: mappedSortOrder } = useMemo(
+    () => mapSort(sortKey, sortOrder),
+    [sortKey, sortOrder]
+  );
+
+  const {
+    products,
+    total,
+    hasMore,
+    isLoadingInitial,
+    isLoadingMore,
+    loadMore,
+    mutate,
+    error,
+  } = useProductsInfinite({
+    activeBranchId,
+    take: 20,
+    search: debouncedSearch,
+    categoryId: selectedCategory === "all" ? null : selectedCategory,
+    sortBy,
+    sortOrder: mappedSortOrder,
+  });
+
+  // categorías derivadas de lo que ya cargaste (si querés completo, conviene endpoint /categories)
+  const categories = useMemo(() => {
+    return Array.from(
+      new Set(products.map((p) => p.categoryId).filter(Boolean))
+    ) as string[];
+  }, [products]);
+
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
-      setSortOrder(sortOrder === "asc" ? "desc" : "asc");
+      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
       setSortKey(key);
       setSortOrder("asc");
     }
   };
-
-  const filteredProducts = products
-    .filter((product) => {
-      const matchesSearch =
-        product?.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-        product?.description?.toLowerCase().includes(searchQuery.toLowerCase());
-      const matchesCategory =
-        selectedCategory === "all" || product?.categoryId === selectedCategory;
-      const matchesBranch =
-        selectedBranch === "all" || product?.barcode === selectedBranch;
-      return matchesSearch && matchesCategory && matchesBranch;
-    })
-    .sort((a, b) => {
-      const factor = sortOrder === "asc" ? 1 : -1;
-      let valA: any = 0;
-      let valB: any = 0;
-
-      if (sortKey === "price") {
-        valA = a.costPrice || 0;
-        valB = b.costPrice || 0;
-      } else if (sortKey === "stock") {
-        valA = a.trackStock || 0;
-        valB = b.trackStock || 0;
-      } else {
-        valA = (a as any)[sortKey] || 0;
-        valB = (b as any)[sortKey] || 0;
-      }
-
-      if (valA < valB) return -1 * factor;
-      if (valA > valB) return 1 * factor;
-      return 0;
-    });
-
-  const categories = Array.from(
-    new Set(products.map((p) => p.categoryId).filter(Boolean))
-  ) as string[];
 
   const handleEdit = (product: Product) => {
     setEditingProduct(product);
@@ -131,15 +299,23 @@ export function ProductsModule() {
   const handleDeleteConfirm = async () => {
     if (!productToDelete) return;
 
-    await removeProduct(productToDelete);
-
-    toast({
-      title: "Producto eliminado",
-      description: "El producto ha sido eliminado correctamente.",
-    });
-
-    setIsDeleteDialogOpen(false);
-    setProductToDelete(null);
+    try {
+      await removeProduct(productToDelete);
+      await mutate(); // refresca cache (páginas actuales)
+      toast({
+        title: "Producto eliminado",
+        description: "El producto ha sido eliminado correctamente.",
+      });
+    } catch (e: any) {
+      toast({
+        variant: "destructive",
+        title: "Error al eliminar",
+        description: e?.message || "Ocurrió un error inesperado.",
+      });
+    } finally {
+      setIsDeleteDialogOpen(false);
+      setProductToDelete(null);
+    }
   };
 
   const handleSave = async (productData: Partial<Product>) => {
@@ -159,18 +335,24 @@ export function ProductsModule() {
         });
       }
 
+      await mutate(); // revalida listado
       setIsDialogOpen(false);
       setEditingProduct(null);
-    } catch (error: any) {
+    } catch (err: any) {
       toast({
         variant: "destructive",
         title: "Error al guardar",
-        description: error.message || "Ocurrió un error inesperado.",
+        description: err?.message || "Ocurrió un error inesperado.",
       });
     } finally {
       setIsSaving(false);
     }
   };
+
+  const sentinelRef = useInfiniteScroll({
+    enabled: !!activeBranchId && hasMore && !isLoadingMore,
+    onLoadMore: loadMore,
+  });
 
   function SortButton({
     label,
@@ -186,6 +368,7 @@ export function ProductsModule() {
         size="sm"
         className="h-8 text-xs font-medium"
         onClick={() => handleSort(key)}
+        disabled={!activeBranchId}
       >
         {label}
         {isActive ? (
@@ -201,6 +384,9 @@ export function ProductsModule() {
     );
   }
 
+  const isLoading = isLoadingInitial;
+  const isEmpty = !isLoading && products.length === 0;
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -209,15 +395,22 @@ export function ProductsModule() {
             Productos
           </h1>
           <p className="text-muted-foreground">
-            Gestiona tu catálogo de productos y existencias
+            Gestiona tu catálogo de productos
           </p>
         </div>
+
         <Button
           onClick={() => {
             setEditingProduct(null);
             setIsDialogOpen(true);
           }}
           className="w-full sm:w-auto shadow-sm hover:shadow-md transition-all"
+          // disabled={!activeBranchId}
+          title={
+            !activeBranchId
+              ? "Seleccioná una sucursal para gestionar productos"
+              : undefined
+          }
         >
           <Plus className="mr-2 h-4 w-4" />
           Nuevo Producto
@@ -235,12 +428,15 @@ export function ProductsModule() {
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-8"
+                  disabled={!activeBranchId}
                 />
               </div>
+
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
                 className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                disabled={!activeBranchId}
               >
                 <option value="all">Todas las categorías</option>
                 {categories.map((category) => (
@@ -250,15 +446,35 @@ export function ProductsModule() {
                 ))}
               </select>
 
-              <select
-                value={selectedBranch}
-                onChange={(e) => setSelectedBranch(e.target.value)}
+              {/* <select
+                value={activeBranchId ?? "all"}
+                onChange={(e) => setActiveBranch(e.target.value)}
                 className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
-                <option value="all">Todas las sucursales</option>
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name}
+                <option value="all" disabled>
+                  Seleccionar sucursal…
+                </option>
+                {availableBranches.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
+                  </option>
+                ))}
+              </select> */}
+              <select
+                value={branchId ?? ""} // ✅ usa la misma branch real
+                onChange={(e) => {
+                  const id = e.target.value;
+                  if (!id) return;
+                  setBranchId(id); // ✅ actualiza estado global real
+                  if (token) setApiSession(token, id); // ✅ actualiza X-Branch-Id
+                  document.cookie = `activeBranchId=${id}; path=/`; // ✅ persiste
+                }}
+                className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+              >
+                <option value="">Seleccionar sucursal…</option>
+                {branches?.map((b) => (
+                  <option key={b.id} value={b.id}>
+                    {b.name}
                   </option>
                 ))}
               </select>
@@ -272,9 +488,40 @@ export function ProductsModule() {
               <SortButton label="Precio" sortKey="price" />
               <SortButton label="Stock" sortKey="stock" />
               <SortButton label="Categoría" sortKey="category" />
+
+              <div className="ml-auto flex items-center gap-2 text-xs text-muted-foreground">
+                {!!activeBranchId && (
+                  <>
+                    <span>
+                      {products.length.toLocaleString()} /{" "}
+                      {total.toLocaleString()}
+                    </span>
+                    {isLoadingMore && (
+                      <span className="inline-flex items-center gap-1">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        cargando…
+                      </span>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
+
+            {!activeBranchId && (
+              <div className="text-sm text-muted-foreground">
+                Seleccioná una sucursal para cargar el catálogo.
+              </div>
+            )}
+
+            {error && (
+              <div className="text-sm text-destructive">
+                Error al cargar productos:{" "}
+                {String((error as any)?.message ?? error)}
+              </div>
+            )}
           </div>
         </CardHeader>
+
         <CardContent>
           <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
             {isLoading ? (
@@ -291,26 +538,39 @@ export function ProductsModule() {
                   </div>
                 </div>
               ))
-            ) : filteredProducts.length > 0 ? (
-              filteredProducts.map((product) => (
-                <ProductCard
-                  key={product.id}
-                  product={product}
-                  onEdit={handleEdit}
-                  onDelete={handleDeleteTrigger}
-                  onStockUpdate={() => console.log("s")}
-                  businessType={businessType}
-                  branches={branches}
-                />
-              ))
-            ) : (
+            ) : isEmpty ? (
               <div className="col-span-full py-12 text-center">
                 <p className="text-muted-foreground">
                   No se encontraron productos.
                 </p>
               </div>
+            ) : (
+              products.map((product) => (
+                <ProductCard
+                  key={product.id}
+                  product={product}
+                  onEdit={handleEdit}
+                  onDelete={handleDeleteTrigger}
+                />
+              ))
             )}
           </div>
+
+          {!!activeBranchId && (
+            <>
+              <div ref={sentinelRef} className="h-10" />
+              {isLoadingMore && (
+                <div className="py-6 text-center text-sm text-muted-foreground">
+                  Cargando más productos...
+                </div>
+              )}
+              {!hasMore && products.length > 0 && (
+                <div className="py-6 text-center text-xs text-muted-foreground">
+                  Ya cargaste todo el catálogo.
+                </div>
+              )}
+            </>
+          )}
         </CardContent>
       </Card>
 
@@ -319,6 +579,8 @@ export function ProductsModule() {
         onOpenChange={setIsDialogOpen}
         product={editingProduct}
         onSave={handleSave}
+        // si tu dialog no acepta esta prop, borrala
+        // isSaving={isSaving as any}
       />
 
       <AlertDialog
@@ -354,16 +616,10 @@ function ProductCard({
   product,
   onEdit,
   onDelete,
-  onStockUpdate,
-  businessType,
-  branches,
 }: {
   product: Product;
   onEdit: (p: Product) => void;
   onDelete: (id: string) => void;
-  onStockUpdate: (id: string, val: number) => void;
-  businessType: string;
-  branches: any[];
 }) {
   return (
     <Card className="overflow-hidden group hover:shadow-lg transition-all duration-300 border-t-4 border-t-transparent hover:border-t-primary">
@@ -376,37 +632,24 @@ function ProductCard({
           loading="lazy"
           className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500"
         />
+
         <div className="absolute top-2 right-2 flex flex-col gap-2">
-          {/* <Badge
-            className={`${
-              product.isActive === "active"
-                ? "bg-green-500 hover:bg-green-600 border-none"
-                : "bg-gray-500 hover:bg-gray-600 border-none"
-            } shadow-sm`}
-          >
-            {product === "active" ? "Activo" : "Inactivo"}
-          </Badge> */}
           <Badge
             variant="secondary"
             className="backdrop-blur-md bg-white/70 dark:bg-black/70 border-none shadow-sm text-xs"
           >
             {product.categoryId}
           </Badge>
-          {/* <Badge
-            variant="outline"
-            className="backdrop-blur-md bg-white/50 dark:bg-black/50 border-none shadow-sm text-[10px] font-bold"
-          >
-            {branches.find((b) => b.id === product.branchId)?.name ||
-              "Sin Sucursal"}
-          </Badge> */}
         </div>
       </div>
+
       <CardContent className="p-5">
         <div className="space-y-4">
           <div className="flex items-start justify-between min-h-[3rem]">
             <h3 className="font-bold text-base leading-tight group-hover:text-primary transition-colors">
               {product.name}
             </h3>
+
             <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon" className="h-8 w-8 -mr-2">
@@ -436,34 +679,24 @@ function ProductCard({
           <div className="flex items-end justify-between pt-2">
             <div className="flex flex-col gap-1 w-full">
               <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
-                Precios Unitarios
+                Precios
               </span>
+
               <div className="flex items-center justify-between w-full border-b border-dashed pb-1">
                 <span className="text-xs font-bold text-muted-foreground">
                   Minorista
                 </span>
-                <span
-                  className={`font-black text-sm ${
-                    businessType === "retail"
-                      ? "text-primary"
-                      : "text-foreground"
-                  }`}
-                >
-                  ${product.costPrice.toLocaleString()}
+                <span className="font-black text-sm text-foreground">
+                  ${Number((product as any).retailPrice ?? 0).toLocaleString()}
                 </span>
               </div>
+
               <div className="flex items-center justify-between w-full">
                 <span className="text-xs font-bold text-muted-foreground">
                   Mayorista
                 </span>
-                <span
-                  className={`font-black text-sm ${
-                    businessType === "wholesale"
-                      ? "text-primary"
-                      : "text-foreground"
-                  }`}
-                >
-                  ${product.wholesalePrice.toLocaleString()}
+                <span className="font-black text-sm text-foreground">
+                  ${Number(product.wholesalePrice ?? 0).toLocaleString()}
                 </span>
               </div>
             </div>
@@ -478,23 +711,15 @@ function ProductCard({
                 variant="secondary"
                 className="font-black text-[10px] py-0 px-2 mt-1"
               >
-                {product.measurementType || "U."}
+                {(product as any).measurementType || "U."}
               </Badge>
             </div>
+
             <div className="flex flex-col items-end">
               <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest mb-1">
                 Existencia
               </span>
               <div className="flex items-center gap-1.5 bg-muted px-3 py-1 rounded-full border border-dashed">
-                {/* <span
-                  className={`font-black text-sm ${
-                    product.trackStock <= (product.retailPrice || 0)
-                      ? "text-red-500"
-                      : "text-foreground"
-                  }`}
-                > */}
-                {/* {product.trackStock}
-                </span> */}
                 <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-tighter">
                   unidades
                 </span>
