@@ -317,32 +317,81 @@ export function ProductsModule() {
       setProductToDelete(null);
     }
   };
-
+  useEffect(() => {
+    if (token && branchId) {
+      setApiSession(token, branchId);
+    }
+  }, [token, branchId]);
   const handleSave = async (productData: Partial<Product>) => {
     setIsSaving(true);
+
     try {
+      // ✅ Normalización para evitar: enum inválido, FK inválida, unique con "", NaN, etc.
+      const payload: any = {
+        ...productData,
+
+        // measurementType es requerido en tu DTO → default seguro
+        measurementType: (productData as any).measurementType ?? "unit",
+
+        // si viene "" lo convertimos a null para no romper unique ni FK
+        barcode: (productData as any).barcode?.trim() || null,
+        categoryId: (productData as any).categoryId?.trim() || null,
+
+        // números: si vienen strings desde inputs, los pasamos a number
+        costPrice:
+          productData.costPrice !== undefined
+            ? Number(productData.costPrice)
+            : undefined,
+        wholesalePrice:
+          productData.wholesalePrice !== undefined
+            ? Number(productData.wholesalePrice)
+            : undefined,
+        retailPrice:
+          productData.retailPrice !== undefined
+            ? Number(productData.retailPrice)
+            : undefined,
+        marginPercent:
+          (productData as any).marginPercent !== undefined &&
+          (productData as any).marginPercent !== null &&
+          (productData as any).marginPercent !== ""
+            ? Number((productData as any).marginPercent)
+            : undefined,
+      };
+      console.log("payload product:", payload);
+      // ✅ Si tu backend NO tiene branchId en ProductEntity, NO lo mandes
+      // (si el backend lo necesita para crear, debería venir del header X-Branch-Id)
+      // delete payload.branchId;
+
       if (editingProduct) {
-        await updateProduct(editingProduct.id, productData);
+        await updateProduct(editingProduct.id, payload);
         toast({
           title: "Producto actualizado",
           description: "Los cambios han sido guardados correctamente.",
         });
       } else {
-        await addProduct(productData);
+        await addProduct(payload);
         toast({
           title: "Producto creado",
           description: "El nuevo producto ha sido agregado correctamente.",
         });
       }
 
-      await mutate(); // revalida listado
+      await mutate();
       setIsDialogOpen(false);
       setEditingProduct(null);
     } catch (err: any) {
+      // ✅ Mostrá info útil (si tu apiClientFetch tira error con response)
+      const msg =
+        err?.response?.data?.details ||
+        err?.response?.data?.message ||
+        err?.details ||
+        err?.message ||
+        "Ocurrió un error inesperado.";
+
       toast({
         variant: "destructive",
         title: "Error al guardar",
-        description: err?.message || "Ocurrió un error inesperado.",
+        description: msg,
       });
     } finally {
       setIsSaving(false);
