@@ -15,38 +15,34 @@ import {
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
 import { useTransactions } from "@/components/providers/transactions-provider";
-import { useBusiness } from "@/components/providers/business-provider";
+import { useUser } from "@/components/providers/user-provider";
 import { format, subDays, isSameDay } from "date-fns";
 import { es } from "date-fns/locale";
 
 export function SalesChart() {
   const { sales } = useTransactions();
-  const { businessType } = useBusiness();
+  const { branchId } = useUser();
 
-  // Generate chart data for the last 7 days from real transactions
+  // Si todavía no hay branch (onboarding), no tiene sentido graficar
+  if (!branchId) return null;
+
   const chartData = Array.from({ length: 7 }).map((_, i) => {
     const date = subDays(new Date(), 6 - i);
-    const daySales = sales.filter(s =>
-      s.businessType === businessType &&
-      isSameDay(new Date(s.date), date)
+
+    const daySales = sales.filter(
+      (s: any) => s.branchId === branchId && isSameDay(new Date(s.date), date)
     );
 
     return {
       name: format(date, "EEE", { locale: es }),
-      ventas: daySales.reduce((sum, s) => sum + s.amount, 0),
-      pedidos: daySales.length
+      ventas: daySales.reduce((sum: number, s: any) => sum + s.amount, 0),
+      pedidos: daySales.length,
     };
   });
 
   const chartConfig = {
-    ventas: {
-      label: "Ventas",
-      color: "hsl(var(--chart-1))",
-    },
-    pedidos: {
-      label: "Pedidos",
-      color: "hsl(var(--chart-2))",
-    },
+    ventas: { label: "Ventas", color: "hsl(var(--chart-1))" },
+    pedidos: { label: "Pedidos", color: "hsl(var(--chart-2))" },
   };
 
   return (
@@ -59,6 +55,7 @@ export function SalesChart() {
           Basado en transacciones reales del sistema
         </CardDescription>
       </CardHeader>
+
       <CardContent className="p-4 sm:p-6">
         <div className="w-full h-[250px] sm:h-[300px]">
           <ChartContainer config={chartConfig} className="w-full h-full">

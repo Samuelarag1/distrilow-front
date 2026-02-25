@@ -24,7 +24,13 @@ export default function LoginPage() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
   const { toast } = useToast();
-  const { setCurrentUser, setToken, setBranchId } = useUser();
+  const {
+    setCurrentUser,
+    setToken,
+    setBranchId,
+    setBranches,
+    setNeedsOnboarding,
+  } = useUser();
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -36,23 +42,43 @@ export default function LoginPage() {
         password,
       });
 
-      // 👇 USAR BIEN EL NOMBRE
       setToken(data.accessToken);
       setCurrentUser(data.user);
 
-      // 👇 CLAVE: sincroniza apiClientFetch
-      setApiSession(data.accessToken);
+      // ✅ NUEVO: session del backend
+      const activeBranchId = data.session?.activeBranchId ?? null;
+      const availableBranches = data.session?.availableBranches ?? [];
+      const needsOnboarding = data.session?.needsOnboarding ?? false;
 
-      // 👇 persistencia para reload
+      // ✅ Guardar en tu provider
+      setBranchId(activeBranchId); // si es null, OK (onboarding)
+      setBranches?.(availableBranches); // opcional si lo tenés
+      setNeedsOnboarding?.(needsOnboarding); // opcional si lo tenés
+
+      // ✅ CLAVE: header Authorization + X-Branch-Id
+      setApiSession(data.accessToken, activeBranchId ?? undefined);
+
+      // ✅ Persistencia cookies
       document.cookie = `token=${data.accessToken}; path=/`;
       document.cookie = `user=${encodeURIComponent(
         JSON.stringify(data.user)
       )}; path=/`;
+      document.cookie = `branches=${encodeURIComponent(
+        JSON.stringify(availableBranches)
+      )}; path=/`;
+      document.cookie = `activeBranchId=${activeBranchId ?? ""}; path=/`;
 
       toast({
         title: "Inicio de sesión exitoso",
         description: `Bienvenido, ${data.user.email}`,
       });
+
+      // ✅ Routing: si no hay branches -> onboarding
+      if (needsOnboarding || !activeBranchId) {
+        router.push("/onboarding/branch"); // o donde crees la primera sucursal
+      } else {
+        router.push("/dashboard");
+      }
     } catch (error: any) {
       toast({
         variant: "destructive",

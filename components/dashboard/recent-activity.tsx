@@ -11,7 +11,7 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
 
 import { useTransactions } from "@/components/providers/transactions-provider";
-import { useBusiness } from "@/components/providers/business-provider";
+
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 
@@ -24,10 +24,10 @@ const statusColors = {
 
 export function RecentActivity() {
   const { sales } = useTransactions();
-  const { businessType } = useBusiness();
+  const businessType = "retail"; // O "wholesale" según tu lógica
 
   const filteredSales = sales
-    .filter(s => s.businessType === businessType)
+    .filter((s) => s.businessType === businessType)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .slice(0, 5);
 
@@ -61,7 +61,11 @@ export function RecentActivity() {
                   {sale.customerName}
                 </p>
                 <p className="text-xs text-muted-foreground truncate first-letter:uppercase mt-1">
-                  Venta realizada • {formatDistanceToNow(new Date(sale.date), { addSuffix: true, locale: es })}
+                  Venta realizada •{" "}
+                  {formatDistanceToNow(new Date(sale.date), {
+                    addSuffix: true,
+                    locale: es,
+                  })}
                 </p>
               </div>
             </div>
@@ -71,13 +75,17 @@ export function RecentActivity() {
               >
                 Completado
               </Badge>
-              <div className="font-black text-primary">${sale.amount.toLocaleString()}</div>
+              <div className="font-black text-primary">
+                ${sale.amount.toLocaleString()}
+              </div>
             </div>
           </div>
         ))}
         {filteredSales.length === 0 && (
           <div className="text-center py-6">
-            <p className="text-sm text-muted-foreground italic">No hay actividad reciente aún.</p>
+            <p className="text-sm text-muted-foreground italic">
+              No hay actividad reciente aún.
+            </p>
           </div>
         )}
       </CardContent>

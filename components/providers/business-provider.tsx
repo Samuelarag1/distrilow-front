@@ -1,27 +1,59 @@
-"use client"
+"use client";
 
-import type React from "react"
-import { createContext, useContext, useState } from "react"
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { setApiSession } from "@/lib/api-client";
 
-export type BusinessType = "retail" | "wholesale"
-
-interface BusinessContextType {
-  businessType: BusinessType
-  setBusinessType: (type: BusinessType) => void
+export interface Branch {
+  id: string;
+  name: string;
+  isDefault?: boolean;
 }
 
-const BusinessContext = createContext<BusinessContextType | undefined>(undefined)
+interface BranchContextType {
+  activeBranchId: string | null;
+  availableBranches: Branch[];
+  setActiveBranch: (branchId: string) => void;
+  setSessionBranches: (branches: Branch[], activeId: string | null) => void;
+}
+
+const BranchContext = createContext<BranchContextType | undefined>(undefined);
 
 export function BusinessProvider({ children }: { children: React.ReactNode }) {
-  const [businessType, setBusinessType] = useState<BusinessType>("retail")
+  const [availableBranches, setAvailableBranches] = useState<Branch[]>([]);
+  const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
 
-  return <BusinessContext.Provider value={{ businessType, setBusinessType }}>{children}</BusinessContext.Provider>
+  useEffect(() => {
+    if (activeBranchId) {
+      setApiSession(localStorage.getItem("token")!, activeBranchId);
+      localStorage.setItem("activeBranchId", activeBranchId);
+    }
+  }, [activeBranchId]);
+
+  const setActiveBranch = (branchId: string) => {
+    setActiveBranchId(branchId);
+  };
+
+  const setSessionBranches = (branches: Branch[], activeId: string | null) => {
+    setAvailableBranches(branches);
+    setActiveBranchId(activeId);
+  };
+
+  return (
+    <BranchContext.Provider
+      value={{
+        activeBranchId,
+        availableBranches,
+        setActiveBranch,
+        setSessionBranches,
+      }}
+    >
+      {children}
+    </BranchContext.Provider>
+  );
 }
 
-export function useBusiness() {
-  const context = useContext(BusinessContext)
-  if (context === undefined) {
-    throw new Error("useBusiness must be used within a BusinessProvider")
-  }
-  return context
+export function useBranch() {
+  const context = useContext(BranchContext);
+  if (!context) throw new Error("useBranch must be used within BranchProvider");
+  return context;
 }

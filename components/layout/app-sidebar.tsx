@@ -27,12 +27,11 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
-import { BusinessTypeSelector } from "@/components/business/business-type-selector";
 import { UserProfile } from "@/components/layout/user-profile";
-import { useBusiness } from "@/components/providers/business-provider";
 import { useUser } from "@/components/providers/user-provider";
 
 import type { ISidebarMenu } from "@/types/Sidebar";
+import { BranchSelector } from "../branchSelector/branchSelector";
 
 const businessMenus: { [key: string]: ISidebarMenu[] } = {
   retail: [
@@ -45,28 +44,17 @@ const businessMenus: { [key: string]: ISidebarMenu[] } = {
     { title: "Reportes", url: "/reports", icon: FileText },
     { title: "Sucursales", url: "/branches", icon: MapPin },
   ],
-  wholesale: [
-    { title: "Dashboard", url: "/", icon: BarChart3 },
-    { title: "Punto de Venta", url: "/pos", icon: CreditCard },
-    { title: "Productos", url: "/products", icon: Package },
-    { title: "Inventario", url: "/inventory", icon: Package2 },
-    { title: "Ventas", url: "/sales", icon: TrendingUp },
-    { title: "Gastos", url: "/expenses", icon: Receipt },
-    { title: "Reportes", url: "/reports", icon: FileText },
-    { title: "Sucursales", url: "/branches", icon: MapPin },
-  ],
 };
 
 export function AppSidebar() {
-  const { businessType } = useBusiness();
   const { currentUser } = useUser();
   const pathname = usePathname();
-  const menuItems = businessMenus[businessType];
+  const menuItems = businessMenus.retail;
 
   return (
     <Sidebar collapsible="icon" className="border-r bg-sidebar">
       <SidebarHeader className="border-b border-sidebar-border px-6 py-5">
-        <BusinessTypeSelector />
+        <BranchSelector />
       </SidebarHeader>
 
       <SidebarContent className="px-3 py-4">

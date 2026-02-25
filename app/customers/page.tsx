@@ -1,10 +1,10 @@
-"use client"
+"use client";
 
-import { AppSidebar } from "@/components/layout/app-sidebar"
-import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
-import { Header } from "@/components/layout/header"
-import { UnderDevelopment } from "@/components/common/under-development"
-import { BusinessProvider } from "@/components/providers/business-provider"
+import { AppSidebar } from "@/components/layout/app-sidebar";
+import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
+import { Header } from "@/components/layout/header";
+import { UnderDevelopment } from "@/components/common/under-development";
+import { BusinessProvider } from "@/components/providers/business-provider";
 
 export default function CustomersPage() {
   return (
@@ -33,5 +33,5 @@ export default function CustomersPage() {
         </div>
       </SidebarProvider>
     </BusinessProvider>
-  )
+  );
 }

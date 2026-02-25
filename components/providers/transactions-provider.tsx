@@ -9,6 +9,7 @@ import { useNetworkStatus } from "@/hooks/use-network";
 import { apiClientFetch } from "@/lib/api-client";
 export interface Expense {
   id: string;
+  branchId: string;
   amount: number;
   category: string;
   description: string;

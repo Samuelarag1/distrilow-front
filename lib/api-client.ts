@@ -1,20 +1,30 @@
 let authToken: string | null = null;
 let activeBranchId: string | null = null;
 
-export function setApiSession(token: string, branchId?: string) {
+export function setApiSession(token: string | null, branchId?: string | null) {
   authToken = token || null;
-  activeBranchId = branchId || null;
+
+  // ✅ si viene undefined o null => limpiamos
+  if (branchId === undefined || branchId === null || branchId === "") {
+    activeBranchId = null;
+  } else {
+    activeBranchId = branchId;
+  }
 }
 
 async function request(url: string, options: RequestInit = {}) {
   const headers = new Headers(options.headers);
 
-  headers.set("Content-Type", "application/json");
+  // ✅ solo setealo si realmente estás enviando JSON
+  if (!(options.body instanceof FormData)) {
+    headers.set("Content-Type", "application/json");
+  }
 
   if (authToken) {
     headers.set("Authorization", `Bearer ${authToken}`);
   }
 
+  // ✅ onboarding: si no hay branch, no mandamos header
   if (activeBranchId) {
     headers.set("X-Branch-Id", activeBranchId);
   }
@@ -25,12 +35,14 @@ async function request(url: string, options: RequestInit = {}) {
   });
 
   if (!res.ok) {
-    const error = await res.text();
-    console.error("API Error:", error);
-    throw new Error(error || "API request failed");
+    const errorText = await res.text().catch(() => "");
+    console.error("API Error:", errorText);
+    throw new Error(errorText || `API request failed (${res.status})`);
   }
 
-  return res.json();
+  // ✅ por si hay 204 No Content
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;
 }
 
 export const apiClientFetch = {
@@ -39,5 +51,7 @@ export const apiClientFetch = {
     request(url, { method: "POST", body: JSON.stringify(body) }),
   put: (url: string, body: any) =>
     request(url, { method: "PUT", body: JSON.stringify(body) }),
+  patch: (url: string, body: any) =>
+    request(url, { method: "PATCH", body: JSON.stringify(body) }),
   delete: (url: string) => request(url, { method: "DELETE" }),
 };
