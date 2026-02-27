@@ -53,9 +53,9 @@ export function POSModule() {
   const [scanQuery, setScanQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedBranch, setSelectedBranch] = useState("all");
-  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<string | null>(
-    null
-  );
+  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<
+    string | null
+  >(null);
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
 
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
@@ -178,7 +178,8 @@ export function POSModule() {
         toast({
           variant: "destructive",
           title: "Sucursal diferente",
-          description: "El producto escaneado no corresponde a la sucursal activa.",
+          description:
+            "El producto escaneado no corresponde a la sucursal activa.",
         });
         return;
       }
@@ -195,7 +196,8 @@ export function POSModule() {
       toast({
         variant: "destructive",
         title: "Error al escanear",
-        description: error?.message || "No se pudo procesar el codigo escaneado.",
+        description:
+          error?.message || "No se pudo procesar el codigo escaneado.",
       });
     }
   };
@@ -233,7 +235,10 @@ export function POSModule() {
       })),
       userId: currentUser?.id || "unknown",
       userName: currentUser?.name || "Anonimo",
-      branchId: selectedBranch === "all" ? branches[0]?.id || "unknown" : selectedBranch,
+      branchId:
+        selectedBranch === "all"
+          ? branches[0]?.id || "unknown"
+          : selectedBranch,
       businessType,
     });
 
@@ -261,7 +266,9 @@ export function POSModule() {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
             Punto de Venta
           </h1>
-          <p className="text-muted-foreground">Flujo rapido para caja y mostrador</p>
+          <p className="text-muted-foreground">
+            Flujo rapido para caja y mostrador
+          </p>
         </div>
       </div>
 
@@ -274,6 +281,7 @@ export function POSModule() {
                   <div className="relative flex-1">
                     <ScanLine className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
+                      autoFocus
                       placeholder="Escanear o escribir codigo de barras"
                       value={scanQuery}
                       onChange={(e) => setScanQuery(e.target.value)}
@@ -407,7 +415,8 @@ export function POSModule() {
                 )}
               </div>
               <div className="pt-4 text-xs text-muted-foreground">
-                Mostrando hasta 30 productos por busqueda para mantener la velocidad.
+                Mostrando hasta 30 productos por busqueda para mantener la
+                velocidad.
               </div>
             </CardContent>
           </Card>
@@ -423,19 +432,26 @@ export function POSModule() {
             </CardHeader>
             <CardContent className="space-y-4">
               {cart.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">Carrito vacio</p>
+                <p className="text-center text-muted-foreground py-8">
+                  Carrito vacio
+                </p>
               ) : (
                 <>
                   <div className="space-y-3 max-h-64 overflow-y-auto">
                     {cart.map((item) => (
-                      <div key={item.id} className="flex items-center space-x-2">
+                      <div
+                        key={item.id}
+                        className="flex items-center space-x-2"
+                      >
                         <img
                           src={item.brand || "/placeholder.svg"}
                           alt={item.name}
                           className="w-10 h-10 rounded object-cover bg-muted"
                         />
                         <div className="flex-1 min-w-0">
-                          <h4 className="font-medium text-sm truncate">{item.name}</h4>
+                          <h4 className="font-medium text-sm truncate">
+                            {item.name}
+                          </h4>
                           <p className="text-xs text-muted-foreground">
                             ${Number(item.costPrice).toFixed(2)}
                           </p>
@@ -444,15 +460,21 @@ export function POSModule() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                            onClick={() =>
+                              updateQuantity(item.id, item.quantity - 1)
+                            }
                           >
                             <Minus className="h-3 w-3" />
                           </Button>
-                          <span className="w-8 text-center text-sm">{item.quantity}</span>
+                          <span className="w-8 text-center text-sm">
+                            {item.quantity}
+                          </span>
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                            onClick={() =>
+                              updateQuantity(item.id, item.quantity + 1)
+                            }
                           >
                             <Plus className="h-3 w-3" />
                           </Button>
@@ -483,7 +505,10 @@ export function POSModule() {
                   </div>
 
                   <div className="space-y-2">
-                    <Button className="w-full" onClick={() => handlePayment("Efectivo")}>
+                    <Button
+                      className="w-full"
+                      onClick={() => handlePayment("Efectivo")}
+                    >
                       <Banknote className="mr-2 h-4 w-4" />
                       Pagar en Efectivo
                     </Button>
@@ -504,10 +529,12 @@ export function POSModule() {
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
-                          <AlertDialogTitle>Limpiar el carrito?</AlertDialogTitle>
+                          <AlertDialogTitle>
+                            Limpiar el carrito?
+                          </AlertDialogTitle>
                           <AlertDialogDescription>
-                            Se quitaran todos los productos seleccionados. Esta accion no
-                            se puede deshacer.
+                            Se quitaran todos los productos seleccionados. Esta
+                            accion no se puede deshacer.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
@@ -529,13 +556,16 @@ export function POSModule() {
         </div>
       </div>
 
-      <AlertDialog open={isPaymentConfirmOpen} onOpenChange={setIsPaymentConfirmOpen}>
+      <AlertDialog
+        open={isPaymentConfirmOpen}
+        onOpenChange={setIsPaymentConfirmOpen}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar Pago</AlertDialogTitle>
             <AlertDialogDescription>
-              Deseas procesar el pago de <strong>${Number(total).toLocaleString()}</strong>{" "}
-              usando{" "}
+              Deseas procesar el pago de{" "}
+              <strong>${Number(total).toLocaleString()}</strong> usando{" "}
               <strong>
                 {pendingPaymentMethod === "Efectivo" ? "Efectivo" : "Tarjeta"}
               </strong>

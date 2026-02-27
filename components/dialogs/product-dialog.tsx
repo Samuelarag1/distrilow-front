@@ -2,6 +2,7 @@
 
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
 
 import {
   Dialog,
@@ -31,6 +32,7 @@ import { Product } from "@/lib/products";
 import { MeasurementType } from "@/lib/measurement-type";
 import { useUser } from "../providers/user-provider";
 import { setApiSession } from "@/lib/api-client";
+import { swrFetcher } from "@/lib/swr-fetcher";
 // Si no lo tenés en front, podés usar:
 // type MeasurementType = "unit" | "gram" | "kg" | "ml" | "liter";
 
@@ -40,6 +42,12 @@ type ProductDialogProps = {
   product: Product | null;
   onSave: (product: Partial<Product>) => Promise<void> | void;
   isSaving?: boolean;
+};
+
+type Category = {
+  id: string;
+  name: string;
+  isActive?: boolean;
 };
 
 const measurementOptions: { value: MeasurementType; label: string }[] = [
@@ -57,9 +65,9 @@ export function ProductDialog({
   onSave,
   isSaving = false,
 }: ProductDialogProps) {
-  const { activeBranchId, availableBranches, setActiveBranch } = useBranch();
-  // const { setActiveBranch } = useBranch();
+  const { activeBranchId, availableBranches } = useBranch();
   const { token, branchId, branches, setBranchId } = useUser();
+  const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
   const defaultBranchId = useMemo(() => {
     return (
       activeBranchId ??
@@ -68,6 +76,13 @@ export function ProductDialog({
       null
     );
   }, [activeBranchId, availableBranches]);
+
+  const categoryOptions = useMemo(() => {
+    return (categoriesData ?? [])
+      .filter((c) => Boolean(c?.id) && Boolean(c?.name))
+      .map((c) => ({ value: c.id, label: c.name }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [categoriesData]);
 
   const [formData, setFormData] = useState({
     // Backend entity / dto
@@ -96,6 +111,9 @@ export function ProductDialog({
     if (!open) return;
 
     if (product) {
+      const productCategoryId =
+        (product as any).categoryId ?? (product as any).category?.id ?? "";
+
       setFormData({
         sku: (product as any).sku ?? "",
         barcode: (product as any).barcode ?? "",
@@ -105,7 +123,7 @@ export function ProductDialog({
         wholesalePrice: Number(product.wholesalePrice ?? 0),
         retailPrice: Number((product as any).retailPrice ?? 0),
         marginPercent: Number((product as any).marginPercent ?? 0),
-        categoryId: (product as any).categoryId ?? "",
+        categoryId: productCategoryId,
         brand: (product as any).brand ?? "",
         trackStock: Boolean((product as any).trackStock ?? false),
         allowNegativeStock: Boolean(
@@ -149,7 +167,15 @@ export function ProductDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (!defaultBranchId && !formData.branchId) return;
+    const resolvedBranchId =
+      formData.branchId || branchId || defaultBranchId || (product as any)?.branchId;
+
+    if (!resolvedBranchId) return;
+    if (resolvedBranchId !== branchId) {
+      setBranchId(resolvedBranchId);
+      if (token) setApiSession(token, resolvedBranchId);
+      document.cookie = `activeBranchId=${resolvedBranchId}; path=/`;
+    }
     if (!formData.sku.trim()) return;
     if (!formData.name.trim()) return;
     if (
@@ -174,15 +200,11 @@ export function ProductDialog({
       wholesalePrice: formData.wholesalePrice,
       retailPrice: formData.retailPrice,
       marginPercent: marginPercent || undefined,
-      categoryId: formData.categoryId || undefined,
+      categoryId: formData.categoryId?.trim() || undefined,
       brand: formData.brand?.trim() || undefined,
       trackStock: formData.trackStock,
       allowNegativeStock: formData.allowNegativeStock,
       measurementType: formData.measurementType,
-
-      // Si tu backend toma branchId por header (X-Branch-Id), NO lo mandes.
-      // Si tu backend lo requiere en DTO, dejalo:
-      branchId: formData.branchId || undefined,
 
       isActive: formData.isActive,
     } as any);
@@ -239,15 +261,29 @@ export function ProductDialog({
               </div>
 
               <div className="space-y-2">
-                <Label>Categoría (ID)</Label>
-                <Input
-                  value={formData.categoryId}
-                  onChange={(e) =>
-                    setFormData((p) => ({ ...p, categoryId: e.target.value }))
+                <Label>Categoria</Label>
+                <Select
+                  value={formData.categoryId || "__none__"}
+                  onValueChange={(value) =>
+                    setFormData((p) => ({
+                      ...p,
+                      categoryId: value === "__none__" ? "" : value,
+                    }))
                   }
-                  placeholder="UUID de categoría (opcional)"
                   disabled={disableForm}
-                />
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecciona una categoria" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__none__">Sin categoria</SelectItem>
+                    {categoryOptions.map((category) => (
+                      <SelectItem key={category.value} value={category.value}>
+                        {category.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
               </div>
             </div>
 
@@ -500,3 +536,4 @@ export function ProductDialog({
     </Dialog>
   );
 }
+

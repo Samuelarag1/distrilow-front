@@ -9,7 +9,7 @@ export function ProductsToolbar(props: {
   onSearchChange: (v: string) => void;
 
   selectedCategory: string;
-  categories: string[];
+  categories: Array<{ value: string; label: string }>;
   onCategoryChange: (v: string) => void;
 
   branchId: string | null;

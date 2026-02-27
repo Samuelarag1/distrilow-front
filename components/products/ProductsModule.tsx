@@ -2,6 +2,7 @@
 // "use client";
 
 import { useMemo, useState } from "react";
+import useSWR from "swr";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
@@ -25,6 +26,13 @@ import { useApiSessionSync } from "./hooks/useApiSessionAsync";
 import { ProductsToolbar } from "./components/ProductsToolBar";
 import { ProductsSortBar } from "./components/ProductSortBar";
 import { SortKey, SortOrder } from "./types/product";
+import { swrFetcher } from "@/lib/swr-fetcher";
+
+type Category = {
+  id: string;
+  name: string;
+  isActive?: boolean;
+};
 
 export function ProductsModule() {
   const { addProduct, updateProduct, removeProduct } = useProductActions();
@@ -74,11 +82,23 @@ export function ProductsModule() {
     sortOrder: mappedSortOrder,
   });
 
+  const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
+
   const categories = useMemo(() => {
-    return Array.from(
-      new Set(products.map((p) => p.categoryId).filter(Boolean))
-    ) as string[];
-  }, [products]);
+    const categoryNameById = new Map<string, string>();
+    (categoriesData ?? []).forEach((category) => {
+      if (category?.id && category?.name) {
+        categoryNameById.set(category.id, category.name);
+      }
+    });
+
+    return Array.from(new Set(products.map((p) => p.categoryId).filter(Boolean)))
+      .map((id) => ({
+        value: id as string,
+        label: categoryNameById.get(id as string) ?? (id as string),
+      }))
+      .sort((a, b) => a.label.localeCompare(b.label));
+  }, [products, categoriesData]);
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -128,6 +148,7 @@ export function ProductsModule() {
 
   const { isSaving, handleSave } = useProductSave({
     editingProduct,
+    activeBranchId,
     addProduct,
     updateProduct,
     mutate,

@@ -1,7 +1,7 @@
 // components/products/components/CategorySelect.tsx
 export function CategorySelect(props: {
   value: string;
-  categories: string[];
+  categories: Array<{ value: string; label: string }>;
   onChange: (v: string) => void;
   disabled?: boolean;
 }) {
@@ -12,10 +12,10 @@ export function CategorySelect(props: {
       className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
       disabled={props.disabled}
     >
-      <option value="all">Todas las categorías</option>
+      <option value="all">Todas las categorias</option>
       {props.categories.map((category) => (
-        <option key={category} value={category}>
-          {category}
+        <option key={category.value} value={category.value}>
+          {category.label}
         </option>
       ))}
     </select>

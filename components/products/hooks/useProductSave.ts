@@ -6,6 +6,7 @@ import { normalizeProductPayload } from "../utils/normalizePayload";
 
 export function useProductSave(opts: {
   editingProduct: Product | null;
+  activeBranchId: string | null;
   addProduct: (payload: any) => Promise<any>;
   updateProduct: (id: string, payload: any) => Promise<any>;
   mutate: () => Promise<any>;
@@ -20,7 +21,19 @@ export function useProductSave(opts: {
       setIsSaving(true);
 
       try {
-        const payload = normalizeProductPayload(productData);
+        const resolvedBranchId =
+          (productData as any).branchId ??
+          opts.activeBranchId ??
+          opts.editingProduct?.branchId ??
+          null;
+
+        if (!resolvedBranchId) {
+          throw new Error("Selecciona una sucursal antes de guardar.");
+        }
+
+        const payload = normalizeProductPayload({
+          ...productData,
+        });
 
         if (opts.editingProduct) {
           await opts.updateProduct(opts.editingProduct.id, payload);

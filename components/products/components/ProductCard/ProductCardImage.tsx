@@ -7,6 +7,14 @@ export function ProductCardImage({ product }: { product: Product }) {
   const stock = Number(product.stock ?? 0);
   const minStock = Number(product.minStock ?? 0);
   const isLowStock = stock <= minStock;
+  const categoryLabel =
+    typeof (product as any).category === "object" &&
+    (product as any).category?.name
+      ? (product as any).category.name
+      : typeof (product as any).category === "string" &&
+        (product as any).category.trim()
+      ? (product as any).category
+      : product.categoryId || "Sin categoria";
 
   return (
     <div className="aspect-video bg-muted relative overflow-hidden">
@@ -21,7 +29,7 @@ export function ProductCardImage({ product }: { product: Product }) {
           variant="secondary"
           className="backdrop-blur-md bg-white/70 dark:bg-black/70 border-none shadow-sm text-xs"
         >
-          {product.categoryId || "Sin categoria"}
+          {categoryLabel}
         </Badge>
         {isLowStock && (
           <Badge className="bg-red-500 text-white border-none shadow-sm text-xs">
