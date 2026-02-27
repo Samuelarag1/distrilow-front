@@ -1,63 +1,4 @@
-// let authToken: string | null = null;
-// let activeBranchId: string | null = null;
-
-// export function setApiSession(token: string | null, branchId?: string | null) {
-//   authToken = token || null;
-
-//   // ✅ si viene undefined o null => limpiamos
-//   if (branchId === undefined || branchId === null || branchId === "") {
-//     activeBranchId = null;
-//   } else {
-//     activeBranchId = branchId;
-//   }
-// }
-
-// async function request(url: string, options: RequestInit = {}) {
-//   const headers = new Headers(options.headers);
-
-//   // ✅ solo setealo si realmente estás enviando JSON
-//   if (!(options.body instanceof FormData)) {
-//     headers.set("Content-Type", "application/json");
-//   }
-
-//   if (authToken) {
-//     headers.set("Authorization", `Bearer ${authToken}`);
-//   }
-
-//   // ✅ onboarding: si no hay branch, no mandamos header
-//   if (activeBranchId) {
-//     headers.set("X-Branch-Id", activeBranchId);
-//   }
-
-//   const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${url}`, {
-//     ...options,
-//     headers,
-//   });
-
-//   if (!res.ok) {
-//     const errorText = await res.text().catch(() => "");
-//     console.error("API Error:", errorText);
-//     throw new Error(errorText || `API request failed (${res.status})`);
-//   }
-
-//   // ✅ por si hay 204 No Content
-//   const text = await res.text();
-//   return text ? JSON.parse(text) : null;
-// }
-
-// export const apiClientFetch = {
-//   get: (url: string) => request(url),
-//   post: (url: string, body: any) =>
-//     request(url, { method: "POST", body: JSON.stringify(body) }),
-//   put: (url: string, body: any) =>
-//     request(url, { method: "PUT", body: JSON.stringify(body) }),
-//   patch: (url: string, body: any) =>
-//     request(url, { method: "PATCH", body: JSON.stringify(body) }),
-//   delete: (url: string) => request(url, { method: "DELETE" }),
-// };
-// export async function apiGet<T>(url: string): Promise<T> {
-//   return apiClientFetch.get(url) as Promise<T>;
-// }
+// src/lib/api-client.ts
 let authToken: string | null = null;
 let activeBranchId: string | null = null;
 
@@ -66,7 +7,7 @@ function getCookie(name: string): string | null {
   const match = document.cookie
     .split("; ")
     .find((row) => row.startsWith(`${name}=`));
-  return match ? match.split("=").slice(1).join("=") : null;
+  return match ? decodeURIComponent(match.split("=").slice(1).join("=")) : null;
 }
 
 export function setApiSession(token: string | null, branchId?: string | null) {
@@ -79,15 +20,25 @@ export function setApiSession(token: string | null, branchId?: string | null) {
   }
 }
 
-async function request(url: string, options: RequestInit = {}) {
+export class ApiError extends Error {
+  constructor(public status: number, public bodyText: string) {
+    super(bodyText || `API request failed (${status})`);
+  }
+}
+
+async function request<T = any>(
+  url: string,
+  options: RequestInit = {}
+): Promise<T> {
   const headers = new Headers(options.headers);
 
-  // ✅ solo si hay body JSON
+  // Solo setear JSON si corresponde
   if (options.body && !(options.body instanceof FormData)) {
-    headers.set("Content-Type", "application/json");
+    if (!headers.has("Content-Type"))
+      headers.set("Content-Type", "application/json");
   }
 
-  // ✅ FALLBACK: si todavía no se seteó en memoria, lo leo de cookie
+  // Fallback: si no está en memoria, lo leo de cookies (las que vos seteás en login)
   const tokenToUse = authToken ?? getCookie("token");
   const branchToUse =
     activeBranchId ?? getCookie("activeBranchId") ?? getCookie("branchId");
@@ -95,31 +46,37 @@ async function request(url: string, options: RequestInit = {}) {
   if (tokenToUse) headers.set("Authorization", `Bearer ${tokenToUse}`);
   if (branchToUse) headers.set("X-Branch-Id", branchToUse);
 
-  const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${url}`, {
+  const base = process.env.NEXT_PUBLIC_API_URL;
+  if (!base) throw new Error("NEXT_PUBLIC_API_URL is not defined");
+
+  const res = await fetch(`${base}${url}`, {
     ...options,
     headers,
+    // Si después migrás a cookies HttpOnly reales, esto ayuda.
+    credentials: "include",
   });
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    throw new Error(text || `API request failed (${res.status})`);
+    throw new ApiError(res.status, text);
   }
 
+  // Soportar 204 No Content
   const text = await res.text();
-  return text ? JSON.parse(text) : null;
+  return (text ? JSON.parse(text) : null) as T;
 }
 
 export const apiClientFetch = {
-  get: (url: string) => request(url),
-  post: (url: string, body: any) =>
-    request(url, { method: "POST", body: JSON.stringify(body) }),
-  put: (url: string, body: any) =>
-    request(url, { method: "PUT", body: JSON.stringify(body) }),
-  patch: (url: string, body: any) =>
-    request(url, { method: "PATCH", body: JSON.stringify(body) }),
-  delete: (url: string) => request(url, { method: "DELETE" }),
+  get: <T = any>(url: string) => request<T>(url),
+  post: <T = any>(url: string, body: any) =>
+    request<T>(url, { method: "POST", body: JSON.stringify(body) }),
+  put: <T = any>(url: string, body: any) =>
+    request<T>(url, { method: "PUT", body: JSON.stringify(body) }),
+  patch: <T = any>(url: string, body: any) =>
+    request<T>(url, { method: "PATCH", body: JSON.stringify(body) }),
+  delete: <T = any>(url: string) => request<T>(url, { method: "DELETE" }),
 };
 
 export async function apiGet<T>(url: string): Promise<T> {
-  return apiClientFetch.get(url) as Promise<T>;
+  return apiClientFetch.get<T>(url);
 }

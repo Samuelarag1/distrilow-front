@@ -56,8 +56,7 @@ export default function LoginPage() {
       setNeedsOnboarding?.(needsOnboarding); // opcional si lo tenés
 
       // ✅ CLAVE: header Authorization + X-Branch-Id
-
-      setApiSession(res.accessToken, res.activeBranchId);
+      setApiSession(data.accessToken, activeBranchId ?? undefined);
 
       // ✅ Persistencia cookies
       document.cookie = `token=${data.accessToken}; path=/`;

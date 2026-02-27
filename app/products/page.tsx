@@ -3,8 +3,7 @@
 import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { Header } from "@/components/layout/header";
-import { ProductsModule } from "@/components/modules/products-module";
-import { BusinessProvider } from "@/components/providers/business-provider";
+import { ProductsModule } from "@/components/products/ProductsModule";
 
 export default function ProductsPage() {
   return (

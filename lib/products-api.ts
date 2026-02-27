@@ -1,4 +1,5 @@
-import { apiClientFetch } from "./api-client";
+// src/lib/products-api.ts
+import { apiClientFetch } from "@/lib/api-client";
 
 export type Product = {
   id: string;

@@ -1,5 +1,5 @@
 import { db } from "@/lib/db";
-import { api } from "./api-client";
+import { apiClientFetch } from "./api-client";
 
 // Process pending actions when back online
 export async function syncPendingActions() {
@@ -15,13 +15,13 @@ export async function syncPendingActions() {
 
       switch (action.type) {
         case "CREATE_SALE":
-          result = await api.post("/sales", action.payload);
+          result = await apiClientFetch.post("/sales", action.payload);
           break;
         case "CREATE_CLIENT":
-          result = await api.post("/clients", action.payload);
+          result = await apiClientFetch.post("/clients", action.payload);
           break;
         case "UPDATE_STOCK":
-          result = await api.put("/products/stock", action.payload);
+          result = await apiClientFetch.put("/products/stock", action.payload);
           break;
         // Add other cases as backend endpoints are defined
         default:
