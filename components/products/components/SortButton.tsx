@@ -1,7 +1,7 @@
 // components/products/components/SortButton.tsx
 import { Button } from "@/components/ui/button";
 import { ArrowDown, ArrowUp, ArrowUpDown } from "lucide-react";
-import { SortKey, SortOrder } from "../types/Product";
+import { SortKey, SortOrder } from "../types/product";
 
 export function SortButton(props: {
   label: string;

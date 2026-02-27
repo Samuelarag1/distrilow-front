@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -34,6 +34,9 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Product } from "@/lib/products";
+import { useProducts } from "@/components/providers/product-provider";
+import useSWR from "swr";
+import { swrFetcher } from "@/lib/swr-fetcher";
 
 type SortKey = "name" | "stock" | "category" | "price";
 type SortOrder = "asc" | "desc";
@@ -52,6 +55,32 @@ const getCategoryColor = (category: string) => {
     CATEGORY_COLORS[category] || "bg-blue-100 text-blue-700 border-blue-200"
   );
 };
+
+type Category = {
+  id: string;
+  name: string;
+  isActive: boolean;
+};
+
+function getLooseCategoryLabel(category: unknown): string {
+  if (typeof category === "string" && category.trim()) return category;
+  if (category && typeof category === "object") {
+    const value = category as { name?: unknown; id?: unknown };
+    if (typeof value.name === "string" && value.name.trim()) return value.name;
+    if (typeof value.id === "string" && value.id.trim()) return value.id;
+  }
+  return "Sin categoria";
+}
+
+function getLooseCategoryValue(category: unknown): string {
+  if (typeof category === "string" && category.trim()) return category;
+  if (category && typeof category === "object") {
+    const value = category as { id?: unknown; name?: unknown };
+    if (typeof value.id === "string" && value.id.trim()) return value.id;
+    if (typeof value.name === "string" && value.name.trim()) return value.name;
+  }
+  return "uncategorized";
+}
 
 function AdjustStockDialog({
   item,
@@ -220,6 +249,27 @@ export function InventoryModule() {
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const { toast } = useToast();
+  const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
+
+  const categoryNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    (categoriesData ?? []).forEach((category) => {
+      if (category?.id) map.set(category.id, category.name);
+    });
+    return map;
+  }, [categoriesData]);
+
+  const getProductCategoryValue = (item: Product) => {
+    if (item.categoryId) return item.categoryId;
+    return getLooseCategoryValue((item as Product & { category?: unknown }).category);
+  };
+
+  const getProductCategoryLabel = (item: Product) => {
+    if (item.categoryId) {
+      return categoryNameById.get(item.categoryId) ?? item.categoryId;
+    }
+    return getLooseCategoryLabel((item as Product & { category?: unknown }).category);
+  };
 
   const handleSort = (key: SortKey) => {
     if (sortKey === key) {
@@ -236,23 +286,34 @@ export function InventoryModule() {
         .toLowerCase()
         .includes(searchQuery.toLowerCase());
       const matchesCategory =
-        selectedCategory === "all" || item.category === selectedCategory;
+        selectedCategory === "all" ||
+        getProductCategoryValue(item) === selectedCategory;
       const matchesBranch =
         selectedBranch === "all" || item.branchId === selectedBranch;
       return matchesSearch && matchesCategory && matchesBranch;
     })
     .sort((a: Product, b: Product) => {
       const factor = sortOrder === "asc" ? 1 : -1;
-      const valA = a[sortKey] || 0;
-      const valB = b[sortKey] || 0;
-      if (valA < valB) return -1 * factor;
-      if (valA > valB) return 1 * factor;
-      return 0;
+      if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
+      if (sortKey === "category") {
+        return (
+          getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) *
+          factor
+        );
+      }
+      if (sortKey === "stock") return ((a.stock || 0) - (b.stock || 0)) * factor;
+      return ((a.price || 0) - (b.price || 0)) * factor;
     });
 
-  const categories = Array.from(
-    new Set(inventory.map((item: Product) => item.category))
-  ) as string[];
+  const categories = useMemo(() => {
+    const map = new Map<string, string>();
+    inventory.forEach((item: Product) => {
+      const value = getProductCategoryValue(item);
+      const label = getProductCategoryLabel(item);
+      if (!map.has(value)) map.set(value, label);
+    });
+    return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
+  }, [inventory, categoriesData]);
 
   const lowStockItems = inventory.filter(
     (item: Product) => item.stock <= (item.minStock || 0)
@@ -339,10 +400,10 @@ export function InventoryModule() {
                   <Badge
                     variant="outline"
                     className={`text-[10px] uppercase font-black tracking-widest mt-1 ${getCategoryColor(
-                      item.category
+                      getProductCategoryLabel(item)
                     )}`}
                   >
-                    {item.category}
+                    {getProductCategoryLabel(item)}
                   </Badge>
                 </div>
               </div>
@@ -564,8 +625,8 @@ export function InventoryModule() {
               >
                 <option value="all">Todas las categorías</option>
                 {categories.map((category) => (
-                  <option key={category} value={category}>
-                    {category}
+                  <option key={category.value} value={category.value}>
+                    {category.label}
                   </option>
                 ))}
               </select>

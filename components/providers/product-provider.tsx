@@ -4,10 +4,11 @@ import React, { createContext, useContext } from "react";
 import { mutate } from "swr";
 import { useAudit } from "./audit-provider";
 import { productsApi, Product } from "@/lib/products";
+import { useProducts as useProductsHook } from "@/hooks/useProducts";
 
 interface ProductContextType {
-  //   updateStock: (id: string, newStock: number) => Promise<void>;
-  //   adjustStock: (id: string, delta: number) => Promise<void>;
+  updateStock: (id: string, newStock: number) => Promise<void>;
+  adjustStock: (id: string, delta: number) => Promise<void>;
   addProduct: (product: Partial<Product>) => Promise<void>;
   updateProduct: (id: string, productData: Partial<Product>) => Promise<void>;
   removeProduct: (id: string) => Promise<void>;
@@ -21,36 +22,36 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   const invalidateProducts = () =>
     mutate((key) => Array.isArray(key) && key[0] === "products");
 
-  //   const updateStock = async (id: string, newStock: number) => {
-  //     await productsApi.update(id, { stock: Math.max(0, newStock) });
+  const updateStock = async (id: string, newStock: number) => {
+    await productsApi.update(id, { stock: Math.max(0, newStock) });
 
-  //     logEvent("adjust_stock", "product", `Actualizó stock`, id, {
-  //       newStock,
-  //     });
+    logEvent("adjust_stock", "product", "Actualizo stock", id, {
+      newStock,
+    });
 
-  //     invalidateProducts();
-  //     mutate(["product", id]);
-  //   };
+    invalidateProducts();
+    mutate(["product", id]);
+  };
 
-  //   const adjustStock = async (id: string, delta: number) => {
-  //     const product = await productsApi.getById(id);
-  //     const newStock = Math.max(0, (product as any).stock + delta);
+  const adjustStock = async (id: string, delta: number) => {
+    const product = await productsApi.getById(id);
+    const newStock = Math.max(0, product.stock + delta);
 
-  //     await productsApi.update(id, { stock: newStock });
+    await productsApi.update(id, { stock: newStock });
 
-  //     logEvent("adjust_stock", "product", `Ajustó stock`, id, {
-  //       delta,
-  //       newStock,
-  //     });
+    logEvent("adjust_stock", "product", "Ajusto stock", id, {
+      delta,
+      newStock,
+    });
 
-  //     invalidateProducts();
-  //     mutate(["product", id]);
-  //   };
+    invalidateProducts();
+    mutate(["product", id]);
+  };
 
   const addProduct = async (productData: Partial<Product>) => {
     const created = await productsApi.create(productData);
 
-    logEvent("create", "product", `Agregó nuevo producto`, created.id);
+    logEvent("create", "product", "Agrego nuevo producto", created.id);
 
     invalidateProducts();
   };
@@ -58,7 +59,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   const updateProduct = async (id: string, productData: Partial<Product>) => {
     await productsApi.update(id, productData);
 
-    logEvent("update", "product", `Modificó producto`, id, {
+    logEvent("update", "product", "Modifico producto", id, {
       productData,
     });
 
@@ -69,7 +70,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   const removeProduct = async (id: string) => {
     await productsApi.remove(id);
 
-    logEvent("delete", "product", `Eliminó producto`, id);
+    logEvent("delete", "product", "Elimino producto", id);
 
     invalidateProducts();
   };
@@ -77,8 +78,8 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   return (
     <ProductContext.Provider
       value={{
-        // updateStock,
-        // adjustStock,
+        updateStock,
+        adjustStock,
         addProduct,
         updateProduct,
         removeProduct,
@@ -95,4 +96,16 @@ export function useProductActions() {
     throw new Error("useProductActions must be used within ProductProvider");
   }
   return context;
+}
+
+// Backward-compatible API for modules that still import `useProducts` from this provider.
+export function useProducts() {
+  const swr = useProductsHook();
+  const { updateStock, adjustStock } = useProductActions();
+
+  return {
+    ...swr,
+    updateStock,
+    adjustStock,
+  };
 }

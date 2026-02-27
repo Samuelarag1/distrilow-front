@@ -1,7 +1,7 @@
 // components/products/components/ProductsSortBar.tsx
 import { SortButton } from "./SortButton";
 import { ProductsStats } from "./ProductStats";
-import { SortKey, SortOrder } from "../types/Product";
+import { SortKey, SortOrder } from "../types/product";
 
 export function ProductsSortBar(props: {
   activeBranchId: string | null;

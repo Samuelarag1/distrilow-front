@@ -24,7 +24,7 @@ import { DeleteProductDialog } from "./components/DeleteProductDialog";
 import { useApiSessionSync } from "./hooks/useApiSessionAsync";
 import { ProductsToolbar } from "./components/ProductsToolBar";
 import { ProductsSortBar } from "./components/ProductSortBar";
-import { SortKey, SortOrder } from "./types/Product";
+import { SortKey, SortOrder } from "./types/product";
 
 export function ProductsModule() {
   const { addProduct, updateProduct, removeProduct } = useProductActions();

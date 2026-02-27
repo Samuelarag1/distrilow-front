@@ -7,6 +7,13 @@ export type Product = {
   barcode?: string;
   name: string;
   description?: string;
+  stock: number;
+  minStock?: number;
+  maxStock?: number;
+  price: number;
+  category: string;
+  unit?: string;
+  branchId?: string;
   costPrice: number;
   wholesalePrice: number;
   retailPrice: number;

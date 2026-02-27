@@ -36,7 +36,7 @@ export function AuditProvider({ children }: { children: React.ReactNode }) {
             id: Math.random().toString(36).substr(2, 9),
             timestamp: new Date().toISOString(),
             userId: currentUser.id,
-            userName: currentUser.name,
+            userName: currentUser.name ?? currentUser.email ?? "Usuario",
             action,
             entityType,
             entityId,

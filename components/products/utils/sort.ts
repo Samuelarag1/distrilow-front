@@ -1,4 +1,4 @@
-import { ApiSortBy, SortKey, SortOrder } from "../types/Product";
+import { ApiSortBy, SortKey, SortOrder } from "../types/product";
 
 export function mapSort(
   sortKey: SortKey,

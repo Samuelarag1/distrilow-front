@@ -77,6 +77,9 @@ export const apiClientFetch = {
   delete: <T = any>(url: string) => request<T>(url, { method: "DELETE" }),
 };
 
+// Backward-compatible alias for modules that still import `api`.
+export const api = apiClientFetch;
+
 export async function apiGet<T>(url: string): Promise<T> {
   return apiClientFetch.get<T>(url);
 }

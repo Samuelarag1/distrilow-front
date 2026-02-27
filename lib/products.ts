@@ -6,6 +6,14 @@ export type Product = {
   barcode?: string;
   name: string;
   description?: string;
+  // Legacy inventory fields still used by several modules.
+  stock: number;
+  minStock?: number;
+  maxStock?: number;
+  price: number;
+  category: string;
+  unit?: string;
+  branchId?: string;
   costPrice: number;
   wholesalePrice: number;
   retailPrice: number;

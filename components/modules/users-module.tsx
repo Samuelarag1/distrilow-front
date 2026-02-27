@@ -53,7 +53,7 @@ export function UsersModule() {
     }
 
     const filteredUsers = users.filter((user) =>
-        user.name.toLowerCase().includes(searchQuery.toLowerCase())
+        (user.name ?? "").toLowerCase().includes(searchQuery.toLowerCase())
     );
 
     return (
@@ -93,7 +93,7 @@ export function UsersModule() {
                                         <UserIcon className="h-6 w-6 text-primary" />
                                     </div>
                                     <div>
-                                        <h3 className="font-bold text-lg">{user.name}</h3>
+                                        <h3 className="font-bold text-lg">{user.name ?? "Sin nombre"}</h3>
                                         <Badge variant="secondary" className="capitalize text-[10px] font-black tracking-widest">
                                             {user.role}
                                         </Badge>
