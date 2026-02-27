@@ -2,7 +2,7 @@
 "use client";
 
 import useSWRInfinite from "swr/infinite";
-import { apiClientFetch } from "@/lib/api-client";
+import { bffGet } from "@/lib/bff-client";
 import type { Product } from "@/lib/products";
 
 type SortBy =
@@ -69,9 +69,10 @@ export function useProductsInfinite({
   };
 
   const fetchPage = async (key: readonly any[]) => {
-    const [, , skip, take, search, categoryId, sortBy, sortOrder] = key;
+    const [, branchId, skip, take, search, categoryId, sortBy, sortOrder] = key;
 
     const qs = buildQuery({
+      branchId,
       skip,
       take,
       search,
@@ -79,7 +80,7 @@ export function useProductsInfinite({
       sortBy,
       sortOrder,
     });
-    return apiClientFetch.get(`/products${qs}`);
+    return bffGet<PageResponse>(`/api/products${qs}`);
   };
 
   const swr = useSWRInfinite<PageResponse>(getKey, fetchPage, {

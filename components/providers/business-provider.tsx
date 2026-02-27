@@ -3,6 +3,7 @@
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { setApiSession } from "@/lib/api-client";
 import { BusinessType } from "@/lib/data-service";
+import { useUser } from "./user-provider";
 
 export interface Branch {
   id: string;
@@ -36,37 +37,48 @@ function inferBusinessType(branch: Branch | null): BusinessType {
 }
 
 export function BusinessProvider({ children }: { children: React.ReactNode }) {
-  const [availableBranches, setAvailableBranches] = useState<Branch[]>([]);
-  const [activeBranchId, setActiveBranchId] = useState<string | null>(null);
-  const [businessType, setBusinessTypeState] = useState<BusinessType>("retail");
+  const {
+    token,
+    branchId,
+    branches,
+    setBranchId,
+    setBranches: setUserBranches,
+  } = useUser();
+  const [businessType, setBusinessTypeState] = useState<BusinessType>(() => {
+    if (typeof window === "undefined") return "retail";
+    const saved = localStorage.getItem("businessType");
+    return saved === "wholesale" || saved === "retail" ? saved : "retail";
+  });
 
-  useEffect(() => {
-    if (activeBranchId) {
-      setApiSession(localStorage.getItem("token")!, activeBranchId);
-      localStorage.setItem("activeBranchId", activeBranchId);
-    }
-  }, [activeBranchId]);
+  const activeBranchId = branchId;
+  const availableBranches = branches;
 
   useEffect(() => {
     const activeBranch =
       availableBranches.find((branch) => branch.id === activeBranchId) ?? null;
     const inferredType = inferBusinessType(activeBranch);
-    setBusinessTypeState(inferredType);
-    localStorage.setItem("businessType", inferredType);
+    setBusinessTypeState((prev) => (prev === inferredType ? prev : inferredType));
+    if (typeof window !== "undefined") {
+      localStorage.setItem("businessType", inferredType);
+    }
   }, [activeBranchId, availableBranches]);
 
   const setActiveBranch = (branchId: string) => {
-    setActiveBranchId(branchId);
+    setBranchId(branchId);
+    if (token) setApiSession(token, branchId);
   };
 
   const setBusinessType = (type: BusinessType) => {
     setBusinessTypeState(type);
-    localStorage.setItem("businessType", type);
+    if (typeof window !== "undefined") {
+      localStorage.setItem("businessType", type);
+    }
   };
 
   const setSessionBranches = (branches: Branch[], activeId: string | null) => {
-    setAvailableBranches(branches);
-    setActiveBranchId(activeId);
+    setUserBranches(branches);
+    setBranchId(activeId);
+    if (token) setApiSession(token, activeId ?? undefined);
   };
 
   return (
@@ -87,7 +99,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
 
 export function useBranch() {
   const context = useContext(BranchContext);
-  if (!context) throw new Error("useBranch must be used within BranchProvider");
+  if (!context) throw new Error("useBranch must be used within BusinessProvider");
   return context;
 }
 

@@ -246,4 +246,19 @@
     -webkit-box-orient: vertical;
     -webkit-line-clamp: 3;
   }
+
+  .page-enter {
+    animation: pageEnter 180ms ease-out;
+  }
+}
+
+@keyframes pageEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }

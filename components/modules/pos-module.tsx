@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,6 +13,7 @@ import {
   CreditCard,
   Banknote,
   Search,
+  ScanLine,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -32,46 +33,68 @@ import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useBranches } from "@/components/providers/branch-provider";
-import { Product } from "@/lib/products";
+import { Product, productsApi } from "@/lib/products";
 import { useProducts } from "@/hooks/useProducts";
+import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 
 interface CartItem extends Product {
   quantity: number;
 }
 
 export function POSModule() {
-  const { products, isLoading } = useProducts();
   const { addSale } = useTransactions();
   const { currentUser } = useUser();
   const { businessType } = useBusiness();
   const { branches } = useBranches();
-  const [cart, setCart] = useState<CartItem[]>([]);
-  const [searchQuery, setSearchQuery] = useState("");
-  const [selectedCategory, setSelectedCategory] = useState("all");
-  const [selectedBranch, setSelectedBranch] = useState(
-    branches[0]?.id || "all"
-  );
-  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<
-    string | null
-  >(null);
-  const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const { toast } = useToast();
 
-  const filteredProducts = products.filter((product) => {
-    const matchesSearch = product.name
-      .toLowerCase()
-      .includes(searchQuery.toLowerCase());
-    const matchesCategory =
-      selectedCategory === "all" || product.categoryId === selectedCategory;
-    const matchesBranch =
-      selectedBranch === "all" || product.brand === selectedBranch;
-    return matchesSearch && matchesCategory && matchesBranch;
+  const [cart, setCart] = useState<CartItem[]>([]);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [scanQuery, setScanQuery] = useState("");
+  const [selectedCategory, setSelectedCategory] = useState("all");
+  const [selectedBranch, setSelectedBranch] = useState("all");
+  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<string | null>(
+    null
+  );
+  const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
+
+  const debouncedSearch = useDebouncedValue(searchQuery, 250);
+
+  const { products, isLoading } = useProducts({
+    take: 30,
+    search: debouncedSearch,
+    categoryId: selectedCategory === "all" ? null : selectedCategory,
+    branchId: selectedBranch === "all" ? null : selectedBranch,
   });
 
-  const categories = Array.from(new Set(products.map((p) => p.categoryId)));
+  useEffect(() => {
+    if (selectedBranch === "all" && branches.length > 0) {
+      setSelectedBranch(branches[0].id);
+    }
+  }, [branches, selectedBranch]);
+
+  const filteredProducts = useMemo(() => {
+    return products.filter((product) => {
+      const matchesSearch = product.name
+        .toLowerCase()
+        .includes(searchQuery.toLowerCase());
+      const matchesCategory =
+        selectedCategory === "all" || product.categoryId === selectedCategory;
+      const matchesBranch =
+        selectedBranch === "all" || product.branchId === selectedBranch;
+      return matchesSearch && matchesCategory && matchesBranch;
+    });
+  }, [products, searchQuery, selectedCategory, selectedBranch]);
+
+  const categories = useMemo(
+    () =>
+      Array.from(new Set(products.map((p) => p.categoryId).filter(Boolean))),
+    [products]
+  ) as string[];
 
   const addToCart = (product: Product) => {
-    if (product.costPrice <= 0) {
+    const stock = Number(product.stock ?? 0);
+    if (stock <= 0) {
       toast({
         title: "Sin stock",
         description: `No hay unidades disponibles de ${product.name}`,
@@ -83,10 +106,10 @@ export function POSModule() {
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
-        if (existing.quantity >= product.costPrice) {
+        if (existing.quantity >= stock) {
           toast({
             title: "Stock limitado",
-            description: `Solo hay ${product.costPrice} unidades de ${product.name}`,
+            description: `Solo hay ${stock} unidades de ${product.name}`,
             variant: "destructive",
           });
           return prev;
@@ -102,11 +125,12 @@ export function POSModule() {
   };
 
   const updateQuantity = (id: string, quantity: number) => {
-    const product = products.find((p) => p.id === id);
-    if (product && quantity > product.costPrice) {
+    const inCart = cart.find((p) => p.id === id);
+    const maxStock = Number(inCart?.stock ?? 0);
+    if (inCart && quantity > maxStock) {
       toast({
         title: "Stock insuficiente",
-        description: `No puedes agregar más de ${product.costPrice} unidades`,
+        description: `No puedes agregar mas de ${maxStock} unidades`,
         variant: "destructive",
       });
       return;
@@ -125,16 +149,67 @@ export function POSModule() {
     setCart((prev) => prev.filter((item) => item.id !== id));
   };
 
-  const total = cart.reduce(
-    (sum, item) => sum + item.costPrice * item.quantity,
-    0
-  );
+  const handleScanProduct = async () => {
+    const code = scanQuery.trim();
+    if (!code) return;
+
+    try {
+      let scanned =
+        products.find((p) => p.barcode === code || p.sku === code) || null;
+
+      if (!scanned) {
+        scanned = await productsApi.getByBarcode(code);
+      }
+
+      if (!scanned) {
+        toast({
+          variant: "destructive",
+          title: "Producto no encontrado",
+          description: `No existe un producto para el codigo ${code}.`,
+        });
+        return;
+      }
+
+      if (
+        selectedBranch !== "all" &&
+        scanned.branchId &&
+        scanned.branchId !== selectedBranch
+      ) {
+        toast({
+          variant: "destructive",
+          title: "Sucursal diferente",
+          description: "El producto escaneado no corresponde a la sucursal activa.",
+        });
+        return;
+      }
+
+      const activePrice =
+        businessType === "wholesale"
+          ? scanned.wholesalePrice
+          : scanned.retailPrice || scanned.costPrice;
+
+      addToCart({ ...scanned, costPrice: activePrice });
+      setSearchQuery(scanned.name);
+      setScanQuery("");
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Error al escanear",
+        description: error?.message || "No se pudo procesar el codigo escaneado.",
+      });
+    }
+  };
+
+  const total = cart.reduce((sum, item) => {
+    const price = item.costPrice || 0;
+    return sum + price * item.quantity;
+  }, 0);
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
 
   const handlePayment = (method: string) => {
     if (cart.length === 0) {
       toast({
-        title: "Carrito vacío",
+        title: "Carrito vacio",
         description: "Agrega productos al carrito antes de procesar el pago",
         variant: "destructive",
       });
@@ -147,7 +222,6 @@ export function POSModule() {
   const processPayment = () => {
     const method = pendingPaymentMethod || "Efectivo";
 
-    // Record Sale
     addSale({
       amount: total,
       customerName: "Consumidor Final",
@@ -158,18 +232,13 @@ export function POSModule() {
         price: item.costPrice,
       })),
       userId: currentUser?.id || "unknown",
-      userName: currentUser?.name || "Anónimo",
-      branchId: selectedBranch,
+      userName: currentUser?.name || "Anonimo",
+      branchId: selectedBranch === "all" ? branches[0]?.id || "unknown" : selectedBranch,
       businessType,
     });
 
-    // Update Stock
-    // cart.forEach(item => {
-    //   adjustStock(item.id, -item.quantity);
-    // });
-
     toast({
-      title: "Venta Exitosa",
+      title: "Venta exitosa",
       description: `Venta por $${total.toLocaleString()} registrada con ${method}`,
     });
     setCart([]);
@@ -181,7 +250,7 @@ export function POSModule() {
     setCart([]);
     toast({
       title: "Carrito vaciado",
-      description: "Se han quitado todos los productos del carrito.",
+      description: "Se quitaron todos los productos del carrito.",
     });
   };
 
@@ -192,52 +261,70 @@ export function POSModule() {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
             Punto de Venta
           </h1>
-          <p className="text-muted-foreground">
-            Sistema de ventas rápido y eficiente
-          </p>
+          <p className="text-muted-foreground">Flujo rapido para caja y mostrador</p>
         </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-3">
-        {/* Products Section */}
         <div className="lg:col-span-2 space-y-4">
           <Card>
             <CardHeader className="pb-4">
-              <div className="flex flex-col sm:flex-row gap-4">
-                <div className="relative flex-1">
-                  <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                  <Input
-                    placeholder="Buscar productos..."
-                    value={searchQuery}
-                    onChange={(e) => setSearchQuery(e.target.value)}
-                    className="pl-8"
-                  />
+              <div className="flex flex-col gap-3">
+                <div className="flex gap-2">
+                  <div className="relative flex-1">
+                    <ScanLine className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Escanear o escribir codigo de barras"
+                      value={scanQuery}
+                      onChange={(e) => setScanQuery(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          e.preventDefault();
+                          handleScanProduct();
+                        }
+                      }}
+                      className="pl-8"
+                    />
+                  </div>
+                  <Button onClick={handleScanProduct}>Agregar</Button>
                 </div>
-                <select
-                  value={selectedCategory}
-                  onChange={(e) => setSelectedCategory(e.target.value)}
-                  className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="all">Todas las categorías</option>
-                  {categories.map((category) => (
-                    <option key={category} value={category}>
-                      {category}
-                    </option>
-                  ))}
-                </select>
 
-                <select
-                  value={selectedBranch}
-                  onChange={(e) => setSelectedBranch(e.target.value)}
-                  className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                >
-                  <option value="all">Todas las sucursales</option>
-                  {branches.map((branch) => (
-                    <option key={branch.id} value={branch.id}>
-                      {branch.name}
-                    </option>
-                  ))}
-                </select>
+                <div className="flex flex-col sm:flex-row gap-4">
+                  <div className="relative flex-1">
+                    <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                    <Input
+                      placeholder="Buscar productos..."
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      className="pl-8"
+                    />
+                  </div>
+                  <select
+                    value={selectedCategory}
+                    onChange={(e) => setSelectedCategory(e.target.value)}
+                    className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="all">Todas las categorias</option>
+                    {categories.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+
+                  <select
+                    value={selectedBranch}
+                    onChange={(e) => setSelectedBranch(e.target.value)}
+                    className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="all">Todas las sucursales</option>
+                    {branches.map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
             </CardHeader>
             <CardContent>
@@ -262,7 +349,7 @@ export function POSModule() {
                     const activePrice =
                       businessType === "wholesale"
                         ? product.wholesalePrice
-                        : product.costPrice;
+                        : product.retailPrice || product.costPrice;
                     return (
                       <Card
                         key={product.id}
@@ -289,7 +376,7 @@ export function POSModule() {
                                   variant="outline"
                                   className="text-[10px] px-1 py-0 h-4 uppercase font-black"
                                 >
-                                  {product.costPrice || "u"}
+                                  stock {product.stock ?? 0}
                                 </Badge>
                                 <p className="text-[10px] text-muted-foreground truncate uppercase font-bold">
                                   {product.categoryId}
@@ -319,11 +406,13 @@ export function POSModule() {
                   </div>
                 )}
               </div>
+              <div className="pt-4 text-xs text-muted-foreground">
+                Mostrando hasta 30 productos por busqueda para mantener la velocidad.
+              </div>
             </CardContent>
           </Card>
         </div>
 
-        {/* Cart Section */}
         <div className="space-y-4">
           <Card>
             <CardHeader>
@@ -334,49 +423,36 @@ export function POSModule() {
             </CardHeader>
             <CardContent className="space-y-4">
               {cart.length === 0 ? (
-                <p className="text-center text-muted-foreground py-8">
-                  Carrito vacío
-                </p>
+                <p className="text-center text-muted-foreground py-8">Carrito vacio</p>
               ) : (
                 <>
                   <div className="space-y-3 max-h-64 overflow-y-auto">
                     {cart.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex items-center space-x-2"
-                      >
+                      <div key={item.id} className="flex items-center space-x-2">
                         <img
-                          src={item.name || "/placeholder.svg"}
+                          src={item.brand || "/placeholder.svg"}
                           alt={item.name}
                           className="w-10 h-10 rounded object-cover bg-muted"
                         />
                         <div className="flex-1 min-w-0">
-                          <h4 className="font-medium text-sm truncate">
-                            {item.name}
-                          </h4>
+                          <h4 className="font-medium text-sm truncate">{item.name}</h4>
                           <p className="text-xs text-muted-foreground">
-                            ${item.costPrice.toFixed(2)}
+                            ${Number(item.costPrice).toFixed(2)}
                           </p>
                         </div>
                         <div className="flex items-center space-x-1">
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() =>
-                              updateQuantity(item.id, item.quantity - 1)
-                            }
+                            onClick={() => updateQuantity(item.id, item.quantity - 1)}
                           >
                             <Minus className="h-3 w-3" />
                           </Button>
-                          <span className="w-8 text-center text-sm">
-                            {item.quantity}
-                          </span>
+                          <span className="w-8 text-center text-sm">{item.quantity}</span>
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() =>
-                              updateQuantity(item.id, item.quantity + 1)
-                            }
+                            onClick={() => updateQuantity(item.id, item.quantity + 1)}
                           >
                             <Plus className="h-3 w-3" />
                           </Button>
@@ -397,24 +473,17 @@ export function POSModule() {
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span>Subtotal:</span>
-                      <span>${total.toFixed(2)}</span>
+                      <span>${Number(total).toFixed(2)}</span>
                     </div>
-                    {/* <div className="flex justify-between text-sm">
-                      <span>Impuestos:</span>
-                      <span>${(total * 0.1).toFixed(2)}</span>
-                    </div> */}
                     <Separator />
                     <div className="flex justify-between font-bold">
                       <span>Total:</span>
-                      <span>${total.toFixed(2)}</span>
+                      <span>${Number(total).toFixed(2)}</span>
                     </div>
                   </div>
 
                   <div className="space-y-2">
-                    <Button
-                      className="w-full"
-                      onClick={() => handlePayment("Efectivo")}
-                    >
+                    <Button className="w-full" onClick={() => handlePayment("Efectivo")}>
                       <Banknote className="mr-2 h-4 w-4" />
                       Pagar en Efectivo
                     </Button>
@@ -435,12 +504,10 @@ export function POSModule() {
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            ¿Limpiar el carrito?
-                          </AlertDialogTitle>
+                          <AlertDialogTitle>Limpiar el carrito?</AlertDialogTitle>
                           <AlertDialogDescription>
-                            Se quitarán todos los productos seleccionados. Esta
-                            acción no se puede deshacer.
+                            Se quitaran todos los productos seleccionados. Esta accion no
+                            se puede deshacer.
                           </AlertDialogDescription>
                         </AlertDialogHeader>
                         <AlertDialogFooter>
@@ -462,16 +529,13 @@ export function POSModule() {
         </div>
       </div>
 
-      <AlertDialog
-        open={isPaymentConfirmOpen}
-        onOpenChange={setIsPaymentConfirmOpen}
-      >
+      <AlertDialog open={isPaymentConfirmOpen} onOpenChange={setIsPaymentConfirmOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar Pago</AlertDialogTitle>
             <AlertDialogDescription>
-              ¿Deseas procesar el pago de{" "}
-              <strong>${total.toLocaleString()}</strong> usando{" "}
+              Deseas procesar el pago de <strong>${Number(total).toLocaleString()}</strong>{" "}
+              usando{" "}
               <strong>
                 {pendingPaymentMethod === "Efectivo" ? "Efectivo" : "Tarjeta"}
               </strong>

@@ -3,12 +3,28 @@
 import React, { createContext, useContext } from "react";
 import { mutate } from "swr";
 import { useAudit } from "./audit-provider";
+import { useUser } from "./user-provider";
+import { apiClientFetch } from "@/lib/api-client";
 import { productsApi, Product } from "@/lib/products";
 import { useProducts as useProductsHook } from "@/hooks/useProducts";
 
+type MovementType =
+  | "PURCHASE"
+  | "SALE"
+  | "TRANSFER_IN"
+  | "TRANSFER_OUT"
+  | "ADJUSTMENT"
+  | "RETURN"
+  | "LOSS"
+  | "EXPIRED";
+
 interface ProductContextType {
-  updateStock: (id: string, newStock: number) => Promise<void>;
-  adjustStock: (id: string, delta: number) => Promise<void>;
+  updateStock: (
+    id: string,
+    newStock: number,
+    branchId?: string
+  ) => Promise<void>;
+  adjustStock: (id: string, delta: number, branchId?: string) => Promise<void>;
   addProduct: (product: Partial<Product>) => Promise<void>;
   updateProduct: (id: string, productData: Partial<Product>) => Promise<void>;
   removeProduct: (id: string) => Promise<void>;
@@ -16,32 +32,101 @@ interface ProductContextType {
 
 const ProductContext = createContext<ProductContextType | undefined>(undefined);
 
+type StockState = {
+  productId: string;
+  quantity: string | number | null;
+};
+
+function getMovementType(delta: number): MovementType {
+  return delta >= 0 ? "TRANSFER_IN" : "TRANSFER_OUT";
+}
+
 export function ProductProvider({ children }: { children: React.ReactNode }) {
   const { logEvent } = useAudit();
+  const { branchId: sessionBranchId } = useUser();
 
   const invalidateProducts = () =>
-    mutate((key) => Array.isArray(key) && key[0] === "products");
+    mutate((key) => {
+      if (typeof key === "string") return key.includes("/products");
+      if (Array.isArray(key) && typeof key[0] === "string") {
+        return key[0].includes("/products");
+      }
+      return false;
+    });
 
-  const updateStock = async (id: string, newStock: number) => {
-    await productsApi.update(id, { stock: Math.max(0, newStock) });
+  const resolveBranchId = (candidate?: string) => {
+    const resolved = candidate || sessionBranchId || null;
+    if (!resolved) {
+      throw new Error("No hay sucursal activa para ajustar stock.");
+    }
+    return resolved;
+  };
+
+  const postStockMovement = async (
+    productId: string,
+    branchId: string,
+    delta: number
+  ) => {
+    const quantity = Math.abs(Math.trunc(delta));
+    if (quantity < 1) return;
+
+    await apiClientFetch.post("/stock-movements/adjustment-in", {
+      productId,
+      branchId,
+      quantity,
+      type: getMovementType(delta),
+    });
+  };
+
+  const getBranchProductStock = async (branchId: string, productId: string) => {
+    const stockRows = await apiClientFetch.get<StockState[]>(
+      `/stocks/branch/${branchId}`
+    );
+
+    const stockRow = stockRows.find((row) => row.productId === productId);
+    const quantity = Number(stockRow?.quantity ?? 0);
+    return Number.isFinite(quantity) ? quantity : 0;
+  };
+
+  const updateStock = async (
+    id: string,
+    newStock: number,
+    branchId?: string
+  ) => {
+    const product = await productsApi.getById(id);
+    const resolvedBranchId = resolveBranchId(branchId || product.branchId);
+    const currentStock = await getBranchProductStock(resolvedBranchId, id);
+    const targetStock = Math.max(0, Math.trunc(newStock));
+    const delta = targetStock - currentStock;
+
+    if (delta === 0) return;
+
+    await postStockMovement(id, resolvedBranchId, delta);
 
     logEvent("adjust_stock", "product", "Actualizo stock", id, {
-      newStock,
+      branchId: resolvedBranchId,
+      delta,
+      newStock: targetStock,
+      type: getMovementType(delta),
     });
 
     invalidateProducts();
     mutate(["product", id]);
   };
 
-  const adjustStock = async (id: string, delta: number) => {
-    const product = await productsApi.getById(id);
-    const newStock = Math.max(0, product.stock + delta);
+  const adjustStock = async (id: string, delta: number, branchId?: string) => {
+    const normalizedDelta = Math.trunc(delta);
+    if (normalizedDelta === 0) return;
 
-    await productsApi.update(id, { stock: newStock });
+    const product = await productsApi.getById(id);
+    const resolvedBranchId = resolveBranchId(branchId || product.branchId);
+
+    await postStockMovement(id, resolvedBranchId, normalizedDelta);
 
     logEvent("adjust_stock", "product", "Ajusto stock", id, {
-      delta,
-      newStock,
+      branchId: resolvedBranchId,
+      delta: normalizedDelta,
+      type: getMovementType(normalizedDelta),
     });
 
     invalidateProducts();

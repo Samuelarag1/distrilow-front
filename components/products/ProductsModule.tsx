@@ -66,7 +66,8 @@ export function ProductsModule() {
     error,
   } = useProductsInfinite({
     activeBranchId,
-    take: 20,
+    take: 30,
+    maxItems: 30,
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     sortBy,
@@ -141,7 +142,6 @@ export function ProductsModule() {
 
   const isLoading = isLoadingInitial;
   const isEmpty = !isLoading && products.length === 0;
-  console.log("products", products.length, products[0]);
   return (
     <div className="space-y-6">
       <ProductsHeader activeBranchId={activeBranchId} onCreate={handleCreate} />
@@ -206,7 +206,7 @@ export function ProductsModule() {
               )}
               {!hasMore && products.length > 0 && (
                 <div className="py-6 text-center text-xs text-muted-foreground">
-                  Ya cargaste todo el catálogo.
+                  Mostrando hasta 30 productos. Usa la busqueda para traer mas.
                 </div>
               )}
             </>
@@ -231,3 +231,4 @@ export function ProductsModule() {
     </div>
   );
 }
+

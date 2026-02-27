@@ -1,11 +1,25 @@
 import useSWRInfinite from "swr/infinite";
-import { apiGet } from "@/lib/api-client";
+import { bffGet } from "@/lib/bff-client";
 import { buildQuery } from "../utils/query";
 import { ApiSortBy, SortOrder } from "../types/product";
 import type { Product } from "@/lib/products";
 
+type PagePayload =
+  | Product[]
+  | {
+      items: Product[];
+      total?: number;
+      hasMore?: boolean;
+    };
+
+function getPageItems(page: PagePayload | null | undefined): Product[] {
+  if (!page) return [];
+  return Array.isArray(page) ? page : page.items ?? [];
+}
+
 export function useProductsInfinite(args: {
   take?: number;
+  maxItems?: number;
   activeBranchId: string | null;
   search?: string;
   categoryId?: string | null;
@@ -14,6 +28,7 @@ export function useProductsInfinite(args: {
 }) {
   const {
     take = 20,
+    maxItems = 30,
     activeBranchId,
     search,
     categoryId,
@@ -21,10 +36,12 @@ export function useProductsInfinite(args: {
     sortOrder,
   } = args;
 
-  const getKey = (pageIndex: number, previousPageData: Product[] | null) => {
+  const getKey = (pageIndex: number, previousPageData: PagePayload | null) => {
     if (!activeBranchId) return null;
-    // si la página anterior trajo menos que "take", asumimos que no hay más
-    if (previousPageData && previousPageData.length < take) return null;
+    if (pageIndex * take >= maxItems) return null;
+    if (previousPageData && getPageItems(previousPageData).length < take) {
+      return null;
+    }
 
     const skip = pageIndex * take;
 
@@ -42,23 +59,23 @@ export function useProductsInfinite(args: {
 
   const fetchPage = async (key: readonly any[]) => {
     const [, branchId, skip, take, search, categoryId, sortBy, sortOrder] = key;
+    const remaining = Math.max(0, maxItems - Number(skip));
+    const pageTake = Math.min(Number(take), remaining);
 
     const qs = buildQuery({
-      // si tu backend necesita branchId, mandalo en query
       branchId,
       skip,
-      take,
+      take: pageTake,
       search,
       categoryId,
       sortBy,
       sortOrder,
     });
 
-    // OJO: ahora esperamos Product[]
-    return apiGet<Product[]>(`/api/products${qs}`);
+    return bffGet<PagePayload>(`/api/products${qs}`);
   };
 
-  const swr = useSWRInfinite<Product[]>(getKey, fetchPage, {
+  const swr = useSWRInfinite<PagePayload>(getKey, fetchPage, {
     revalidateOnFocus: false,
     dedupingInterval: 30_000,
     persistSize: true,
@@ -66,14 +83,20 @@ export function useProductsInfinite(args: {
   });
 
   const pages = swr.data ?? [];
-  const products = pages.flatMap((arr) => arr);
-
-  // total real no viene: usamos lo cargado (o mostrás "—")
-  const total = products.length;
-
-  // hasMore: si la última página vino llena (take), probablemente hay más
-  const lastPage = pages[pages.length - 1] ?? [];
-  const hasMore = !!activeBranchId && lastPage.length === take;
+  const products = pages.flatMap((page) => getPageItems(page)).slice(0, maxItems);
+  const firstPage = pages[0];
+  const total =
+    firstPage && !Array.isArray(firstPage) && typeof firstPage.total === "number"
+      ? firstPage.total
+      : products.length;
+  const lastPage = pages[pages.length - 1] ?? null;
+  const lastItems = getPageItems(lastPage);
+  const lastHasMore =
+    lastPage && !Array.isArray(lastPage) && typeof lastPage.hasMore === "boolean"
+      ? lastPage.hasMore
+      : lastItems.length === take;
+  const hasMore =
+    !!activeBranchId && products.length < maxItems && lastHasMore;
 
   const isLoadingInitial = !swr.data && swr.isLoading;
   const isLoadingMore = !!swr.data && swr.isLoading;

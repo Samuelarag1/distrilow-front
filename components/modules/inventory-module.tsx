@@ -351,7 +351,7 @@ export function InventoryModule() {
     const progressValue = getProgressValue(item);
 
     const handleAdjustStock = (amountToAdjust: number) => {
-      adjustStock(item.id, amountToAdjust);
+      adjustStock(item.id, amountToAdjust, item.branchId);
       toast({
         title: "Stock Ajustado",
         description: `Se ha modificado el stock de ${

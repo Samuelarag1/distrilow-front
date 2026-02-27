@@ -12,9 +12,19 @@ export function ProductCard(props: {
   onDelete: (id: string) => void;
 }) {
   const { product } = props;
+  const stock = Number(product.stock ?? 0);
+  const minStock = Number(product.minStock ?? 0);
+  const stockClass =
+    stock <= minStock
+      ? "border-l-red-500"
+      : stock >= Math.max(minStock * 2, 1)
+      ? "border-l-green-500"
+      : "border-l-blue-500";
 
   return (
-    <Card className="overflow-hidden group hover:shadow-lg transition-all duration-300 border-t-4 border-t-transparent hover:border-t-primary">
+    <Card
+      className={`overflow-hidden group hover:shadow-lg transition-all duration-300 border-l-4 ${stockClass}`}
+    >
       <ProductCardImage product={product} />
 
       <CardContent className="p-5">

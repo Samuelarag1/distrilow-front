@@ -14,8 +14,8 @@ import { BranchProvider } from "./branch-provider"
 export function AppProviders({ children }: { children: React.ReactNode }) {
     return (
         <OfflineProvider>
-            <BusinessProvider>
-                <UserProvider>
+            <UserProvider>
+                <BusinessProvider>
                     <AuditProvider>
                         <BranchProvider>
                             <TransactionsProvider>
@@ -25,8 +25,8 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
                             </TransactionsProvider>
                         </BranchProvider>
                     </AuditProvider>
-                </UserProvider>
-            </BusinessProvider>
+                </BusinessProvider>
+            </UserProvider>
         </OfflineProvider>
     )
 }
