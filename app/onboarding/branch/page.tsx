@@ -12,7 +12,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { Building2, Loader2 } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
-import { apiClientFetch, setApiSession } from "@/lib/api-client";
+import { setApiSession } from "@/lib/api-client";
 import { useToast } from "@/hooks/use-toast";
 import {
   Dialog,
@@ -32,6 +32,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import { backendApi } from "@/lib/backend-api";
 
 type BranchPayload = {
   code: string;
@@ -46,7 +47,6 @@ type BranchPayload = {
 export default function OnboardingBranchesPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const { currentUser } = useUser();
   const {
     token,
     branchId,
@@ -69,7 +69,6 @@ export default function OnboardingBranchesPage() {
     branchType: "STORE",
   });
 
-  // Guards de navegación
   useEffect(() => {
     if (!token) router.replace("/login");
   }, [token, router]);
@@ -78,7 +77,6 @@ export default function OnboardingBranchesPage() {
     if (branchId) router.replace("/");
   }, [branchId, router]);
 
-  // Si por alguna razón needsOnboarding vino false pero branchId null, igual dejamos crear
   const show = !!token && !branchId;
 
   const handleCreateBootstrap = async (e: React.FormEvent) => {
@@ -94,62 +92,42 @@ export default function OnboardingBranchesPage() {
       toast({
         variant: "destructive",
         title: "Faltan datos",
-        description: "Nombre, código y dirección son obligatorios.",
+        description: "Nombre, codigo y direccion son obligatorios.",
       });
       return;
     }
 
     setIsSaving(true);
     try {
-      // ✅ Endpoint recomendadoconst
-      const res = await apiClientFetch.post("/branches/bootstrap", formData);
-
-      const session = res?.session;
-
-      // soporta múltiples formatos
-      const createdBranch = res?.branch ?? (res?.id ? res : null);
+      const res = await backendApi.branches.bootstrap(formData);
 
       const createdBranchId =
-        session?.activeBranchId ?? createdBranch?.id ?? null;
+        res?.session?.activeBranchId ?? res?.branch?.id ?? null;
 
       if (!createdBranchId) {
         throw new Error(
-          "La API creó la sucursal pero no devolvió el id. Revisá el response del endpoint."
+          "La API creo la sucursal pero no devolvio el id."
         );
       }
 
-      // si no hay session (no es bootstrap), asignamos manualmente
-      //   if (!session?.activeBranchId) {
-      //     await apiClientFetch.patch(
-      //       `/user-branches/${currentUser?.id}/branches`,
-      //       {
-      //         branchIds: [createdBranchId],
-      //         defaultBranchId: createdBranchId,
-      //         replace: true,
-      //       }
-      //     );
-      //   }
-
-      //   const availableBranches = session?.availableBranches ?? [
-      //     {
-      //       id: createdBranchId,
-      //       name: createdBranch?.name ?? "Sucursal",
-      //       isDefault: true,
-      //     },
-      //   ];
       const availableBranches = res.session.availableBranches;
       const activeBranchId = res.session.activeBranchId;
 
       setBranches(availableBranches);
       setBranchId(activeBranchId);
       setNeedsOnboarding(false);
-      setApiSession(token!, activeBranchId);
+      setApiSession({
+        accessToken: token,
+        branchId: activeBranchId,
+      });
 
       document.cookie = `branches=${encodeURIComponent(
         JSON.stringify(availableBranches)
       )}; path=/`;
       document.cookie = `activeBranchId=${createdBranchId}; path=/`;
       document.cookie = `needsOnboarding=false; path=/`;
+
+      router.push("/");
     } catch (err: any) {
       toast({
         variant: "destructive",
@@ -175,8 +153,8 @@ export default function OnboardingBranchesPage() {
               <CardTitle>Configurar sucursal inicial</CardTitle>
               <CardDescription>
                 {needsOnboarding
-                  ? "Para empezar, creá tu primera sucursal."
-                  : "Creá una sucursal para comenzar."}
+                  ? "Para empezar, crea tu primera sucursal."
+                  : "Crea una sucursal para comenzar."}
               </CardDescription>
             </div>
           </div>
@@ -188,8 +166,8 @@ export default function OnboardingBranchesPage() {
               <DialogHeader>
                 <DialogTitle>Primera Sucursal</DialogTitle>
                 <DialogDescription>
-                  Esta sucursal quedará como activa y por defecto. Después
-                  podrás crear más.
+                  Esta sucursal quedara como activa y por defecto. Despues podras
+                  crear mas.
                 </DialogDescription>
               </DialogHeader>
 
@@ -209,7 +187,7 @@ export default function OnboardingBranchesPage() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="code">Código</Label>
+                    <Label htmlFor="code">Codigo</Label>
                     <Input
                       id="code"
                       value={formData.code}
@@ -223,7 +201,7 @@ export default function OnboardingBranchesPage() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="address">Dirección</Label>
+                  <Label htmlFor="address">Direccion</Label>
                   <Input
                     id="address"
                     value={formData.address}
@@ -252,7 +230,7 @@ export default function OnboardingBranchesPage() {
                       </SelectTrigger>
                       <SelectContent>
                         <SelectItem value="STORE">Tienda</SelectItem>
-                        <SelectItem value="WAREHOUSE">Almacén</SelectItem>
+                        <SelectItem value="WAREHOUSE">Almacen</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -273,7 +251,7 @@ export default function OnboardingBranchesPage() {
 
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
-                    <Label htmlFor="phone">Teléfono (opcional)</Label>
+                    <Label htmlFor="phone">Telefono (opcional)</Label>
                     <Input
                       id="phone"
                       value={formData.phone ?? ""}

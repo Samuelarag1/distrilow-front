@@ -29,6 +29,17 @@ interface AddExpenseDialogProps {
   onOpenChange: (open: boolean) => void;
 }
 
+const categories = [
+  "RENT",
+  "SERVICES",
+  "SALARIES",
+  "SUPPLIES",
+  "MARKETING",
+  "MAINTENANCE",
+  "TAXES",
+  "OTHER",
+];
+
 export function AddExpenseDialog({
   open,
   onOpenChange,
@@ -48,24 +59,11 @@ export function AddExpenseDialog({
     [branches, branchId]
   );
 
-  // ✅ categorías genéricas (no dependen de retail/wholesale)
-  const categories = [
-    "Servicios",
-    "Mantenimiento",
-    "Suministros",
-    "Alquiler",
-    "Marketing",
-    "Logística",
-    "Nómina",
-    "Impuestos",
-    "Otros",
-  ];
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
     if (!branchId) {
-      toast.error("Seleccioná una sucursal antes de registrar un gasto");
+      toast.error("Selecciona una sucursal antes de registrar un gasto");
       return;
     }
 
@@ -75,15 +73,14 @@ export function AddExpenseDialog({
     }
 
     setIsLoading(true);
-    await new Promise((resolve) => setTimeout(resolve, 600));
 
     try {
-      addExpense({
+      await addExpense({
         amount: Number(formData.amount),
         category: formData.category,
         description: formData.description,
-        branchId, // ✅ clave
-        businessType: "retail", // o "wholesale" si tenés ambos, o lo que corresponda
+        branchId,
+        businessType: "retail",
       });
 
       toast.success("Gasto registrado correctamente");
@@ -127,7 +124,7 @@ export function AddExpenseDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="category">Categoría</Label>
+            <Label htmlFor="category">Categoria</Label>
             <Select
               value={formData.category}
               onValueChange={(value) =>
@@ -135,7 +132,7 @@ export function AddExpenseDialog({
               }
             >
               <SelectTrigger>
-                <SelectValue placeholder="Selecciona una categoría" />
+                <SelectValue placeholder="Selecciona una categoria" />
               </SelectTrigger>
               <SelectContent>
                 {categories.map((category) => (
@@ -148,7 +145,7 @@ export function AddExpenseDialog({
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="description">Descripción</Label>
+            <Label htmlFor="description">Descripcion</Label>
             <Input
               id="description"
               placeholder="Ej: Pago de luz"

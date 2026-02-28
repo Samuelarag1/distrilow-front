@@ -16,7 +16,8 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { Lock } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
-import { apiClientFetch, setApiSession } from "@/lib/api-client";
+import { setApiSession } from "@/lib/api-client";
+import { backendApi } from "@/lib/backend-api";
 
 export default function LoginPage() {
   const [email, setEmail] = useState("");
@@ -37,53 +38,56 @@ export default function LoginPage() {
     setIsLoading(true);
 
     try {
-      const data = await apiClientFetch.post("/auth/login", {
+      const data = await backendApi.auth.login({
         email,
         password,
       });
 
-      setToken(data.accessToken);
-      setCurrentUser(data.user);
+      const currentUser = { ...data.user, name: data.user.email };
 
-      // ✅ NUEVO: session del backend
+      setToken(data.accessToken);
+      setCurrentUser(currentUser);
+
       const activeBranchId = data.session?.activeBranchId ?? null;
       const availableBranches = data.session?.availableBranches ?? [];
       const needsOnboarding = data.session?.needsOnboarding ?? false;
 
-      // ✅ Guardar en tu provider
-      setBranchId(activeBranchId); // si es null, OK (onboarding)
-      setBranches?.(availableBranches); // opcional si lo tenés
-      setNeedsOnboarding?.(needsOnboarding); // opcional si lo tenés
+      setBranchId(activeBranchId);
+      setBranches?.(availableBranches);
+      setNeedsOnboarding?.(needsOnboarding);
 
-      // ✅ CLAVE: header Authorization + X-Branch-Id
-      setApiSession(data.accessToken, activeBranchId ?? undefined);
+      setApiSession({
+        accessToken: data.accessToken,
+        branchId: activeBranchId ?? undefined,
+      });
 
-      // ✅ Persistencia cookies
       document.cookie = `token=${data.accessToken}; path=/`;
+      document.cookie = `accessToken=${data.accessToken}; path=/`;
+      document.cookie = `refreshToken=${data.refreshToken}; path=/`;
       document.cookie = `user=${encodeURIComponent(
-        JSON.stringify(data.user)
+        JSON.stringify(currentUser)
       )}; path=/`;
       document.cookie = `branches=${encodeURIComponent(
         JSON.stringify(availableBranches)
       )}; path=/`;
       document.cookie = `activeBranchId=${activeBranchId ?? ""}; path=/`;
+      document.cookie = `needsOnboarding=${needsOnboarding}; path=/`;
 
       toast({
-        title: "Inicio de sesión exitoso",
+        title: "Inicio de sesion exitoso",
         description: `Bienvenido, ${data.user.email}`,
       });
 
-      // ✅ Routing: si no hay branches -> onboarding
       if (needsOnboarding || !activeBranchId) {
-        router.push("/onboarding/branch"); // o donde crees la primera sucursal
+        router.push("/onboarding/branch");
       } else {
-        router.push("/dashboard");
+        router.push("/");
       }
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error de autenticación",
-        description: error.message || "Credenciales inválidas",
+        title: "Error de autenticacion",
+        description: error.message || "Credenciales invalidas",
       });
     } finally {
       setIsLoading(false);

@@ -2,8 +2,9 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { useAudit } from "./audit-provider";
-import { apiClientFetch } from "@/lib/api-client";
 import { useUser } from "./user-provider";
+import { backendApi } from "@/lib/backend-api";
+import type { Branch as ApiBranch, BranchType, CreateBranchRequest } from "@/lib/api-types";
 
 export interface Branch {
   id: string;
@@ -12,19 +13,17 @@ export interface Branch {
   phone: string;
   email: string;
   isActive: boolean;
-  branchType: string;
-  createdAt: Date;
+  branchType: BranchType;
+  createdAt: string;
   code: string;
-}
-
-export interface BranchType {
-  WAREHOUSE: "warehouse";
-  STORE: "store";
 }
 
 interface BranchContextType {
   code: string;
-  branchType: BranchType;
+  branchType: {
+    WAREHOUSE: "warehouse";
+    STORE: "store";
+  };
   branches: Branch[];
   isLoading: boolean;
   activeBranch: Branch | null;
@@ -36,22 +35,31 @@ interface BranchContextType {
 
 const BranchContext = createContext<BranchContextType | undefined>(undefined);
 
+function normalizeBranch(branch: ApiBranch): Branch {
+  return {
+    id: branch.id,
+    code: branch.code,
+    name: branch.name,
+    address: branch.address,
+    phone: branch.phone ?? "",
+    email: branch.email ?? "",
+    isActive: Boolean(branch.isActive),
+    branchType: branch.branchType,
+    createdAt: branch.createdAt ?? new Date().toISOString(),
+  };
+}
+
 export function BranchProvider({ children }: { children: React.ReactNode }) {
   const [code] = useState<string>("");
-  const [branchType] = useState<BranchType>({
-    WAREHOUSE: "warehouse",
-    STORE: "store",
+  const [branchType] = useState({
+    WAREHOUSE: "warehouse" as const,
+    STORE: "store" as const,
   });
   const [branches, setBranches] = useState<Branch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeBranch, setActiveBranch] = useState<Branch | null>(null);
   const { logEvent } = useAudit();
-  const {
-    token,
-    branchId,
-    setBranchId,
-    setBranches: setUserBranches,
-  } = useUser();
+  const { token, branchId, setBranchId, setBranches: setUserBranches } = useUser();
 
   const syncUserBranches = (rows: Branch[]) => {
     setUserBranches(
@@ -66,7 +74,8 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     const fetchBranches = async () => {
       try {
         setIsLoading(true);
-        const data = await apiClientFetch.get<Branch[]>("/branches");
+        const response = await backendApi.branches.list();
+        const data = response.map(normalizeBranch);
         setBranches(data);
         syncUserBranches(data);
 
@@ -74,11 +83,11 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
           const savedBranch = data.find((b) => b.id === branchId);
           if (savedBranch) {
             setActiveBranch(savedBranch);
-          } else if (data.length > 0) {
-            setActiveBranch(data[0]);
-            setBranchId(data[0].id);
+            return;
           }
-        } else if (data.length > 0) {
+        }
+
+        if (data.length > 0) {
           setActiveBranch(data[0]);
           setBranchId(data[0].id);
         }
@@ -92,67 +101,79 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     if (token) {
       fetchBranches();
     }
-  }, [token, branchId, setBranchId, setUserBranches]);
+  }, [token]);
 
   const addBranch = async (branchData: Omit<Branch, "id" | "createdAt">) => {
-    try {
-      const newBranch = await apiClientFetch.post<Branch>("/branches", branchData);
-      logEvent("create", "branch", `Creo nueva sucursal: ${newBranch.name}`, newBranch.id);
-      setBranches((prev) => {
-        const next = [...prev, newBranch];
-        syncUserBranches(next);
-        return next;
-      });
-    } catch (error) {
-      console.error("Error creating branch:", error);
-      throw error;
-    }
+    const payload: CreateBranchRequest = {
+      code: branchData.code,
+      name: branchData.name,
+      address: branchData.address,
+      branchType: branchData.branchType,
+      isActive: branchData.isActive,
+      phone: branchData.phone || undefined,
+      email: branchData.email || undefined,
+    };
+
+    const created = normalizeBranch(await backendApi.branches.create(payload));
+
+    logEvent("create", "branch", `Creo nueva sucursal: ${created.name}`, created.id);
+
+    setBranches((prev) => {
+      const next = [...prev, created];
+      syncUserBranches(next);
+      return next;
+    });
   };
 
   const updateBranch = async (id: string, branchData: Partial<Branch>) => {
-    const branch = branches.find((b) => b.id === id);
-    try {
-      const updatedBranch = await apiClientFetch.put<Branch>(
-        `/branches/${id}`,
-        branchData
-      );
-      if (branch) {
-        logEvent("update", "branch", `Modifico sucursal ${branch.name}`, id, {
-          branchData,
-        });
-      }
-      setBranches((prev) => {
-        const next = prev.map((b) => (b.id === id ? { ...b, ...updatedBranch } : b));
-        syncUserBranches(next);
-        return next;
+    const existing = branches.find((b) => b.id === id);
+    const updated = normalizeBranch(
+      await backendApi.branches.update(id, {
+        code: branchData.code,
+        name: branchData.name,
+        address: branchData.address,
+        branchType: branchData.branchType,
+        isActive: branchData.isActive,
+        phone: branchData.phone,
+        email: branchData.email,
+      })
+    );
+
+    if (existing) {
+      logEvent("update", "branch", `Modifico sucursal ${existing.name}`, id, {
+        branchData,
       });
-      if (activeBranch?.id === id) {
-        setActiveBranch({ ...activeBranch, ...updatedBranch });
-      }
-    } catch (error) {
-      console.error("Error updating branch:", error);
+    }
+
+    setBranches((prev) => {
+      const next = prev.map((b) => (b.id === id ? updated : b));
+      syncUserBranches(next);
+      return next;
+    });
+
+    if (activeBranch?.id === id) {
+      setActiveBranch(updated);
     }
   };
 
   const removeBranch = async (id: string) => {
-    const branch = branches.find((b) => b.id === id);
-    try {
-      await apiClientFetch.delete(`/branches/${id}`);
-      if (branch) {
-        logEvent("delete", "branch", `Elimino sucursal ${branch.name}`, id);
-      }
-      setBranches((prev) => {
-        const next = prev.filter((b) => b.id !== id);
-        syncUserBranches(next);
-        return next;
-      });
-      if (activeBranch?.id === id) {
-        const fallback = branches.find((b) => b.id !== id) || null;
-        setActiveBranch(fallback);
-        setBranchId(fallback?.id ?? null);
-      }
-    } catch (error) {
-      console.error("Error removing branch:", error);
+    const existing = branches.find((b) => b.id === id);
+    await backendApi.branches.remove(id);
+
+    if (existing) {
+      logEvent("delete", "branch", `Elimino sucursal ${existing.name}`, id);
+    }
+
+    setBranches((prev) => {
+      const next = prev.filter((b) => b.id !== id);
+      syncUserBranches(next);
+      return next;
+    });
+
+    if (activeBranch?.id === id) {
+      const fallback = branches.find((b) => b.id !== id) || null;
+      setActiveBranch(fallback);
+      setBranchId(fallback?.id ?? null);
     }
   };
 

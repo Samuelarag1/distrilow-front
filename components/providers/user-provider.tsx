@@ -1,6 +1,7 @@
 "use client";
 
 import { setApiSession } from "@/lib/api-client";
+import { backendApi } from "@/lib/backend-api";
 import React, {
   createContext,
   useContext,
@@ -8,22 +9,23 @@ import React, {
   useMemo,
   useState,
 } from "react";
+import type { SessionBranch, UserRole } from "@/lib/api-types";
 
 export interface User {
   id: string;
   email?: string;
   name?: string;
-  role: "admin" | "cashier" | "manager";
+  role: UserRole;
   avatar?: string;
 }
 
-export type Branch = { id: string; name: string; isDefault?: boolean };
+export type Branch = SessionBranch;
 
 interface UserContextType {
   token: string | null;
   currentUser: User | null;
 
-  branchId: string | null; // activeBranchId
+  branchId: string | null;
   branches: Branch[];
   needsOnboarding: boolean;
 
@@ -34,7 +36,7 @@ interface UserContextType {
   setBranches: (b: Branch[]) => void;
   setNeedsOnboarding: (v: boolean) => void;
 
-  logout: () => void;
+  logout: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
@@ -49,31 +51,26 @@ function getCookie(name: string): string | null {
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-
-  // ✅ branch activo real
   const [branchId, setBranchId] = useState<string | null>(null);
-
-  // ✅ branches del login
   const [branches, setBranches] = useState<Branch[]>([]);
-
-  // ✅ onboarding si no hay branches
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean>(false);
 
-  // 🔁 bootstrap desde cookies (reload)
   useEffect(() => {
-    const tokenCookie = getCookie("token");
+    const tokenCookie =
+      getCookie("token") ?? getCookie("accessToken") ?? getCookie("access_token");
     const userCookie = getCookie("user");
-
-    // ⚠️ usá un nombre consistente: activeBranchId (recomendado)
     const activeBranchCookie =
       getCookie("activeBranchId") ?? getCookie("branchId");
-
     const branchesCookie = getCookie("branches");
     const onboardingCookie = getCookie("needsOnboarding");
 
     if (userCookie) {
       try {
-        setCurrentUser(JSON.parse(decodeURIComponent(userCookie)));
+        const parsed = JSON.parse(decodeURIComponent(userCookie));
+        setCurrentUser({
+          ...parsed,
+          name: parsed.name ?? parsed.email,
+        });
       } catch (err) {
         console.error("Error parsing user cookie:", err);
       }
@@ -97,22 +94,28 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     if (tokenCookie) {
       setToken(tokenCookie);
-
-      // ✅ importantísimo: setea Authorization + X-Branch-Id (si hay)
-      setApiSession(tokenCookie, activeBranchCookie || undefined);
+      setApiSession({ accessToken: tokenCookie, branchId: activeBranchCookie || undefined });
     }
   }, []);
 
-  // ✅ si cambia branch o token, actualizás el api client y persistís
   useEffect(() => {
-    if (!token) return;
-    setApiSession(token, branchId || undefined);
-    document.cookie = `activeBranchId=${branchId ?? ""}; path=/`;
+    setApiSession({ accessToken: token, branchId: branchId ?? undefined });
+    if (branchId !== undefined) {
+      document.cookie = `activeBranchId=${branchId ?? ""}; path=/`;
+    }
   }, [token, branchId]);
 
-  const logout = () => {
+  const logout = async () => {
+    try {
+      await backendApi.auth.logout();
+    } catch {
+      // ignore logout API errors, continue local cleanup
+    }
+
     const expire = "expires=Thu, 01 Jan 1970 00:00:00 UTC";
     document.cookie = `token=; path=/; ${expire}`;
+    document.cookie = `accessToken=; path=/; ${expire}`;
+    document.cookie = `refreshToken=; path=/; ${expire}`;
     document.cookie = `user=; path=/; ${expire}`;
     document.cookie = `branches=; path=/; ${expire}`;
     document.cookie = `activeBranchId=; path=/; ${expire}`;
@@ -123,6 +126,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setBranchId(null);
     setBranches([]);
     setNeedsOnboarding(false);
+    setApiSession({ accessToken: null, branchId: null });
 
     window.location.href = "/login";
   };

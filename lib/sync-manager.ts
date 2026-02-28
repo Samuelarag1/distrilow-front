@@ -17,13 +17,9 @@ export async function syncPendingActions() {
         case "CREATE_SALE":
           result = await apiClientFetch.post("/sales", action.payload);
           break;
-        case "CREATE_CLIENT":
-          result = await apiClientFetch.post("/clients", action.payload);
+        case "CREATE_EXPENSE":
+          result = await apiClientFetch.post("/expenses", action.payload);
           break;
-        case "UPDATE_STOCK":
-          result = await apiClientFetch.put("/products/stock", action.payload);
-          break;
-        // Add other cases as backend endpoints are defined
         default:
           console.warn(`Sync not implemented for action type: ${action.type}`);
           result = true; // Mark as done to avoid stuck queue if not implemented

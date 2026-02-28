@@ -6,25 +6,34 @@ async function serverRequest<T = any>(
   options: RequestInit = {}
 ): Promise<T> {
   const cookieStore = await cookies();
-  const token = cookieStore.get("token")?.value;
-  const branchId = cookieStore.get("activeBranchId")?.value || cookieStore.get("branchId")?.value;
+  const token =
+    cookieStore.get("accessToken")?.value ??
+    cookieStore.get("token")?.value ??
+    cookieStore.get("access_token")?.value;
+  const branchId =
+    cookieStore.get("activeBranchId")?.value ||
+    cookieStore.get("branchId")?.value;
 
   const headers = new Headers(options.headers);
-  
+
   if (options.body && !(options.body instanceof FormData)) {
     if (!headers.has("Content-Type"))
       headers.set("Content-Type", "application/json");
   }
 
   if (token) headers.set("Authorization", `Bearer ${token}`);
-  if (branchId) headers.set("X-Branch-Id", branchId);
+  if (branchId) headers.set("x-branch-id", branchId);
 
-  const base = process.env.NEXT_PUBLIC_API_URL || "http://localhost:3000/api";
+  const base =
+    process.env.NEXT_PUBLIC_API_URL ||
+    `${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3000"}${
+      process.env.NEXT_PUBLIC_API_PREFIX ?? "/api"
+    }`;
 
   const res = await fetch(`${base}${url}`, {
     ...options,
     headers,
-    cache: 'no-store'
+    cache: "no-store",
   });
 
   if (!res.ok) {

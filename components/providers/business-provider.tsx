@@ -2,7 +2,7 @@
 
 import React, { createContext, useContext, useEffect, useState } from "react";
 import { setApiSession } from "@/lib/api-client";
-import { BusinessType } from "@/lib/data-service";
+import type { BusinessType } from "@/lib/data-service";
 import { useUser } from "./user-provider";
 
 export interface Branch {
@@ -65,7 +65,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
 
   const setActiveBranch = (branchId: string) => {
     setBranchId(branchId);
-    if (token) setApiSession(token, branchId);
+    if (token) setApiSession({ accessToken: token, branchId });
   };
 
   const setBusinessType = (type: BusinessType) => {
@@ -78,7 +78,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
   const setSessionBranches = (branches: Branch[], activeId: string | null) => {
     setUserBranches(branches);
     setBranchId(activeId);
-    if (token) setApiSession(token, activeId ?? undefined);
+    if (token) setApiSession({ accessToken: token, branchId: activeId ?? null });
   };
 
   return (

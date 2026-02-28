@@ -24,7 +24,11 @@ export function SalesTable() {
       sale.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       sale.id.toLowerCase().includes(searchQuery.toLowerCase())
 
-    return matchesSearch
+    const normalizedStatus = sale.status === "PENDING" ? "pending" : "completed"
+    const matchesStatus =
+      selectedStatus === "all" || selectedStatus === normalizedStatus
+
+    return matchesSearch && matchesStatus
   })
 
   const getStatusColor = (status?: string) => {

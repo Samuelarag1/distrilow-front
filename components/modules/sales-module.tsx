@@ -1,51 +1,132 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Card, CardContent } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { TrendingUp, TrendingDown, DollarSign, ShoppingCart, Users, Target, Download } from "lucide-react"
-import { SalesChart } from "@/components/sales/sales-chart"
-import { DailySales } from "@/components/sales/daily-sales"
-import { SalesTable } from "@/components/sales/sales-table"
-import { GrowthAnalysis } from "@/components/sales/growth-analysis"
-import { useToast } from "@/hooks/use-toast"
+import { useMemo, useState } from "react";
+import { Card, CardContent } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  TrendingUp,
+  TrendingDown,
+  DollarSign,
+  ShoppingCart,
+  Users,
+  Target,
+  Download,
+} from "lucide-react";
+import { SalesChart } from "@/components/sales/sales-chart";
+import { DailySales } from "@/components/sales/daily-sales";
+import { SalesTable } from "@/components/sales/sales-table";
+import { GrowthAnalysis } from "@/components/sales/growth-analysis";
+import { useToast } from "@/hooks/use-toast";
+import { useTransactions } from "@/components/providers/transactions-provider";
+
+function sameDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function pct(current: number, previous: number) {
+  if (previous === 0) return current > 0 ? 100 : 0;
+  return ((current - previous) / previous) * 100;
+}
 
 export function SalesModule() {
-  const [selectedPeriod, setSelectedPeriod] = useState("monthly")
-  const [selectedYear, setSelectedYear] = useState("2024")
-  const { toast } = useToast()
+  const [selectedPeriod, setSelectedPeriod] = useState("monthly");
+  const [selectedYear, setSelectedYear] = useState(String(new Date().getFullYear()));
+  const { toast } = useToast();
+  const { sales, isLoading } = useTransactions();
+
+  const metrics = useMemo(() => {
+    const now = new Date();
+    const yesterday = new Date(now);
+    yesterday.setDate(now.getDate() - 1);
+
+    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+    const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+
+    const todaySales = sales.filter((sale) => sameDay(new Date(sale.date), now));
+    const yesterdaySales = sales.filter((sale) => sameDay(new Date(sale.date), yesterday));
+
+    const monthSales = sales.filter((sale) => {
+      const date = new Date(sale.date);
+      return date >= monthStart && date <= now;
+    });
+
+    const prevMonthSales = sales.filter((sale) => {
+      const date = new Date(sale.date);
+      return date >= prevMonthStart && date <= prevMonthEnd;
+    });
+
+    const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.amount, 0);
+    const yesterdayRevenue = yesterdaySales.reduce((sum, sale) => sum + sale.amount, 0);
+
+    const monthRevenue = monthSales.reduce((sum, sale) => sum + sale.amount, 0);
+    const prevMonthRevenue = prevMonthSales.reduce((sum, sale) => sum + sale.amount, 0);
+
+    const todayCustomers = new Set(todaySales.map((sale) => sale.customerName)).size;
+    const monthCustomers = new Set(monthSales.map((sale) => sale.customerName)).size;
+
+    const todayAvgOrder = todaySales.length > 0 ? todayRevenue / todaySales.length : 0;
+    const monthAvgOrder = monthSales.length > 0 ? monthRevenue / monthSales.length : 0;
+
+    const yesterdayAvgOrder =
+      yesterdaySales.length > 0 ? yesterdayRevenue / yesterdaySales.length : 0;
+    const prevMonthAvgOrder =
+      prevMonthSales.length > 0 ? prevMonthRevenue / prevMonthSales.length : 0;
+
+    return {
+      today: {
+        sales: todayRevenue,
+        orders: todaySales.length,
+        customers: todayCustomers,
+        avgOrder: todayAvgOrder,
+        growth: pct(todayRevenue, yesterdayRevenue),
+        ordersGrowth: pct(todaySales.length, yesterdaySales.length),
+        customersGrowth: pct(
+          todayCustomers,
+          new Set(yesterdaySales.map((sale) => sale.customerName)).size
+        ),
+        avgOrderGrowth: pct(todayAvgOrder, yesterdayAvgOrder),
+      },
+      monthly: {
+        sales: monthRevenue,
+        orders: monthSales.length,
+        customers: monthCustomers,
+        avgOrder: monthAvgOrder,
+        growth: pct(monthRevenue, prevMonthRevenue),
+        ordersGrowth: pct(monthSales.length, prevMonthSales.length),
+        customersGrowth: pct(
+          monthCustomers,
+          new Set(prevMonthSales.map((sale) => sale.customerName)).size
+        ),
+        avgOrderGrowth: pct(monthAvgOrder, prevMonthAvgOrder),
+      },
+    };
+  }, [sales]);
 
   const handleExport = (format: string) => {
     toast({
       title: "Exportando datos",
       description: `Generando reporte de ventas en formato ${format.toUpperCase()}...`,
-    })
-  }
-
-  // Datos de ejemplo para métricas
-  const todayMetrics = {
-    sales: 2450.75,
-    orders: 18,
-    customers: 15,
-    avgOrder: 136.15,
-    growth: 12.5,
-  }
-
-  const monthlyMetrics = {
-    sales: 45230.5,
-    orders: 342,
-    customers: 287,
-    avgOrder: 132.25,
-    growth: 8.3,
-  }
+    });
+  };
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Análisis de Ventas</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Analisis de Ventas</h1>
           <p className="text-muted-foreground">Seguimiento completo del rendimiento de ventas</p>
         </div>
         <div className="flex items-center gap-2">
@@ -54,9 +135,9 @@ export function SalesModule() {
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="2024">2024</SelectItem>
-              <SelectItem value="2023">2023</SelectItem>
-              <SelectItem value="2022">2022</SelectItem>
+              <SelectItem value={String(new Date().getFullYear())}>{new Date().getFullYear()}</SelectItem>
+              <SelectItem value={String(new Date().getFullYear() - 1)}>{new Date().getFullYear() - 1}</SelectItem>
+              <SelectItem value={String(new Date().getFullYear() - 2)}>{new Date().getFullYear() - 2}</SelectItem>
             </SelectContent>
           </Select>
           <Button variant="outline" onClick={() => handleExport("pdf")}>
@@ -65,6 +146,8 @@ export function SalesModule() {
           </Button>
         </div>
       </div>
+
+      {isLoading && <p className="text-sm text-muted-foreground">Cargando ventas...</p>}
 
       <Tabs value={selectedPeriod} onValueChange={setSelectedPeriod} className="space-y-6">
         <TabsList className="grid w-full grid-cols-4">
@@ -81,10 +164,10 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Ventas Hoy</p>
-                    <p className="text-2xl font-bold">${todayMetrics.sales.toLocaleString()}</p>
+                    <p className="text-2xl font-bold">${metrics.today.sales.toLocaleString()}</p>
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
-                      <span className="text-green-500">+{todayMetrics.growth}%</span>
+                      <span className="text-green-500">{metrics.today.growth.toFixed(1)}%</span>
                       <span className="text-muted-foreground ml-1">vs ayer</span>
                     </div>
                   </div>
@@ -100,10 +183,10 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Pedidos Hoy</p>
-                    <p className="text-2xl font-bold">{todayMetrics.orders}</p>
+                    <p className="text-2xl font-bold">{metrics.today.orders}</p>
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-blue-500" />
-                      <span className="text-blue-500">+15%</span>
+                      <span className="text-blue-500">{metrics.today.ordersGrowth.toFixed(1)}%</span>
                       <span className="text-muted-foreground ml-1">vs ayer</span>
                     </div>
                   </div>
@@ -119,10 +202,10 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Clientes Hoy</p>
-                    <p className="text-2xl font-bold">{todayMetrics.customers}</p>
+                    <p className="text-2xl font-bold">{metrics.today.customers}</p>
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-purple-500" />
-                      <span className="text-purple-500">+8%</span>
+                      <span className="text-purple-500">{metrics.today.customersGrowth.toFixed(1)}%</span>
                       <span className="text-muted-foreground ml-1">vs ayer</span>
                     </div>
                   </div>
@@ -138,10 +221,16 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Ticket Promedio</p>
-                    <p className="text-2xl font-bold">${todayMetrics.avgOrder.toFixed(2)}</p>
+                    <p className="text-2xl font-bold">${metrics.today.avgOrder.toFixed(2)}</p>
                     <div className="flex items-center text-xs mt-1">
-                      <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
-                      <span className="text-orange-500">-2%</span>
+                      {metrics.today.avgOrderGrowth >= 0 ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
+                      ) : (
+                        <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
+                      )}
+                      <span className={metrics.today.avgOrderGrowth >= 0 ? "text-green-500" : "text-orange-500"}>
+                        {metrics.today.avgOrderGrowth.toFixed(1)}%
+                      </span>
                       <span className="text-muted-foreground ml-1">vs ayer</span>
                     </div>
                   </div>
@@ -163,10 +252,10 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Ventas del Mes</p>
-                    <p className="text-2xl font-bold">${monthlyMetrics.sales.toLocaleString()}</p>
+                    <p className="text-2xl font-bold">${metrics.monthly.sales.toLocaleString()}</p>
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
-                      <span className="text-green-500">+{monthlyMetrics.growth}%</span>
+                      <span className="text-green-500">{metrics.monthly.growth.toFixed(1)}%</span>
                       <span className="text-muted-foreground ml-1">vs mes anterior</span>
                     </div>
                   </div>
@@ -182,10 +271,10 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Pedidos del Mes</p>
-                    <p className="text-2xl font-bold">{monthlyMetrics.orders}</p>
+                    <p className="text-2xl font-bold">{metrics.monthly.orders}</p>
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-blue-500" />
-                      <span className="text-blue-500">+12%</span>
+                      <span className="text-blue-500">{metrics.monthly.ordersGrowth.toFixed(1)}%</span>
                       <span className="text-muted-foreground ml-1">vs mes anterior</span>
                     </div>
                   </div>
@@ -201,10 +290,10 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Clientes del Mes</p>
-                    <p className="text-2xl font-bold">{monthlyMetrics.customers}</p>
+                    <p className="text-2xl font-bold">{metrics.monthly.customers}</p>
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-purple-500" />
-                      <span className="text-purple-500">+18%</span>
+                      <span className="text-purple-500">{metrics.monthly.customersGrowth.toFixed(1)}%</span>
                       <span className="text-muted-foreground ml-1">vs mes anterior</span>
                     </div>
                   </div>
@@ -220,10 +309,16 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Ticket Promedio</p>
-                    <p className="text-2xl font-bold">${monthlyMetrics.avgOrder.toFixed(2)}</p>
+                    <p className="text-2xl font-bold">${metrics.monthly.avgOrder.toFixed(2)}</p>
                     <div className="flex items-center text-xs mt-1">
-                      <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
-                      <span className="text-orange-500">-3%</span>
+                      {metrics.monthly.avgOrderGrowth >= 0 ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
+                      ) : (
+                        <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
+                      )}
+                      <span className={metrics.monthly.avgOrderGrowth >= 0 ? "text-green-500" : "text-orange-500"}>
+                        {metrics.monthly.avgOrderGrowth.toFixed(1)}%
+                      </span>
                       <span className="text-muted-foreground ml-1">vs mes anterior</span>
                     </div>
                   </div>
@@ -252,5 +347,5 @@ export function SalesModule() {
 
       <SalesTable />
     </div>
-  )
+  );
 }

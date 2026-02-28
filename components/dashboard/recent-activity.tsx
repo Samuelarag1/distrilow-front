@@ -7,38 +7,32 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-
 import { useTransactions } from "@/components/providers/transactions-provider";
-
+import { useBusiness } from "@/components/providers/business-provider";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 
 const statusColors = {
-  pending: "bg-yellow-100 text-yellow-800",
-  confirmed: "bg-blue-100 text-blue-800",
   completed: "bg-green-100 text-green-800",
-  cancelled: "bg-red-100 text-red-800",
 };
 
 export function RecentActivity() {
   const { sales } = useTransactions();
-  const businessType = "retail"; // O "wholesale" según tu lógica
+  const { businessType } = useBusiness();
 
   const filteredSales = sales
-    .filter((s) => s.businessType === businessType)
+    .filter((sale) => sale.businessType === businessType)
     .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
     .slice(0, 5);
 
   return (
     <Card className="w-full">
       <CardHeader>
-        <CardTitle className="text-base sm:text-lg">
-          Actividad Reciente
-        </CardTitle>
+        <CardTitle className="text-base sm:text-lg">Actividad Reciente</CardTitle>
         <CardDescription className="text-sm">
-          Últimas transacciones y eventos
+          Ultimas transacciones y eventos
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 px-4 sm:px-6">
@@ -61,7 +55,7 @@ export function RecentActivity() {
                   {sale.customerName}
                 </p>
                 <p className="text-xs text-muted-foreground truncate first-letter:uppercase mt-1">
-                  Venta realizada •{" "}
+                  Venta realizada -{" "}
                   {formatDistanceToNow(new Date(sale.date), {
                     addSuffix: true,
                     locale: es,
@@ -84,7 +78,7 @@ export function RecentActivity() {
         {filteredSales.length === 0 && (
           <div className="text-center py-6">
             <p className="text-sm text-muted-foreground italic">
-              No hay actividad reciente aún.
+              No hay actividad reciente aun.
             </p>
           </div>
         )}

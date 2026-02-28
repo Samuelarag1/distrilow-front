@@ -8,31 +8,33 @@ export async function getProductsAction(params?: {
   take?: number;
 }) {
   const query = new URLSearchParams();
-  if (params?.skip) query.set("skip", String(params.skip));
-  if (params?.take) query.set("take", String(params.take));
+  if (params?.skip !== undefined) query.set("skip", String(params.skip));
+  if (params?.take !== undefined) query.set("take", String(params.take));
 
   const queryString = query.toString() ? `?${query.toString()}` : "";
   return serverApi.get(`/products${queryString}`);
 }
 
 export async function saveProductAction(id: string | null, data: any) {
-  let result;
-  if (id) {
-    result = await serverApi.patch(`/products/${id}`, data);
-  } else {
-    result = await serverApi.post("/products", data);
-  }
+  const result = id
+    ? await serverApi.patch(`/products/${id}`, data)
+    : await serverApi.post("/products", data);
   revalidatePath("/inventory");
   return result;
 }
 
 export async function adjustStockAction(productId: string, quantity: number) {
-  // Uses activeBranchId and token inside serverApi
-  const result = await serverApi.post(`/stock/adjust`, {
+  const endpoint =
+    quantity >= 0
+      ? "/stock-movements/adjustment-in"
+      : "/stock-movements/adjustment-out";
+
+  const result = await serverApi.post(endpoint, {
     productId,
-    quantity,
+    quantity: Math.abs(quantity),
   });
+
   revalidatePath("/inventory");
-  revalidatePath("/audit");
+  revalidatePath("/reports");
   return result;
 }

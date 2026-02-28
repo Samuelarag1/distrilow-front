@@ -1,12 +1,11 @@
 "use client";
 
-import { DashboardMetrics } from "@/lib/data-service";
 import { MetricsCards } from "./metrics-cards";
 import { SalesChart } from "./sales-chart";
 import { RecentActivity } from "./recent-activity";
 import { QuickActions } from "./quick-actions";
 import { useBranch } from "../providers/business-provider";
-
+import type { DashboardMetrics } from "@/lib/data-service";
 interface DashboardProps {
   retailData: DashboardMetrics;
   wholesaleData: DashboardMetrics;

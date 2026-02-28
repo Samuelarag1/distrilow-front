@@ -30,8 +30,8 @@ export function UserProfile() {
   const [showLogoutConfirm, setShowLogoutConfirm] = useState(false)
   const router = useRouter()
 
-  const handleLogout = () => {
-    logout()
+  const handleLogout = async () => {
+    await logout()
     setShowLogoutConfirm(false)
     router.push("/login")
   }

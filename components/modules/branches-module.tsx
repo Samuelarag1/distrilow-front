@@ -60,7 +60,7 @@ import {
 } from "../ui/select";
 
 export function BranchesModule() {
-  const { branches, addBranch, updateBranch, removeBranch } = useBranches();
+  const { branches, addBranch, updateBranch, removeBranch, isLoading } = useBranches();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
@@ -84,34 +84,51 @@ export function BranchesModule() {
     setIsDeleteDialogOpen(true);
   };
 
-  const handleDeleteConfirm = () => {
+  const handleDeleteConfirm = async () => {
     if (branchToDelete) {
-      removeBranch(branchToDelete);
-      toast({
-        title: "Sucursal eliminada",
-        description: "La sucursal ha sido eliminada correctamente.",
-      });
-      setIsDeleteDialogOpen(false);
-      setBranchToDelete(null);
+      try {
+        await removeBranch(branchToDelete);
+        toast({
+          title: "Sucursal eliminada",
+          description: "La sucursal ha sido eliminada correctamente.",
+        });
+      } catch (error: any) {
+        toast({
+          variant: "destructive",
+          title: "Error al eliminar",
+          description: error?.message || "No se pudo eliminar la sucursal.",
+        });
+      } finally {
+        setIsDeleteDialogOpen(false);
+        setBranchToDelete(null);
+      }
     }
   };
 
-  const handleSave = (branchData: Omit<Branch, "id" | "createdAt">) => {
-    if (editingBranch) {
-      updateBranch(editingBranch.id, branchData);
+  const handleSave = async (branchData: Omit<Branch, "id" | "createdAt">) => {
+    try {
+      if (editingBranch) {
+        await updateBranch(editingBranch.id, branchData);
+        toast({
+          title: "Sucursal actualizada",
+          description: "Los cambios han sido guardados correctamente.",
+        });
+      } else {
+        await addBranch(branchData);
+        toast({
+          title: "Sucursal creada",
+          description: "La nueva sucursal ha sido agregada correctamente.",
+        });
+      }
+      setIsDialogOpen(false);
+      setEditingBranch(null);
+    } catch (error: any) {
       toast({
-        title: "Sucursal actualizada",
-        description: "Los cambios han sido guardados correctamente.",
-      });
-    } else {
-      addBranch(branchData);
-      toast({
-        title: "Sucursal creada",
-        description: "La nueva sucursal ha sido agregada correctamente.",
+        variant: "destructive",
+        title: "Error al guardar",
+        description: error?.message || "No se pudo guardar la sucursal.",
       });
     }
-    setIsDialogOpen(false);
-    setEditingBranch(null);
   };
 
   return (
@@ -148,6 +165,16 @@ export function BranchesModule() {
       </div>
 
       <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+        {isLoading && (
+          <p className="text-sm text-muted-foreground col-span-full">
+            Cargando sucursales...
+          </p>
+        )}
+        {!isLoading && filteredBranches.length === 0 && (
+          <p className="text-sm text-muted-foreground col-span-full">
+            No hay sucursales para mostrar.
+          </p>
+        )}
         {filteredBranches.map((branch) => (
           <BranchCard
             key={branch.id}
@@ -282,7 +309,7 @@ function BranchDialog({
     phone: "",
     email: "",
     isActive: false,
-    branchType: "",
+    branchType: "STORE",
     code: "",
   });
 
@@ -364,7 +391,7 @@ function BranchDialog({
               <Select
                 value={formData.branchType}
                 onValueChange={(value) =>
-                  setFormData({ ...formData, branchType: value })
+                  setFormData({ ...formData, branchType: value as Branch["branchType"] })
                 }
               >
                 <SelectTrigger id="branchType" className="w-full">

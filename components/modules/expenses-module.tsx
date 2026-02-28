@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -26,21 +26,32 @@ import { Label } from "@/components/ui/label";
 import { Plus, Search, Receipt, Calendar, Tag, FileText } from "lucide-react";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useBusiness } from "@/components/providers/business-provider";
+import { useUser } from "@/components/providers/user-provider";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import {
   Select,
   SelectContent,
-  SelectGroup,
   SelectTrigger,
   SelectItem,
-  SelectLabel,
   SelectValue,
 } from "../ui/select";
 
+const EXPENSE_CATEGORIES = [
+  "RENT",
+  "SERVICES",
+  "SALARIES",
+  "SUPPLIES",
+  "MARKETING",
+  "MAINTENANCE",
+  "TAXES",
+  "OTHER",
+];
+
 export function ExpensesModule() {
-  const { expenses, addExpense } = useTransactions();
+  const { expenses, addExpense, isLoading } = useTransactions();
   const { businessType } = useBusiness();
+  const { branchId, branches } = useUser();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
@@ -51,7 +62,12 @@ export function ExpensesModule() {
     description: "",
   });
 
-  // Filter expenses by business type and search query
+  useEffect(() => {
+    if (!newExpense.branchId && branchId) {
+      setNewExpense((prev) => ({ ...prev, branchId }));
+    }
+  }, [branchId, newExpense.branchId]);
+
   const filteredExpenses = expenses.filter((expense) => {
     const matchesType = expense.businessType === businessType;
     const matchesSearch =
@@ -65,7 +81,6 @@ export function ExpensesModule() {
     0
   );
 
-  // Calculate expenses by category
   const expensesByCategory = filteredExpenses.reduce((acc, curr) => {
     acc[curr.category] = (acc[curr.category] || 0) + curr.amount;
     return acc;
@@ -79,20 +94,20 @@ export function ExpensesModule() {
   const totalSales = getTotalSalesByType(businessType);
   const expenseRatio = totalSales > 0 ? (totalExpenses / totalSales) * 100 : 0;
 
-  const handleAddExpense = (e: React.FormEvent) => {
+  const handleAddExpense = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newExpense.amount || !newExpense.category || !newExpense.description)
       return;
 
-    addExpense({
-      branchId: newExpense.branchId,
+    await addExpense({
+      branchId: newExpense.branchId || branchId || "",
       amount: parseFloat(newExpense.amount),
       category: newExpense.category,
       description: newExpense.description,
-      businessType: businessType,
+      businessType,
     });
 
-    setNewExpense({ amount: "", category: "", description: "", branchId: "" });
+    setNewExpense({ amount: "", category: "", description: "", branchId: branchId || "" });
     setIsDialogOpen(false);
   };
 
@@ -146,7 +161,6 @@ export function ExpensesModule() {
                   </div>
                 </div>
                 <div className="space-y-4">
-                  {/* SELECCIÓN DE SUCURSAL / BRANCH */}
                   <div className="grid gap-2">
                     <Label htmlFor="branch">Sucursal</Label>
                     <Select
@@ -159,19 +173,17 @@ export function ExpensesModule() {
                         <SelectValue placeholder="Seleccionar destino del gasto" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="MAYORISTA">
-                          Distribuidora Mayorista
-                        </SelectItem>
-                        <SelectItem value="MINORISTA">
-                          Sucursal Minorista
-                        </SelectItem>
+                        {branches.map((branch) => (
+                          <SelectItem key={branch.id} value={branch.id}>
+                            {branch.name}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
 
-                  {/* SELECCIÓN DE CATEGORÍA */}
                   <div className="grid gap-2">
-                    <Label htmlFor="category">Categoría</Label>
+                    <Label htmlFor="category">Categoria</Label>
                     <Select
                       value={newExpense.category}
                       onValueChange={(value) =>
@@ -179,30 +191,20 @@ export function ExpensesModule() {
                       }
                     >
                       <SelectTrigger id="category">
-                        <SelectValue placeholder="Selecciona una categoría" />
+                        <SelectValue placeholder="Selecciona una categoria" />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="RENT">Alquiler</SelectItem>
-                        <SelectItem value="SERVICES">Servicios</SelectItem>
-                        <SelectItem value="SALARIES">Salarios</SelectItem>
-                        <SelectItem value="SUPPLIES">Insumos</SelectItem>
-                        <SelectItem value="MARKETING">Marketing</SelectItem>
-                        <SelectItem value="MAINTENANCE">
-                          Mantenimiento
-                        </SelectItem>
-                        <SelectItem value="TAXES">Impuestos</SelectItem>
-                        <SelectItem value="OTHER">Otro</SelectItem>
+                        {EXPENSE_CATEGORIES.map((category) => (
+                          <SelectItem key={category} value={category}>
+                            {category}
+                          </SelectItem>
+                        ))}
                       </SelectContent>
                     </Select>
                   </div>
 
-                  {/* DESCRIPCIÓN CONDICIONAL O ENFOCADA */}
                   <div className="grid gap-2">
-                    <Label htmlFor="description">
-                      {newExpense.category === "OTHER"
-                        ? "Especifique el gasto"
-                        : "Descripción"}
-                    </Label>
+                    <Label htmlFor="description">Descripcion</Label>
                     <Input
                       id="description"
                       value={newExpense.description}
@@ -212,12 +214,7 @@ export function ExpensesModule() {
                           description: e.target.value,
                         })
                       }
-                      placeholder={
-                        newExpense.category === "OTHER"
-                          ? "Describa el gasto detalladamente"
-                          : "Ej: Pago de luz Enero"
-                      }
-                      // Si quieres que sea obligatorio solo cuando es 'OTHER', puedes manejarlo en el form submit
+                      placeholder="Ej: Pago de luz Enero"
                       required
                     />
                   </div>
@@ -270,7 +267,7 @@ export function ExpensesModule() {
         <Card className="md:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">
-              Principales Categorías
+              Principales Categorias
             </CardTitle>
             <FileText className="h-4 w-4 text-blue-500" />
           </CardHeader>
@@ -293,7 +290,7 @@ export function ExpensesModule() {
                 ))
               ) : (
                 <p className="text-xs text-muted-foreground">
-                  Sin datos de categorías
+                  Sin datos de categorias
                 </p>
               )}
             </div>
@@ -322,13 +319,19 @@ export function ExpensesModule() {
               <TableHeader>
                 <TableRow>
                   <TableHead>Fecha</TableHead>
-                  <TableHead>Descripción</TableHead>
-                  <TableHead>Categoría</TableHead>
+                  <TableHead>Descripcion</TableHead>
+                  <TableHead>Categoria</TableHead>
                   <TableHead className="text-right">Monto</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredExpenses.length === 0 ? (
+                {isLoading ? (
+                  <TableRow>
+                    <TableCell colSpan={4} className="h-24 text-center">
+                      Cargando gastos...
+                    </TableCell>
+                  </TableRow>
+                ) : filteredExpenses.length === 0 ? (
                   <TableRow>
                     <TableCell colSpan={4} className="h-24 text-center">
                       No se encontraron gastos registrados.
@@ -341,19 +344,15 @@ export function ExpensesModule() {
                         <div className="flex items-center gap-2">
                           <Calendar className="h-3.5 w-3.5 text-muted-foreground" />
                           <span className="text-sm">
-                            {format(
-                              new Date(expense.date),
-                              "dd/MM/yyyy HH:mm",
-                              { locale: es }
-                            )}
+                            {format(new Date(expense.date), "dd/MM/yyyy HH:mm", {
+                              locale: es,
+                            })}
                           </span>
                         </div>
                       </TableCell>
                       <TableCell>
                         <div className="flex flex-col">
-                          <span className="font-medium">
-                            {expense.description}
-                          </span>
+                          <span className="font-medium">{expense.description}</span>
                           <span className="text-xs text-muted-foreground">
                             Ref: {expense.id}
                           </span>

@@ -3,23 +3,21 @@
 import { serverApi } from "@/lib/server-api";
 import { revalidatePath } from "next/cache";
 
-export async function getSalesAction(params?: any) {
+export async function getSalesAction() {
   return serverApi.get("/sales");
 }
 
 export async function createSaleAction(data: any) {
   const result = await serverApi.post("/sales", data);
   revalidatePath("/sales");
-  revalidatePath("/audit");
+  revalidatePath("/reports");
   return result;
 }
 
-export async function getSalesMetricsAction(params?: any) {
-  // If endpoint doesn't exist natively, we might simulate from sales,
-  // but let's assume /metrics/sales or /sales/metrics
+export async function getSalesMetricsAction() {
   try {
-    return await serverApi.get("/sales/metrics");
-  } catch (e) {
+    return await serverApi.get("/snapshots/metrics?period=monthly");
+  } catch {
     return { error: "Metrics not available" };
   }
 }

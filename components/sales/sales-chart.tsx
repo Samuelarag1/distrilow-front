@@ -1,46 +1,36 @@
-"use client"
+"use client";
 
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { ChartContainer, ChartTooltip, ChartTooltipContent } from "@/components/ui/chart"
-import { Line, LineChart, ResponsiveContainer, XAxis, YAxis, CartesianGrid, Bar, BarChart } from "recharts"
+import { useMemo } from "react";
+import useSWR from "swr";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import {
+  Line,
+  LineChart,
+  ResponsiveContainer,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Bar,
+  BarChart,
+} from "recharts";
+import { backendApi } from "@/lib/backend-api";
+import { useUser } from "@/components/providers/user-provider";
+import { useTransactions } from "@/components/providers/transactions-provider";
 
 interface SalesChartProps {
-  period: "monthly" | "quarterly" | "yearly"
+  period: "monthly" | "quarterly" | "yearly";
 }
-
-const monthlyData = [
-  { name: "Ene", ventas: 45230, pedidos: 342, clientes: 287 },
-  { name: "Feb", ventas: 52100, pedidos: 398, clientes: 324 },
-  { name: "Mar", ventas: 48750, pedidos: 365, clientes: 298 },
-  { name: "Abr", ventas: 56200, pedidos: 421, clientes: 356 },
-  { name: "May", ventas: 61500, pedidos: 467, clientes: 389 },
-  { name: "Jun", ventas: 58900, pedidos: 445, clientes: 372 },
-  { name: "Jul", ventas: 64300, pedidos: 489, clientes: 401 },
-  { name: "Ago", ventas: 67800, pedidos: 512, clientes: 425 },
-  { name: "Sep", ventas: 63200, pedidos: 478, clientes: 398 },
-  { name: "Oct", ventas: 69500, pedidos: 523, clientes: 441 },
-  { name: "Nov", ventas: 72100, pedidos: 548, clientes: 467 },
-  { name: "Dic", ventas: 78900, pedidos: 592, clientes: 501 },
-]
-
-const quarterlyData = [
-  { name: "Q1 2023", ventas: 142080, pedidos: 1105, clientes: 909 },
-  { name: "Q2 2023", ventas: 176600, pedidos: 1333, clientes: 1117 },
-  { name: "Q3 2023", ventas: 195300, pedidos: 1479, clientes: 1224 },
-  { name: "Q4 2023", ventas: 220500, pedidos: 1663, clientes: 1409 },
-  { name: "Q1 2024", ventas: 146080, pedidos: 1105, clientes: 909 },
-  { name: "Q2 2024", ventas: 176600, pedidos: 1333, clientes: 1117 },
-  { name: "Q3 2024", ventas: 195300, pedidos: 1479, clientes: 1224 },
-  { name: "Q4 2024", ventas: 220500, pedidos: 1663, clientes: 1409 },
-]
-
-const yearlyData = [
-  { name: "2020", ventas: 520000, pedidos: 4200, clientes: 3500 },
-  { name: "2021", ventas: 680000, pedidos: 5100, clientes: 4200 },
-  { name: "2022", ventas: 750000, pedidos: 5800, clientes: 4800 },
-  { name: "2023", ventas: 834480, pedidos: 6580, clientes: 5659 },
-  { name: "2024", ventas: 738480, pedidos: 5880, clientes: 5159 },
-]
 
 const chartConfig = {
   ventas: {
@@ -55,36 +45,115 @@ const chartConfig = {
     label: "Clientes",
     color: "hsl(var(--chart-3))",
   },
+};
+
+function formatDate(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
+function buildRange(period: "monthly" | "quarterly" | "yearly") {
+  const now = new Date();
+  const from = new Date(now);
+
+  if (period === "monthly") {
+    from.setMonth(now.getMonth() - 11);
+  } else if (period === "quarterly") {
+    from.setMonth(now.getMonth() - 23);
+  } else {
+    from.setFullYear(now.getFullYear() - 4);
+    from.setMonth(0, 1);
+  }
+
+  return {
+    from: formatDate(from),
+    to: formatDate(now),
+    groupBy: period === "monthly" ? "month" : period === "quarterly" ? "quarter" : "year",
+  } as const;
 }
 
 export function SalesChart({ period }: SalesChartProps) {
-  const getData = () => {
-    switch (period) {
-      case "monthly":
-        return monthlyData
-      case "quarterly":
-        return quarterlyData
-      case "yearly":
-        return yearlyData
-      default:
-        return monthlyData
-    }
-  }
+  const { branchId } = useUser();
+  const { sales } = useTransactions();
+
+  const range = useMemo(() => buildRange(period), [period]);
+
+  const { data, isLoading, error } = useSWR(
+    branchId
+      ? ["sales-chart", branchId, period, range.from, range.to, range.groupBy]
+      : null,
+    async () => {
+      const [revenue, count] = await Promise.all([
+        backendApi.analytics.sales({
+          from: range.from,
+          to: range.to,
+          groupBy: range.groupBy,
+          metric: "revenue",
+        }),
+        backendApi.analytics.sales({
+          from: range.from,
+          to: range.to,
+          groupBy: range.groupBy,
+          metric: "count",
+        }),
+      ]);
+
+      return { revenue, count };
+    },
+    { revalidateOnFocus: false }
+  );
+
+  const customerByPeriod = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    sales.forEach((sale) => {
+      const date = new Date(sale.date);
+      let key = "";
+      if (period === "monthly") {
+        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+      } else if (period === "quarterly") {
+        const quarter = Math.floor(date.getMonth() / 3) + 1;
+        key = `${date.getFullYear()}-Q${quarter}`;
+      } else {
+        key = String(date.getFullYear());
+      }
+
+      if (!map.has(key)) map.set(key, new Set<string>());
+      map.get(key)?.add(sale.customerName || "Consumidor Final");
+    });
+
+    const counts = new Map<string, number>();
+    map.forEach((value, key) => counts.set(key, value.size));
+    return counts;
+  }, [sales, period]);
+
+  const chartData = useMemo(() => {
+    const revenuePoints = data?.revenue?.points ?? [];
+    const countByPeriod = new Map(
+      (data?.count?.points ?? []).map((point) => [point.period, Number(point.value ?? 0)])
+    );
+
+    return revenuePoints.map((point) => {
+      const periodKey = point.period;
+      return {
+        name: periodKey,
+        ventas: Number(point.value ?? 0),
+        pedidos: Number(countByPeriod.get(periodKey) ?? 0),
+        clientes: Number(customerByPeriod.get(periodKey) ?? 0),
+      };
+    });
+  }, [data, customerByPeriod]);
 
   const getTitle = () => {
     switch (period) {
       case "monthly":
-        return "Evolución Mensual"
+        return "Evolucion Mensual";
       case "quarterly":
-        return "Evolución Trimestral"
+        return "Evolucion Trimestral";
       case "yearly":
-        return "Evolución Anual"
+        return "Evolucion Anual";
       default:
-        return "Evolución de Ventas"
+        return "Evolucion de Ventas";
     }
-  }
-
-  const data = getData()
+  };
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -92,14 +161,21 @@ export function SalesChart({ period }: SalesChartProps) {
         <CardHeader>
           <CardTitle>{getTitle()} - Ventas</CardTitle>
           <CardDescription>
-            Tendencia de ingresos por {period === "monthly" ? "mes" : period === "quarterly" ? "trimestre" : "año"}
+            Tendencia de ingresos por {period === "monthly" ? "mes" : period === "quarterly" ? "trimestre" : "ano"}
           </CardDescription>
         </CardHeader>
         <CardContent>
+          {isLoading && <p className="text-sm text-muted-foreground">Cargando datos...</p>}
+          {!isLoading && error && (
+            <p className="text-sm text-destructive">No se pudo cargar analitica.</p>
+          )}
+          {!isLoading && !error && chartData.length === 0 && (
+            <p className="text-sm text-muted-foreground">Sin datos en el periodo seleccionado.</p>
+          )}
           <div className="w-full h-[300px]">
             <ChartContainer config={chartConfig} className="w-full h-full">
               <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
+                <LineChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis dataKey="name" className="text-xs" tick={{ fontSize: 12 }} />
                   <YAxis className="text-xs" tick={{ fontSize: 12 }} />
@@ -122,14 +198,14 @@ export function SalesChart({ period }: SalesChartProps) {
         <CardHeader>
           <CardTitle>{getTitle()} - Pedidos y Clientes</CardTitle>
           <CardDescription>
-            Volumen de operaciones por {period === "monthly" ? "mes" : period === "quarterly" ? "trimestre" : "año"}
+            Volumen de operaciones por {period === "monthly" ? "mes" : period === "quarterly" ? "trimestre" : "ano"}
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="w-full h-[300px]">
             <ChartContainer config={chartConfig} className="w-full h-full">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
+                <BarChart data={chartData} margin={{ top: 10, right: 10, left: 10, bottom: 10 }}>
                   <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
                   <XAxis dataKey="name" className="text-xs" tick={{ fontSize: 12 }} />
                   <YAxis className="text-xs" tick={{ fontSize: 12 }} />
@@ -143,5 +219,5 @@ export function SalesChart({ period }: SalesChartProps) {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

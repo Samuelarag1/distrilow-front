@@ -4,18 +4,13 @@ import {
   TrendingUp,
   TrendingDown,
   DollarSign,
-  ShoppingCart,
-  Users,
-  Package,
   Wallet,
-  FileText,
   CreditCard,
   Receipt,
   PiggyBank,
 } from "lucide-react";
-import { DashboardMetrics, BusinessType } from "@/lib/data-service";
+import type { DashboardMetrics, BusinessType } from "@/lib/data-service";
 import { useTransactions } from "@/components/providers/transactions-provider";
-import { useProducts } from "@/hooks/useProducts";
 
 interface MetricsCardsProps {
   metrics: DashboardMetrics;
@@ -24,7 +19,6 @@ interface MetricsCardsProps {
 
 export function MetricsCards({ metrics, type }: MetricsCardsProps) {
   const { getTotalExpensesByType } = useTransactions();
-  const { products } = useProducts();
 
   const totalExpenses = getTotalExpensesByType(type);
   const netProfit = metrics.totalRevenue - totalExpenses;

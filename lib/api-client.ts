@@ -1,6 +1,48 @@
-// src/lib/api-client.ts
+import type { AuthResponse } from "@/lib/api-types";
+
+type ApiSessionInput =
+  | {
+      accessToken?: string | null;
+      branchId?: string | null;
+    }
+  | string
+  | null;
+
+type RequestOptions = RequestInit & {
+  _retried?: boolean;
+  branchScoped?: boolean;
+};
+
 let authToken: string | null = null;
 let activeBranchId: string | null = null;
+let refreshPromise: Promise<boolean> | null = null;
+
+const BRANCH_SCOPED_PREFIXES = [
+  "/products",
+  "/files/upload",
+  "/stocks",
+  "/stock-movements",
+  "/sales",
+  "/expenses",
+  "/cash",
+  "/analytics",
+] as const;
+
+function normalizeBaseUrl(base: string) {
+  return base.endsWith("/") ? base.slice(0, -1) : base;
+}
+
+function resolveApiBaseUrl() {
+  const legacyUrl = process.env.NEXT_PUBLIC_API_URL;
+  if (legacyUrl) return normalizeBaseUrl(legacyUrl);
+
+  const origin =
+    process.env.NEXT_PUBLIC_BACKEND_URL ??
+    process.env.NEXT_PUBLIC_API_BASE_URL ??
+    "http://localhost:3000";
+  const prefix = process.env.NEXT_PUBLIC_API_PREFIX ?? "/api";
+  return `${normalizeBaseUrl(origin)}${prefix.startsWith("/") ? "" : "/"}${prefix}`;
+}
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -10,74 +52,235 @@ function getCookie(name: string): string | null {
   return match ? decodeURIComponent(match.split("=").slice(1).join("=")) : null;
 }
 
-export function setApiSession(token: string | null, branchId?: string | null) {
-  authToken = token || null;
+function getSessionToken() {
+  return (
+    authToken ??
+    getCookie("accessToken") ??
+    getCookie("token") ??
+    getCookie("access_token")
+  );
+}
 
-  if (branchId === undefined || branchId === null || branchId === "") {
-    activeBranchId = null;
-  } else {
-    activeBranchId = branchId;
+function getSessionBranchId() {
+  return activeBranchId ?? getCookie("activeBranchId") ?? getCookie("branchId");
+}
+
+function isBranchScopedPath(path: string) {
+  return BRANCH_SCOPED_PREFIXES.some(
+    (prefix) => path === prefix || path.startsWith(`${prefix}/`)
+  );
+}
+
+function isJsonBody(body: BodyInit | null | undefined) {
+  if (!body) return false;
+  return !(
+    body instanceof FormData ||
+    body instanceof URLSearchParams ||
+    body instanceof Blob ||
+    body instanceof ArrayBuffer
+  );
+}
+
+function mergeBranchIntoBody(
+  body: BodyInit | null | undefined,
+  branchId: string | null
+) {
+  if (!branchId || !body || typeof body !== "string") return body;
+
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      if ("branchId" in parsed && parsed.branchId !== branchId) {
+        return JSON.stringify({ ...parsed, branchId });
+      }
+    }
+  } catch {
+    return body;
   }
+
+  return body;
+}
+
+function shouldTryRefresh(path: string, method: string) {
+  if (path === "/auth/login") return false;
+  if (path === "/auth/refresh") return false;
+  if (path === "/auth/logout") return false;
+  if (method.toUpperCase() === "OPTIONS") return false;
+  return true;
+}
+
+async function parseResponse<T>(res: Response): Promise<T> {
+  if (res.status === 204) return null as T;
+
+  const contentType = res.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) {
+    return (await res.json()) as T;
+  }
+
+  const text = await res.text();
+  return (text as unknown) as T;
 }
 
 export class ApiError extends Error {
-  constructor(public status: number, public bodyText: string) {
+  constructor(
+    public status: number,
+    public bodyText: string,
+    public body?: unknown
+  ) {
     super(bodyText || `API request failed (${status})`);
   }
 }
 
-async function request<T = any>(
-  url: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const headers = new Headers(options.headers);
+async function refreshSession(): Promise<boolean> {
+  if (refreshPromise) return refreshPromise;
 
-  // Solo setear JSON si corresponde
-  if (options.body && !(options.body instanceof FormData)) {
-    if (!headers.has("Content-Type"))
-      headers.set("Content-Type", "application/json");
+  refreshPromise = (async () => {
+    try {
+      const res = await fetch(`${resolveApiBaseUrl()}/auth/refresh`, {
+        method: "POST",
+        credentials: "include",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      });
+
+      if (!res.ok) return false;
+      const payload = (await parseResponse<AuthResponse>(
+        res
+      )) as AuthResponse | null;
+      if (payload?.accessToken) {
+        authToken = payload.accessToken;
+      }
+      if (payload?.session?.activeBranchId !== undefined) {
+        activeBranchId = payload.session.activeBranchId ?? null;
+      }
+
+      return true;
+    } catch {
+      return false;
+    } finally {
+      refreshPromise = null;
+    }
+  })();
+
+  return refreshPromise;
+}
+
+export function setApiSession(token: ApiSessionInput, branchId?: string | null) {
+  if (typeof token === "string" || token === null) {
+    authToken = token;
+    activeBranchId = branchId === undefined ? activeBranchId : branchId;
+    return;
   }
 
-  // Fallback: si no está en memoria, lo leo de cookies (las que vos seteás en login)
-  const tokenToUse = authToken ?? getCookie("token");
-  const branchToUse =
-    activeBranchId ?? getCookie("activeBranchId") ?? getCookie("branchId");
+  authToken =
+    token?.accessToken === undefined ? authToken : token?.accessToken ?? null;
+  activeBranchId =
+    token?.branchId === undefined ? activeBranchId : token?.branchId ?? null;
+}
 
-  if (tokenToUse) headers.set("Authorization", `Bearer ${tokenToUse}`);
-  if (branchToUse) headers.set("X-Branch-Id", branchToUse);
+export function getApiSession() {
+  return {
+    accessToken: getSessionToken(),
+    branchId: getSessionBranchId(),
+  };
+}
 
-  const base = process.env.NEXT_PUBLIC_API_URL;
-  if (!base) throw new Error("NEXT_PUBLIC_API_URL is not defined");
+async function request<T = unknown>(
+  path: string,
+  options: RequestOptions = {}
+): Promise<T> {
+  const method = (options.method ?? "GET").toUpperCase();
+  const branchScoped =
+    options.branchScoped === undefined
+      ? isBranchScopedPath(path)
+      : options.branchScoped;
 
-  const res = await fetch(`${base}${url}`, {
+  const headers = new Headers(options.headers);
+  if (isJsonBody(options.body) && !headers.has("Content-Type")) {
+    headers.set("Content-Type", "application/json");
+  }
+
+  const tokenToUse = getSessionToken();
+  const branchToUse = branchScoped ? getSessionBranchId() : null;
+
+  if (tokenToUse && !headers.has("Authorization")) {
+    headers.set("Authorization", `Bearer ${tokenToUse}`);
+  }
+  if (branchScoped && branchToUse && !headers.has("x-branch-id")) {
+    headers.set("x-branch-id", branchToUse);
+  }
+
+  const body = branchScoped
+    ? mergeBranchIntoBody(options.body, branchToUse)
+    : options.body;
+
+  const res = await fetch(`${resolveApiBaseUrl()}${path}`, {
     ...options,
+    method,
     headers,
-    // Si después migrás a cookies HttpOnly reales, esto ayuda.
+    body,
     credentials: "include",
   });
 
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    throw new ApiError(res.status, text);
+  if (res.status === 401 && !options._retried && shouldTryRefresh(path, method)) {
+    const refreshed = await refreshSession();
+    if (refreshed) {
+      return request<T>(path, { ...options, _retried: true });
+    }
   }
 
-  // Soportar 204 No Content
-  const text = await res.text();
-  return (text ? JSON.parse(text) : null) as T;
+  if (!res.ok) {
+    const contentType = res.headers.get("content-type") ?? "";
+    let bodyText = "";
+    let parsedBody: unknown;
+
+    try {
+      if (contentType.includes("application/json")) {
+        parsedBody = await res.json();
+        bodyText =
+          typeof parsedBody === "object" && parsedBody !== null
+            ? JSON.stringify(parsedBody)
+            : String(parsedBody ?? "");
+      } else {
+        bodyText = await res.text();
+      }
+    } catch {
+      bodyText = "";
+    }
+
+    throw new ApiError(res.status, bodyText, parsedBody);
+  }
+
+  return parseResponse<T>(res);
 }
 
 export const apiClientFetch = {
-  get: <T = any>(url: string) => request<T>(url),
-  post: <T = any>(url: string, body: any) =>
-    request<T>(url, { method: "POST", body: JSON.stringify(body) }),
-  put: <T = any>(url: string, body: any) =>
-    request<T>(url, { method: "PUT", body: JSON.stringify(body) }),
-  patch: <T = any>(url: string, body: any) =>
-    request<T>(url, { method: "PATCH", body: JSON.stringify(body) }),
-  delete: <T = any>(url: string) => request<T>(url, { method: "DELETE" }),
+  get: <T = unknown>(url: string, options?: Omit<RequestOptions, "method">) =>
+    request<T>(url, options),
+  post: <T = unknown>(url: string, body?: unknown, options?: RequestOptions) =>
+    request<T>(url, {
+      ...options,
+      method: "POST",
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
+    }),
+  put: <T = unknown>(url: string, body?: unknown, options?: RequestOptions) =>
+    request<T>(url, {
+      ...options,
+      method: "PUT",
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
+    }),
+  patch: <T = unknown>(url: string, body?: unknown, options?: RequestOptions) =>
+    request<T>(url, {
+      ...options,
+      method: "PATCH",
+      body: body instanceof FormData ? body : JSON.stringify(body ?? {}),
+    }),
+  delete: <T = unknown>(url: string, options?: RequestOptions) =>
+    request<T>(url, { ...options, method: "DELETE" }),
 };
 
-// Backward-compatible alias for modules that still import `api`.
 export const api = apiClientFetch;
 
 export async function apiGet<T>(url: string): Promise<T> {

@@ -7,8 +7,7 @@ export function useApiSessionSync(
   branchId?: string | null
 ) {
   useEffect(() => {
-    if (token && branchId) {
-      setApiSession(token, branchId);
-    }
+    if (!token) return;
+    setApiSession({ accessToken: token, branchId: branchId ?? null });
   }, [token, branchId]);
 }

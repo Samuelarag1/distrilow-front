@@ -1,6 +1,6 @@
 import useSWR from "swr";
 import { Product } from "@/lib/products";
-import { bffGet } from "@/lib/bff-client";
+import { backendApi } from "@/lib/backend-api";
 
 type UseProductsArgs = {
   skip?: number;
@@ -12,24 +12,44 @@ type UseProductsArgs = {
   sortOrder?: "asc" | "desc";
 };
 
-function buildQuery(params: Record<string, unknown>) {
-  const qs = new URLSearchParams();
-  Object.entries(params).forEach(([key, value]) => {
-    if (value === undefined || value === null || value === "" || value === "all")
-      return;
-    qs.set(key, String(value));
-  });
-  const serialized = qs.toString();
-  return serialized ? `?${serialized}` : "";
-}
-
 export function useProducts(args: UseProductsArgs = {}) {
-  const key = `/api/products${buildQuery(args)}`;
-  const { data, error, isLoading, mutate } = useSWR<
-    Product[] | { items: Product[] }
-  >(key, bffGet);
+  const key = [
+    "products",
+    args.skip ?? 0,
+    args.take ?? 20,
+    args.search ?? "",
+    args.categoryId ?? "",
+    args.branchId ?? "",
+    args.sortBy ?? "",
+    args.sortOrder ?? "asc",
+  ] as const;
+  const { data, error, isLoading, mutate } = useSWR<Product[]>(
+    key,
+    async () => {
+      const page = await backendApi.productsWithStock({
+        skip: args.skip,
+        take: args.take,
+        search: args.search ?? undefined,
+        categoryId: args.categoryId ?? undefined,
+        sortBy: (args.sortBy as any) ?? undefined,
+        sortOrder: args.sortOrder,
+      });
 
-  const products = Array.isArray(data) ? data : data?.items ?? [];
+      return page.items.map((item) => ({
+        ...item,
+        price: Number(item.retailPrice ?? item.costPrice ?? 0),
+        category: item.categoryId ?? "Sin categoria",
+        unit: item.measurementType,
+      })) as Product[];
+    },
+    {
+      revalidateOnFocus: false,
+      dedupingInterval: 15000,
+      keepPreviousData: true,
+    }
+  );
+
+  const products = data ?? [];
 
   return {
     products,

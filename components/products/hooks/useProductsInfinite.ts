@@ -1,6 +1,5 @@
 import useSWRInfinite from "swr/infinite";
-import { bffGet } from "@/lib/bff-client";
-import { buildQuery } from "../utils/query";
+import { backendApi } from "@/lib/backend-api";
 import { ApiSortBy, SortOrder } from "../types/product";
 import type { Product } from "@/lib/products";
 
@@ -58,21 +57,29 @@ export function useProductsInfinite(args: {
   };
 
   const fetchPage = async (key: readonly any[]) => {
-    const [, branchId, skip, take, search, categoryId, sortBy, sortOrder] = key;
+    const [, , skip, take, search, categoryId, sortBy, sortOrder] = key;
     const remaining = Math.max(0, maxItems - Number(skip));
     const pageTake = Math.min(Number(take), remaining);
 
-    const qs = buildQuery({
-      branchId,
-      skip,
+    const page = await backendApi.productsWithStock({
+      skip: Number(skip),
       take: pageTake,
-      search,
-      categoryId,
+      search: search || undefined,
+      categoryId: categoryId || undefined,
       sortBy,
       sortOrder,
     });
 
-    return bffGet<PagePayload>(`/api/products${qs}`);
+    return {
+      items: page.items.map((item) => ({
+        ...item,
+        price: Number(item.retailPrice ?? item.costPrice ?? 0),
+        category: item.categoryId ?? "Sin categoria",
+        unit: item.measurementType,
+      })) as Product[],
+      total: page.total,
+      hasMore: page.hasMore,
+    } as PagePayload;
   };
 
   const swr = useSWRInfinite<PagePayload>(getKey, fetchPage, {

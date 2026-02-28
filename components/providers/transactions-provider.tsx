@@ -1,12 +1,13 @@
 "use client";
 
-import React, { createContext, useContext, useState, useEffect } from "react";
-import { BusinessType } from "@/lib/data-service";
+import React, { createContext, useContext, useEffect, useState } from "react";
+import { useBusiness } from "./business-provider";
 import { useAudit } from "./audit-provider";
 import { useUser } from "./user-provider";
-import { db } from "@/lib/db";
-import { useNetworkStatus } from "@/hooks/use-network";
-import { apiClientFetch } from "@/lib/api-client";
+import { backendApi } from "@/lib/backend-api";
+import type { ExpenseCategory } from "@/lib/api-types";
+import type { BusinessType } from "@/lib/data-service";
+
 export interface Expense {
   id: string;
   branchId: string;
@@ -22,8 +23,8 @@ export interface Sale {
   id: string;
   amount: number;
   customerName: string;
-  items: number; // count
-  lineItems?: any[]; // details
+  items: number;
+  lineItems?: Array<{ productId: string; quantity: number; price: number }>;
   date: string;
   businessType: BusinessType;
   userId: string;
@@ -48,6 +49,48 @@ const TransactionsContext = createContext<TransactionsContextType | undefined>(
   undefined
 );
 
+function normalizeExpense(row: any, businessType: BusinessType): Expense {
+  return {
+    id: row.id,
+    branchId: row.branchId,
+    amount: Number(row.amount ?? 0),
+    category: String(row.category ?? "OTHER"),
+    description: String(row.description ?? ""),
+    date: String(row.createdAt ?? row.updatedAt ?? new Date().toISOString()),
+    businessType,
+  };
+}
+
+function normalizeSale(row: any, businessType: BusinessType): Sale {
+  const lineItems: Array<{ productId: string; quantity: number; price: number }> =
+    Array.isArray(row.items)
+    ? row.items.map((item: any) => ({
+        productId: item.productId,
+        quantity: Number(item.quantity ?? 0),
+        price: Number(item.unitPrice ?? 0),
+      }))
+    : [];
+
+  const computedAmount = lineItems.reduce(
+    (sum: number, item) => sum + item.quantity * item.price,
+    0
+  );
+
+  return {
+    id: row.id,
+    amount: Number(row.total ?? computedAmount),
+    customerName: row.clientId ? `Cliente ${row.clientId}` : "Consumidor Final",
+    items: lineItems.reduce((sum: number, item) => sum + item.quantity, 0),
+    lineItems,
+    date: String(row.createdAt ?? new Date().toISOString()),
+    businessType,
+    userId: String(row.userId ?? "unknown"),
+    userName: String(row.user?.email ?? row.userName ?? "Usuario"),
+    branchId: String(row.branchId ?? ""),
+    status: row.status === "PENDING" ? "PENDING" : "COMPLETED",
+  };
+}
+
 export function TransactionsProvider({
   children,
 }: {
@@ -57,184 +100,107 @@ export function TransactionsProvider({
   const [sales, setSales] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const { logEvent } = useAudit();
-  const { currentUser, token } = useUser();
-  const isOnline = useNetworkStatus();
+  const { token, branchId } = useUser();
+  const { businessType } = useBusiness();
 
-  // Load from API + Local DB
   useEffect(() => {
     const loadData = async () => {
+      if (!token || !branchId) {
+        setSales([]);
+        setExpenses([]);
+        setIsLoading(false);
+        return;
+      }
+
       setIsLoading(true);
       try {
-        // 1. Try to fetch from API if online
-        if (isOnline && token) {
-          try {
-            const apiSales = await apiClientFetch.get("/sales");
-            // Sync local DB with API data if needed?
-            // For now just set state
-            setSales(apiSales);
-          } catch (e) {
-            console.error(
-              "Failed to fetch sales from API, falling back to local",
-              e
-            );
-          }
-        }
+        const [apiSales, apiExpenses] = await Promise.all([
+          backendApi.sales.list(),
+          backendApi.expenses.list(),
+        ]);
 
-        // 2. Load from Local DB (always show what we have)
-        const dbSales = await db.sales.toArray();
-        const mappedSales = dbSales.map(
-          (s) =>
-            ({
-              id: s.id,
-              amount: s.total,
-              customerName: "Cliente Local", // This might be in s.clientId if we joined
-              items: s.items ? s.items.length : 0,
-              lineItems: s.items,
-              date: s.createdAt.toISOString(),
-              businessType: "retail" as BusinessType,
-              userId: s.userId || "unknown",
-              userName: "User",
-              status: s.status === "PENDING" ? "PENDING" : "COMPLETED",
-              branchId: s.branchId,
-            } as Sale)
+        setSales(
+          apiSales
+            .map((sale) => normalizeSale(sale, businessType))
+            .sort(
+              (a, b) =>
+                new Date(b.date).getTime() - new Date(a.date).getTime()
+            )
         );
-
-        // Merge (simple replacement or merging based on ID)
-        setSales((prev) => {
-          const merged = [...prev];
-          mappedSales.forEach((ls) => {
-            if (!merged.find((ms) => ms.id === ls.id)) {
-              merged.push(ls);
-            }
-          });
-          return merged.sort(
-            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-          );
-        });
-
-        // Similar for expenses...
-        if (isOnline && token) {
-          try {
-            const apiExpenses = await apiClientFetch.get("/expenses");
-            setExpenses(apiExpenses);
-          } catch (e) {
-            console.error("Failed to fetch expenses from API", e);
-          }
-        }
+        setExpenses(
+          apiExpenses
+            .map((expense) => normalizeExpense(expense, businessType))
+            .sort(
+              (a, b) =>
+                new Date(b.date).getTime() - new Date(a.date).getTime()
+            )
+        );
       } catch (e) {
-        console.error("Critical error loading transactions data", e);
+        console.error("Error loading transactions data", e);
       } finally {
         setIsLoading(false);
       }
     };
 
     loadData();
-  }, [isOnline, token]);
+  }, [token, branchId]);
 
   const addExpense = async (newExpense: Omit<Expense, "id" | "date">) => {
-    const tempId = crypto.randomUUID();
-    const expense: Expense = {
-      ...newExpense,
-      id: tempId,
-      date: new Date().toISOString(),
-      userId: currentUser?.id,
-    };
-
-    try {
-      if (isOnline) {
-        const savedExpense = await apiClientFetch.post("/expenses", expense);
-        setExpenses((prev) => [savedExpense, ...prev]);
-      } else {
-        // Offline handling
-        setExpenses((prev) => [expense, ...prev]);
-        await db.pendingActions.add({
-          id: crypto.randomUUID(),
-          type: "CREATE_EXPENSE" as any, // Need to add this type
-          payload: expense,
-          createdAt: Date.now(),
-          synced: false,
-          failedCount: 0,
-        });
-      }
-      logEvent(
-        "create",
-        "expense",
-        `Registró un gasto de $${expense.amount.toLocaleString()}: ${
-          expense.description
-        }`,
-        tempId
-      );
-    } catch (error) {
-      console.error("Failed to add expense", error);
+    const resolvedBranchId = newExpense.branchId || branchId;
+    if (!resolvedBranchId) {
+      throw new Error("No hay sucursal activa para registrar el gasto.");
     }
+
+    const savedExpense = await backendApi.expenses.create({
+      branchId: resolvedBranchId,
+      amount: Number(newExpense.amount),
+      category: newExpense.category as ExpenseCategory,
+      description: newExpense.description,
+    });
+
+    const normalized = normalizeExpense(savedExpense, businessType);
+
+    setExpenses((prev) => [normalized, ...prev]);
+
+    logEvent(
+      "create",
+      "expense",
+      `Registro un gasto de $${normalized.amount.toLocaleString()}: ${normalized.description}`,
+      normalized.id
+    );
   };
 
   const addSale = async (newSale: Omit<Sale, "id" | "date">) => {
-    const saleId = crypto.randomUUID();
-    const sale: Sale = {
-      ...newSale,
-      id: saleId,
-      date: new Date().toISOString(),
-      status: isOnline ? "COMPLETED" : "PENDING",
-    };
+    const resolvedBranchId = newSale.branchId || branchId;
+    if (!resolvedBranchId) {
+      throw new Error("No hay sucursal activa para registrar la venta.");
+    }
 
-    // Update UI immediately (Optimistic UI)
-    setSales((prev) => [sale, ...prev]);
+    const saleItems = (newSale.lineItems ?? []).map((item) => ({
+      productId: item.productId,
+      quantity: Number(item.quantity),
+      unitPrice: Number(item.price),
+    }));
+
+    if (saleItems.length === 0) {
+      throw new Error("La venta debe incluir al menos un item.");
+    }
+
+    const savedSale = await backendApi.sales.create({
+      branchId: resolvedBranchId,
+      items: saleItems,
+    });
+
+    const normalized = normalizeSale(savedSale, businessType);
+
+    setSales((prev) => [normalized, ...prev]);
+
     logEvent(
       "create",
       "sale",
-      `Realizó una venta de $${sale.amount.toLocaleString()} a ${
-        sale.customerName
-      }`,
-      sale.id
+      `Registro una venta de $${normalized.amount.toLocaleString()} (${normalized.items} items)`,
+      normalized.id
     );
-
-    // Save to Local DB always for offline-first
-    try {
-      await db.sales.add({
-        id: saleId,
-        branchId: sale.branchId,
-        total: sale.amount,
-        createdAt: new Date(),
-        status: isOnline ? "COMPLETED" : "PENDING",
-        userId: sale.userId,
-        items: sale.lineItems || [],
-      });
-
-      if (isOnline) {
-        try {
-          await apiClientFetch.post("/sales", { ...sale, id: saleId });
-          // If online sync worked, we could update local status,
-          // but Dexie add already set it to COMPLETED if isOnline was true
-        } catch (apiError) {
-          console.error("Online sale sync failed, queuing for later", apiError);
-          await db.pendingActions.add({
-            id: crypto.randomUUID(),
-            type: "CREATE_SALE",
-            payload: { ...sale, tempId: saleId },
-            createdAt: Date.now(),
-            synced: false,
-            failedCount: 0,
-          });
-          // Revert status to PENDING locally if needed
-          await db.sales.update(saleId, { status: "PENDING" });
-          setSales((prev) =>
-            prev.map((s) => (s.id === saleId ? { ...s, status: "PENDING" } : s))
-          );
-        }
-      } else {
-        await db.pendingActions.add({
-          id: crypto.randomUUID(),
-          type: "CREATE_SALE",
-          payload: { ...sale, tempId: saleId },
-          createdAt: Date.now(),
-          synced: false,
-          failedCount: 0,
-        });
-      }
-    } catch (e) {
-      console.error("Failed to save sale", e);
-    }
   };
 
   const getExpensesByType = (type: BusinessType) => {

@@ -8,16 +8,6 @@ import { apiClientFetch } from "@/lib/api-client";
 import { productsApi, Product } from "@/lib/products";
 import { useProducts as useProductsHook } from "@/hooks/useProducts";
 
-type MovementType =
-  | "PURCHASE"
-  | "SALE"
-  | "TRANSFER_IN"
-  | "TRANSFER_OUT"
-  | "ADJUSTMENT"
-  | "RETURN"
-  | "LOSS"
-  | "EXPIRED";
-
 interface ProductContextType {
   updateStock: (
     id: string,
@@ -36,10 +26,6 @@ type StockState = {
   productId: string;
   quantity: string | number | null;
 };
-
-function getMovementType(delta: number): MovementType {
-  return delta >= 0 ? "TRANSFER_IN" : "TRANSFER_OUT";
-}
 
 export function ProductProvider({ children }: { children: React.ReactNode }) {
   const { logEvent } = useAudit();
@@ -70,11 +56,15 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     const quantity = Math.abs(Math.trunc(delta));
     if (quantity < 1) return;
 
-    await apiClientFetch.post("/stock-movements/adjustment-in", {
+    const path =
+      delta >= 0
+        ? "/stock-movements/adjustment-in"
+        : "/stock-movements/adjustment-out";
+
+    await apiClientFetch.post(path, {
       productId,
       branchId,
       quantity,
-      type: getMovementType(delta),
     });
   };
 
@@ -94,7 +84,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     branchId?: string
   ) => {
     const product = await productsApi.getById(id);
-    const resolvedBranchId = resolveBranchId(branchId || product.branchId);
+    const resolvedBranchId = resolveBranchId(branchId || product.branchId || undefined);
     const currentStock = await getBranchProductStock(resolvedBranchId, id);
     const targetStock = Math.max(0, Math.trunc(newStock));
     const delta = targetStock - currentStock;
@@ -107,7 +97,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       branchId: resolvedBranchId,
       delta,
       newStock: targetStock,
-      type: getMovementType(delta),
+      type: delta >= 0 ? "ADJUSTMENT" : "LOSS",
     });
 
     invalidateProducts();
@@ -119,14 +109,14 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     if (normalizedDelta === 0) return;
 
     const product = await productsApi.getById(id);
-    const resolvedBranchId = resolveBranchId(branchId || product.branchId);
+    const resolvedBranchId = resolveBranchId(branchId || product.branchId || undefined);
 
     await postStockMovement(id, resolvedBranchId, normalizedDelta);
 
     logEvent("adjust_stock", "product", "Ajusto stock", id, {
       branchId: resolvedBranchId,
       delta: normalizedDelta,
-      type: getMovementType(normalizedDelta),
+      type: normalizedDelta >= 0 ? "ADJUSTMENT" : "LOSS",
     });
 
     invalidateProducts();
