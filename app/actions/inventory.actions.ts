@@ -32,6 +32,7 @@ export async function adjustStockAction(productId: string, quantity: number) {
   const result = await serverApi.post(endpoint, {
     productId,
     quantity: Math.abs(quantity),
+    type: quantity >= 0 ? "ADJUSTMENT" : "LOSS",
   });
 
   revalidatePath("/inventory");

@@ -56,6 +56,13 @@ export interface AuthResponse {
   session: SessionInfo;
 }
 
+export interface SessionResponse {
+  accessToken?: string;
+  refreshToken?: string;
+  user?: AuthUser;
+  session: SessionInfo;
+}
+
 export interface LoginRequest {
   email: string;
   password: string;
@@ -63,6 +70,10 @@ export interface LoginRequest {
 
 export interface RefreshRequest {
   refreshToken?: string;
+}
+
+export interface SwitchBranchRequest {
+  branchId: string;
 }
 
 export interface LogoutRequest {
@@ -250,6 +261,7 @@ export interface ProductsQuery {
   cursor?: string;
   skip?: number;
   take?: number;
+  name?: string;
   q?: string;
   search?: string;
   categoryId?: string;
@@ -274,7 +286,7 @@ export interface Stock {
 }
 
 export interface CreateStockRequest {
-  branchId: string;
+  branchId?: string;
   productId: string;
   quantity: number;
   averageCost: number;
@@ -292,7 +304,7 @@ export interface Movement {
 }
 
 export interface CreateMovementRequest {
-  branchId: string;
+  branchId?: string;
   productId: string;
   type: MovementType;
   quantity: number;
@@ -314,7 +326,7 @@ export interface SaleItemInput {
 }
 
 export interface CreateSaleRequest {
-  branchId: string;
+  branchId?: string;
   clientId?: string;
   items: SaleItemInput[];
 }
@@ -348,7 +360,7 @@ export interface SnapshotMetricsResponse {
 }
 
 export interface CreateExpenseRequest {
-  branchId: string;
+  branchId?: string;
   description: string;
   amount: number;
   category: ExpenseCategory;

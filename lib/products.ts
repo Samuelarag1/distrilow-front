@@ -50,7 +50,13 @@ export const productsApi = {
   },
 
   search: async (q: string) => {
-    const page = await backendApi.productsWithStock({ q, take: 30, skip: 0 });
+    const page = await backendApi.productsWithStock({
+      name: q,
+      q,
+      search: q,
+      take: 30,
+      skip: 0,
+    });
     return page.items.map(normalizeProduct);
   },
 

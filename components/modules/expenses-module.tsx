@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,11 +32,10 @@ import { es } from "date-fns/locale";
 import {
   Select,
   SelectContent,
-  SelectTrigger,
   SelectItem,
+  SelectTrigger,
   SelectValue,
 } from "../ui/select";
-
 const EXPENSE_CATEGORIES = [
   "RENT",
   "SERVICES",
@@ -56,17 +55,10 @@ export function ExpensesModule() {
   const [isDialogOpen, setIsDialogOpen] = useState(false);
 
   const [newExpense, setNewExpense] = useState({
-    branchId: "",
     amount: "",
     category: "",
     description: "",
   });
-
-  useEffect(() => {
-    if (!newExpense.branchId && branchId) {
-      setNewExpense((prev) => ({ ...prev, branchId }));
-    }
-  }, [branchId, newExpense.branchId]);
 
   const filteredExpenses = expenses.filter((expense) => {
     const matchesType = expense.businessType === businessType;
@@ -100,14 +92,13 @@ export function ExpensesModule() {
       return;
 
     await addExpense({
-      branchId: newExpense.branchId || branchId || "",
       amount: parseFloat(newExpense.amount),
       category: newExpense.category,
       description: newExpense.description,
       businessType,
     });
 
-    setNewExpense({ amount: "", category: "", description: "", branchId: branchId || "" });
+    setNewExpense({ amount: "", category: "", description: "" });
     setIsDialogOpen(false);
   };
 
@@ -162,27 +153,6 @@ export function ExpensesModule() {
                 </div>
                 <div className="space-y-4">
                   <div className="grid gap-2">
-                    <Label htmlFor="branch">Sucursal</Label>
-                    <Select
-                      value={newExpense.branchId}
-                      onValueChange={(value) =>
-                        setNewExpense({ ...newExpense, branchId: value })
-                      }
-                    >
-                      <SelectTrigger id="branch">
-                        <SelectValue placeholder="Seleccionar destino del gasto" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {branches.map((branch) => (
-                          <SelectItem key={branch.id} value={branch.id}>
-                            {branch.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="grid gap-2">
                     <Label htmlFor="category">Categoria</Label>
                     <Select
                       value={newExpense.category}
@@ -218,6 +188,10 @@ export function ExpensesModule() {
                       required
                     />
                   </div>
+                  <p className="text-xs text-muted-foreground">
+                    El gasto se registra en la sucursal activa:{" "}
+                    {branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal"}
+                  </p>
                 </div>
               </div>
               <DialogFooter>

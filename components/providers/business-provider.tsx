@@ -42,6 +42,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     branchId,
     branches,
     setBranchId,
+    switchBranch,
     setBranches: setUserBranches,
   } = useUser();
   const [businessType, setBusinessTypeState] = useState<BusinessType>(() => {
@@ -64,8 +65,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
   }, [activeBranchId, availableBranches]);
 
   const setActiveBranch = (branchId: string) => {
-    setBranchId(branchId);
-    if (token) setApiSession({ accessToken: token, branchId });
+    void switchBranch(branchId);
   };
 
   const setBusinessType = (type: BusinessType) => {

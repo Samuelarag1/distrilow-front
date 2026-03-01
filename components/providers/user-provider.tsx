@@ -3,6 +3,7 @@
 import { setApiSession } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
 import React, {
+  useCallback,
   createContext,
   useContext,
   useEffect,
@@ -35,17 +36,87 @@ interface UserContextType {
   setBranchId: (id: string | null) => void;
   setBranches: (b: Branch[]) => void;
   setNeedsOnboarding: (v: boolean) => void;
+  switchBranch: (id: string) => Promise<void>;
 
   logout: () => Promise<void>;
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 
+function normalizeSessionBranches(input: unknown): Branch[] {
+  if (!Array.isArray(input)) return [];
+
+  return input
+    .map((raw, index) => {
+      if (typeof raw === "string") {
+        const id = raw.trim();
+        if (!id) return null;
+        return { id, name: `Sucursal ${index + 1}` } satisfies Branch;
+      }
+
+      if (!raw || typeof raw !== "object") return null;
+
+      const value = raw as {
+        id?: unknown;
+        branchId?: unknown;
+        name?: unknown;
+        isDefault?: unknown;
+      };
+      const id =
+        (typeof value.id === "string" && value.id.trim()) ||
+        (typeof value.branchId === "string" && value.branchId.trim()) ||
+        "";
+
+      if (!id) return null;
+
+      return {
+        id,
+        name:
+          typeof value.name === "string" && value.name.trim()
+            ? value.name
+            : `Sucursal ${index + 1}`,
+        isDefault: Boolean(value.isDefault),
+      } satisfies Branch;
+    })
+    .filter((branch): branch is Branch => Boolean(branch));
+}
+
 function getCookie(name: string): string | null {
   const match = document.cookie
     .split("; ")
     .find((row) => row.startsWith(`${name}=`));
   return match ? match.split("=").slice(1).join("=") : null;
+}
+
+function writeSessionCookies(payload: {
+  accessToken?: string | null;
+  refreshToken?: string | null;
+  branches?: Branch[];
+  activeBranchId?: string | null;
+  needsOnboarding?: boolean;
+}) {
+  if (payload.accessToken !== undefined && payload.accessToken !== null) {
+    document.cookie = `token=${payload.accessToken}; path=/`;
+    document.cookie = `accessToken=${payload.accessToken}; path=/`;
+  }
+
+  if (payload.refreshToken !== undefined && payload.refreshToken !== null) {
+    document.cookie = `refreshToken=${payload.refreshToken}; path=/`;
+  }
+
+  if (payload.branches) {
+    document.cookie = `branches=${encodeURIComponent(
+      JSON.stringify(payload.branches)
+    )}; path=/`;
+  }
+
+  if (payload.activeBranchId !== undefined) {
+    document.cookie = `activeBranchId=${payload.activeBranchId ?? ""}; path=/`;
+  }
+
+  if (payload.needsOnboarding !== undefined) {
+    document.cookie = `needsOnboarding=${payload.needsOnboarding}; path=/`;
+  }
 }
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
@@ -63,6 +134,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       getCookie("activeBranchId") ?? getCookie("branchId");
     const branchesCookie = getCookie("branches");
     const onboardingCookie = getCookie("needsOnboarding");
+    let parsedBranches: Branch[] = [];
 
     if (userCookie) {
       try {
@@ -78,7 +150,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     if (branchesCookie) {
       try {
-        setBranches(JSON.parse(decodeURIComponent(branchesCookie)));
+        parsedBranches = normalizeSessionBranches(
+          JSON.parse(decodeURIComponent(branchesCookie))
+        );
+        setBranches(parsedBranches);
       } catch (err) {
         console.error("Error parsing branches cookie:", err);
       }
@@ -88,13 +163,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setNeedsOnboarding(onboardingCookie === "true");
     }
 
-    if (activeBranchCookie) {
-      setBranchId(activeBranchCookie || null);
-    }
+    const resolvedBranchId = activeBranchCookie || parsedBranches[0]?.id || null;
+    setBranchId(resolvedBranchId);
 
     if (tokenCookie) {
       setToken(tokenCookie);
-      setApiSession({ accessToken: tokenCookie, branchId: activeBranchCookie || undefined });
+      setApiSession({ accessToken: tokenCookie, branchId: resolvedBranchId ?? undefined });
+    }
+
+    if (!activeBranchCookie && resolvedBranchId) {
+      document.cookie = `activeBranchId=${resolvedBranchId}; path=/`;
     }
   }, []);
 
@@ -104,6 +182,44 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       document.cookie = `activeBranchId=${branchId ?? ""}; path=/`;
     }
   }, [token, branchId]);
+
+  const switchBranch = useCallback(async (id: string) => {
+    if (!id) return;
+    if (id === branchId) return;
+    if (branches.length > 0 && !branches.some((branch) => branch.id === id)) {
+      throw new Error("No tienes acceso a la sucursal seleccionada.");
+    }
+
+    const response = await backendApi.auth.switchBranch({ branchId: id });
+
+    const nextToken = response.accessToken ?? token;
+    const nextBranches = normalizeSessionBranches(
+      response.session?.availableBranches ?? branches
+    );
+    const nextBranchId = response.session?.activeBranchId ?? id;
+    const nextNeedsOnboarding =
+      response.session?.needsOnboarding ?? needsOnboarding;
+
+    if (nextToken !== token) {
+      setToken(nextToken);
+    }
+    setBranches(nextBranches);
+    setBranchId(nextBranchId);
+    setNeedsOnboarding(nextNeedsOnboarding);
+
+    setApiSession({
+      accessToken: nextToken,
+      branchId: nextBranchId,
+    });
+
+    writeSessionCookies({
+      accessToken: nextToken,
+      refreshToken: response.refreshToken,
+      branches: nextBranches,
+      activeBranchId: nextBranchId,
+      needsOnboarding: nextNeedsOnboarding,
+    });
+  }, [branchId, token, branches, needsOnboarding]);
 
   const logout = async () => {
     try {
@@ -143,9 +259,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setBranchId,
       setBranches,
       setNeedsOnboarding,
+      switchBranch,
       logout,
     }),
-    [currentUser, token, branchId, branches, needsOnboarding]
+    [currentUser, token, branchId, branches, needsOnboarding, switchBranch]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

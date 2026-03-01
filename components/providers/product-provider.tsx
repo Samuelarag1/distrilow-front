@@ -5,8 +5,21 @@ import { mutate } from "swr";
 import { useAudit } from "./audit-provider";
 import { useUser } from "./user-provider";
 import { apiClientFetch } from "@/lib/api-client";
+import { backendApi } from "@/lib/backend-api";
 import { productsApi, Product } from "@/lib/products";
 import { useProducts as useProductsHook } from "@/hooks/useProducts";
+import type { CreateMovementRequest, MovementType } from "@/lib/api-types";
+
+interface StockMovementInput {
+  productId: string;
+  quantity: number;
+  type: MovementType;
+  branchId?: string;
+  unitCost?: number;
+  reason?: string;
+  toBranchId?: string;
+  direction?: "in" | "out";
+}
 
 interface ProductContextType {
   updateStock: (
@@ -14,7 +27,20 @@ interface ProductContextType {
     newStock: number,
     branchId?: string
   ) => Promise<void>;
-  adjustStock: (id: string, delta: number, branchId?: string) => Promise<void>;
+  adjustStock: (
+    id: string,
+    delta: number,
+    branchId?: string,
+    options?: { type?: MovementType; reason?: string }
+  ) => Promise<void>;
+  registerStockMovement: (input: StockMovementInput) => Promise<void>;
+  transferStock: (
+    productId: string,
+    quantity: number,
+    toBranchId: string,
+    fromBranchId?: string,
+    reason?: string
+  ) => Promise<void>;
   addProduct: (product: Partial<Product>) => Promise<void>;
   updateProduct: (id: string, productData: Partial<Product>) => Promise<void>;
   removeProduct: (id: string) => Promise<void>;
@@ -26,6 +52,20 @@ type StockState = {
   productId: string;
   quantity: string | number | null;
 };
+
+const INBOUND_TYPES = new Set<MovementType>([
+  "PURCHASE",
+  "RETURN",
+  "TRANSFER_IN",
+  "ADJUSTMENT",
+]);
+
+const OUTBOUND_TYPES = new Set<MovementType>([
+  "SALE",
+  "TRANSFER_OUT",
+  "LOSS",
+  "EXPIRED",
+]);
 
 export function ProductProvider({ children }: { children: React.ReactNode }) {
   const { logEvent } = useAudit();
@@ -48,26 +88,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     return resolved;
   };
 
-  const postStockMovement = async (
-    productId: string,
-    branchId: string,
-    delta: number
-  ) => {
-    const quantity = Math.abs(Math.trunc(delta));
-    if (quantity < 1) return;
-
-    const path =
-      delta >= 0
-        ? "/stock-movements/adjustment-in"
-        : "/stock-movements/adjustment-out";
-
-    await apiClientFetch.post(path, {
-      productId,
-      branchId,
-      quantity,
-    });
-  };
-
   const getBranchProductStock = async (branchId: string, productId: string) => {
     const stockRows = await apiClientFetch.get<StockState[]>(
       `/stocks/branch/${branchId}`
@@ -76,6 +96,117 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     const stockRow = stockRows.find((row) => row.productId === productId);
     const quantity = Number(stockRow?.quantity ?? 0);
     return Number.isFinite(quantity) ? quantity : 0;
+  };
+
+  const postAdjustmentMovement = async (params: {
+    branchId: string;
+    productId: string;
+    quantity: number;
+    type: MovementType;
+    unitCost?: number;
+    reason?: string;
+    direction: "in" | "out";
+  }) => {
+    const payload: CreateMovementRequest = {
+      branchId: params.branchId,
+      productId: params.productId,
+      quantity: params.quantity,
+      type: params.type,
+      unitCost: params.unitCost,
+      reason: params.reason,
+    };
+
+    if (params.direction === "in") {
+      await backendApi.stockMovements.adjustmentIn(payload);
+      return;
+    }
+
+    await backendApi.stockMovements.adjustmentOut(payload);
+  };
+
+  const registerStockMovement = async (input: StockMovementInput) => {
+    const quantity = Number(input.quantity);
+    if (!Number.isFinite(quantity) || quantity < 1) {
+      throw new Error("La cantidad debe ser mayor a cero.");
+    }
+    const normalizedQuantity = Math.round(Math.abs(quantity) * 1000) / 1000;
+    const parsedUnitCost =
+      input.unitCost === undefined ? undefined : Number(input.unitCost);
+    const unitCost =
+      parsedUnitCost !== undefined && Number.isFinite(parsedUnitCost)
+        ? Math.round(Math.abs(parsedUnitCost) * 100) / 100
+        : undefined;
+
+    const branchId = resolveBranchId(input.branchId);
+
+    if (input.type === "TRANSFER_OUT") {
+      if (!input.toBranchId) {
+        throw new Error("Debes seleccionar una sucursal de destino.");
+      }
+      if (input.toBranchId === branchId) {
+        throw new Error("La sucursal destino debe ser distinta a la actual.");
+      }
+
+      await backendApi.stockMovements.transfer({
+        productId: input.productId,
+        fromBranchId: branchId,
+        toBranchId: input.toBranchId,
+        quantity: normalizedQuantity,
+      });
+    } else if (input.type === "ADJUSTMENT") {
+      const direction = input.direction ?? "in";
+      await postAdjustmentMovement({
+        branchId,
+        productId: input.productId,
+        quantity: normalizedQuantity,
+        type: "ADJUSTMENT",
+        unitCost,
+        reason: input.reason,
+        direction,
+      });
+    } else if (OUTBOUND_TYPES.has(input.type)) {
+      await postAdjustmentMovement({
+        branchId,
+        productId: input.productId,
+        quantity: normalizedQuantity,
+        type: input.type,
+        unitCost,
+        reason: input.reason,
+        direction: "out",
+      });
+    } else if (INBOUND_TYPES.has(input.type)) {
+      await postAdjustmentMovement({
+        branchId,
+        productId: input.productId,
+        quantity: normalizedQuantity,
+        type: input.type,
+        unitCost,
+        reason: input.reason,
+        direction: "in",
+      });
+    } else {
+      await backendApi.stockMovements.create({
+        branchId,
+        productId: input.productId,
+        quantity: normalizedQuantity,
+        type: input.type,
+        unitCost,
+        reason: input.reason,
+      });
+    }
+
+    logEvent("adjust_stock", "product", "Movimiento de stock", input.productId, {
+      branchId,
+      quantity: normalizedQuantity,
+      unitCost,
+      movementType: input.type,
+      direction: input.direction,
+      toBranchId: input.toBranchId,
+      reason: input.reason,
+    });
+
+    invalidateProducts();
+    mutate(["product", input.productId]);
   };
 
   const updateStock = async (
@@ -91,36 +222,62 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
 
     if (delta === 0) return;
 
-    await postStockMovement(id, resolvedBranchId, delta);
-
-    logEvent("adjust_stock", "product", "Actualizo stock", id, {
+    await registerStockMovement({
+      productId: id,
       branchId: resolvedBranchId,
-      delta,
-      newStock: targetStock,
-      type: delta >= 0 ? "ADJUSTMENT" : "LOSS",
+      quantity: Math.abs(delta),
+      type: "ADJUSTMENT",
+      unitCost: Number(product.costPrice ?? 0),
+      direction: delta > 0 ? "in" : "out",
+      reason: "Ajuste manual de stock",
     });
-
-    invalidateProducts();
-    mutate(["product", id]);
   };
 
-  const adjustStock = async (id: string, delta: number, branchId?: string) => {
+  const adjustStock = async (
+    id: string,
+    delta: number,
+    branchId?: string,
+    options?: { type?: MovementType; reason?: string }
+  ) => {
     const normalizedDelta = Math.trunc(delta);
     if (normalizedDelta === 0) return;
 
     const product = await productsApi.getById(id);
     const resolvedBranchId = resolveBranchId(branchId || product.branchId || undefined);
 
-    await postStockMovement(id, resolvedBranchId, normalizedDelta);
+    const movementType = options?.type ?? "ADJUSTMENT";
 
-    logEvent("adjust_stock", "product", "Ajusto stock", id, {
+    await registerStockMovement({
+      productId: id,
       branchId: resolvedBranchId,
-      delta: normalizedDelta,
-      type: normalizedDelta >= 0 ? "ADJUSTMENT" : "LOSS",
+      quantity: Math.abs(normalizedDelta),
+      type: movementType,
+      unitCost: Number(product.costPrice ?? 0),
+      direction:
+        movementType === "ADJUSTMENT"
+          ? normalizedDelta > 0
+            ? "in"
+            : "out"
+          : undefined,
+      reason: options?.reason,
     });
+  };
 
-    invalidateProducts();
-    mutate(["product", id]);
+  const transferStock = async (
+    productId: string,
+    quantity: number,
+    toBranchId: string,
+    fromBranchId?: string,
+    reason?: string
+  ) => {
+    await registerStockMovement({
+      productId,
+      quantity,
+      type: "TRANSFER_OUT",
+      branchId: fromBranchId,
+      toBranchId,
+      reason,
+    });
   };
 
   const addProduct = async (productData: Partial<Product>) => {
@@ -155,6 +312,8 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       value={{
         updateStock,
         adjustStock,
+        registerStockMovement,
+        transferStock,
         addProduct,
         updateProduct,
         removeProduct,
@@ -175,12 +334,16 @@ export function useProductActions() {
 
 // Backward-compatible API for modules that still import `useProducts` from this provider.
 export function useProducts() {
-  const swr = useProductsHook();
-  const { updateStock, adjustStock } = useProductActions();
+  const { branchId } = useUser();
+  const swr = useProductsHook({ branchId });
+  const { updateStock, adjustStock, registerStockMovement, transferStock } =
+    useProductActions();
 
   return {
     ...swr,
     updateStock,
     adjustStock,
+    registerStockMovement,
+    transferStock,
   };
 }

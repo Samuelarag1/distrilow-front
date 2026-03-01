@@ -1,6 +1,7 @@
 import useSWR from "swr";
 import { Product } from "@/lib/products";
 import { backendApi } from "@/lib/backend-api";
+import { getApiSession } from "@/lib/api-client";
 
 type UseProductsArgs = {
   skip?: number;
@@ -13,27 +14,36 @@ type UseProductsArgs = {
 };
 
 export function useProducts(args: UseProductsArgs = {}) {
-  const key = [
-    "products",
-    args.skip ?? 0,
-    args.take ?? 20,
-    args.search ?? "",
-    args.categoryId ?? "",
-    args.branchId ?? "",
-    args.sortBy ?? "",
-    args.sortOrder ?? "asc",
-  ] as const;
+  const effectiveBranchId = args.branchId ?? getApiSession().branchId ?? null;
+  const key = effectiveBranchId
+    ? ([
+        "products",
+        args.skip ?? 0,
+        args.take ?? 20,
+        args.search ?? "",
+        args.categoryId ?? "",
+        effectiveBranchId,
+        args.sortBy ?? "",
+        args.sortOrder ?? "asc",
+      ] as const)
+    : null;
+
   const { data, error, isLoading, mutate } = useSWR<Product[]>(
     key,
     async () => {
-      const page = await backendApi.productsWithStock({
-        skip: args.skip,
-        take: args.take,
-        search: args.search ?? undefined,
-        categoryId: args.categoryId ?? undefined,
-        sortBy: (args.sortBy as any) ?? undefined,
-        sortOrder: args.sortOrder,
-      });
+      const page = await backendApi.productsWithStock(
+        {
+          skip: args.skip,
+          take: args.take,
+          name: args.search ?? undefined,
+          q: args.search ?? undefined,
+          search: args.search ?? undefined,
+          categoryId: args.categoryId ?? undefined,
+          sortBy: (args.sortBy as any) ?? undefined,
+          sortOrder: args.sortOrder,
+        },
+        effectiveBranchId
+      );
 
       return page.items.map((item) => ({
         ...item,
@@ -46,14 +56,15 @@ export function useProducts(args: UseProductsArgs = {}) {
       revalidateOnFocus: false,
       dedupingInterval: 15000,
       keepPreviousData: true,
+      shouldRetryOnError: false,
     }
   );
 
-  const products = data ?? [];
+  const products = effectiveBranchId ? data ?? [] : [];
 
   return {
     products,
-    isLoading,
+    isLoading: !!effectiveBranchId && isLoading,
     isError: error,
     mutateProducts: mutate,
   };

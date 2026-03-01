@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import type React from "react";
 import { useEffect, useMemo, useState } from "react";
@@ -28,12 +28,11 @@ import { Switch } from "@/components/ui/switch";
 import { useBranch } from "@/components/providers/business-provider";
 import { Product } from "@/lib/products";
 
-// IMPORTANTE: usá el enum que ya tenés (ajustá el path a tu estructura real)
+// IMPORTANTE: usÃ¡ el enum que ya tenÃ©s (ajustÃ¡ el path a tu estructura real)
 import { MeasurementType } from "@/lib/measurement-type";
 import { useUser } from "../providers/user-provider";
-import { setApiSession } from "@/lib/api-client";
 import { swrFetcher } from "@/lib/swr-fetcher";
-// Si no lo tenés en front, podés usar:
+// Si no lo tenÃ©s en front, podÃ©s usar:
 // type MeasurementType = "unit" | "gram" | "kg" | "ml" | "liter";
 
 type ProductDialogProps = {
@@ -66,7 +65,7 @@ export function ProductDialog({
   isSaving = false,
 }: ProductDialogProps) {
   const { activeBranchId, availableBranches } = useBranch();
-  const { token, branchId, branches, setBranchId } = useUser();
+  const { branchId, branches, switchBranch } = useUser();
   const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
   const defaultBranchId = useMemo(() => {
     return (
@@ -100,13 +99,13 @@ export function ProductDialog({
     allowNegativeStock: false,
     measurementType: MeasurementType.UNIT as MeasurementType,
 
-    // branch (si tu API lo requiere en body, mantenelo; si NO, podés sacarlo)
+    // branch (si tu API lo requiere en body, mantenelo; si NO, podÃ©s sacarlo)
     branchId: "",
     // estado: en tu entity esActive boolean
     isActive: true,
   });
 
-  // Si tu Product del front NO tiene algunos campos (sku, etc), ajustá el mapeo.
+  // Si tu Product del front NO tiene algunos campos (sku, etc), ajustÃ¡ el mapeo.
   useEffect(() => {
     if (!open) return;
 
@@ -172,9 +171,7 @@ export function ProductDialog({
 
     if (!resolvedBranchId) return;
     if (resolvedBranchId !== branchId) {
-      setBranchId(resolvedBranchId);
-      if (token) setApiSession(token, resolvedBranchId);
-      document.cookie = `activeBranchId=${resolvedBranchId}; path=/`;
+      await switchBranch(resolvedBranchId);
     }
     if (!formData.sku.trim()) return;
     if (!formData.name.trim()) return;
@@ -185,7 +182,7 @@ export function ProductDialog({
     )
       return;
 
-    // si querés autocalcular margen al guardar:
+    // si querÃ©s autocalcular margen al guardar:
     const marginPercent = computeMargin(
       formData.costPrice,
       formData.retailPrice
@@ -222,7 +219,7 @@ export function ProductDialog({
           <DialogDescription>
             {product
               ? "Modifica los datos del producto"
-              : "Completa la información del nuevo producto"}
+              : "Completa la informaciÃ³n del nuevo producto"}
           </DialogDescription>
         </DialogHeader>
 
@@ -237,10 +234,6 @@ export function ProductDialog({
                   onValueChange={(value) => {
                     setFormData((p) => ({ ...p, branchId: value }));
 
-                    // ✅ misma branch real en toda la app
-                    setBranchId(value);
-                    if (token) setApiSession(token, value);
-                    document.cookie = `activeBranchId=${value}; path=/`;
                   }}
                 >
                   <SelectTrigger>
@@ -256,7 +249,7 @@ export function ProductDialog({
                   </SelectContent>
                 </Select>
 
-                {/* si querés forzar siempre branch activa */}
+                {/* si querÃ©s forzar siempre branch activa */}
                 {/* <p className="text-xs text-muted-foreground">Los productos se crean en la sucursal activa.</p> */}
               </div>
 
@@ -303,7 +296,7 @@ export function ProductDialog({
               </div>
 
               <div className="space-y-2">
-                <Label>Código de barras</Label>
+                <Label>CÃ³digo de barras</Label>
                 <Input
                   value={formData.barcode}
                   onChange={(e) =>
@@ -331,7 +324,7 @@ export function ProductDialog({
 
             {/* Description */}
             <div className="space-y-2">
-              <Label>Descripción</Label>
+              <Label>DescripciÃ³n</Label>
               <Textarea
                 value={formData.description}
                 onChange={(e) =>
@@ -536,4 +529,5 @@ export function ProductDialog({
     </Dialog>
   );
 }
+
 

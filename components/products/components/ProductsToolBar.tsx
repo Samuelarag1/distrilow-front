@@ -14,8 +14,7 @@ export function ProductsToolbar(props: {
 
   branchId: string | null;
   branches: Array<{ id: string; name: string }> | undefined;
-  token: string | null;
-  onBranchChange: (id: string) => void;
+  onBranchChange: (id: string) => Promise<void> | void;
 }) {
   const disabled = !props.activeBranchId;
 
@@ -37,7 +36,6 @@ export function ProductsToolbar(props: {
       <BranchSelect
         value={props.branchId ?? ""}
         branches={props.branches}
-        token={props.token}
         onChange={props.onBranchChange}
       />
     </div>

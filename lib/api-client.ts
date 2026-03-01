@@ -81,26 +81,6 @@ function isJsonBody(body: BodyInit | null | undefined) {
   );
 }
 
-function mergeBranchIntoBody(
-  body: BodyInit | null | undefined,
-  branchId: string | null
-) {
-  if (!branchId || !body || typeof body !== "string") return body;
-
-  try {
-    const parsed = JSON.parse(body);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      if ("branchId" in parsed && parsed.branchId !== branchId) {
-        return JSON.stringify({ ...parsed, branchId });
-      }
-    }
-  } catch {
-    return body;
-  }
-
-  return body;
-}
-
 function shouldTryRefresh(path: string, method: string) {
   if (path === "/auth/login") return false;
   if (path === "/auth/refresh") return false;
@@ -129,6 +109,19 @@ export class ApiError extends Error {
   ) {
     super(bodyText || `API request failed (${status})`);
   }
+}
+
+function extractApiMessage(body: unknown, fallback: string) {
+  if (!body) return fallback;
+  if (typeof body === "string") return body || fallback;
+  if (typeof body === "object" && body !== null) {
+    const msg =
+      (body as any).message ??
+      (body as any).error ??
+      (body as any).details?.message;
+    if (typeof msg === "string" && msg.trim()) return msg;
+  }
+  return fallback;
 }
 
 async function refreshSession(): Promise<boolean> {
@@ -212,15 +205,11 @@ async function request<T = unknown>(
     headers.set("x-branch-id", branchToUse);
   }
 
-  const body = branchScoped
-    ? mergeBranchIntoBody(options.body, branchToUse)
-    : options.body;
-
   const res = await fetch(`${resolveApiBaseUrl()}${path}`, {
     ...options,
     method,
     headers,
-    body,
+    body: options.body,
     credentials: "include",
   });
 
@@ -232,9 +221,22 @@ async function request<T = unknown>(
   }
 
   if (!res.ok) {
+    if (res.status === 401 && typeof window !== "undefined") {
+      const expire = "expires=Thu, 01 Jan 1970 00:00:00 UTC";
+      document.cookie = `token=; path=/; ${expire}`;
+      document.cookie = `accessToken=; path=/; ${expire}`;
+      document.cookie = `refreshToken=; path=/; ${expire}`;
+      document.cookie = `user=; path=/; ${expire}`;
+      document.cookie = `branches=; path=/; ${expire}`;
+      document.cookie = `activeBranchId=; path=/; ${expire}`;
+      document.cookie = `needsOnboarding=; path=/; ${expire}`;
+      window.location.href = "/login";
+    }
+
     const contentType = res.headers.get("content-type") ?? "";
     let bodyText = "";
     let parsedBody: unknown;
+    let friendlyMessage = "";
 
     try {
       if (contentType.includes("application/json")) {
@@ -243,14 +245,26 @@ async function request<T = unknown>(
           typeof parsedBody === "object" && parsedBody !== null
             ? JSON.stringify(parsedBody)
             : String(parsedBody ?? "");
+        friendlyMessage = extractApiMessage(parsedBody, bodyText);
       } else {
         bodyText = await res.text();
+        friendlyMessage = bodyText;
       }
     } catch {
       bodyText = "";
+      friendlyMessage = "";
     }
 
-    throw new ApiError(res.status, bodyText, parsedBody);
+    const statusHint =
+      res.status === 403
+        ? "No tienes acceso a esta sucursal o no hay sucursal activa en la sesion."
+        : `API request failed (${res.status})`;
+
+    throw new ApiError(
+      res.status,
+      friendlyMessage || bodyText || statusHint,
+      parsedBody
+    );
   }
 
   return parseResponse<T>(res);

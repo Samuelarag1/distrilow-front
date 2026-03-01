@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { Store } from "lucide-react";
 import {
@@ -9,17 +9,14 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useUser } from "@/components/providers/user-provider";
-import { setApiSession } from "@/lib/api-client";
 
 export function BranchSelector() {
-  const { token, branchId, branches, setBranchId } = useUser();
+  const { branchId, branches, switchBranch } = useUser();
 
   if (!branches?.length) return null;
 
   const onChange = (id: string) => {
-    setBranchId(id);
-    if (token) setApiSession(token, id); // ✅ actualiza X-Branch-Id
-    document.cookie = `activeBranchId=${id}; path=/`;
+    void switchBranch(id);
   };
 
   return (
@@ -28,15 +25,15 @@ export function BranchSelector() {
         <Store size={15} />
       </div>
 
-      <div className="flex-1 min-w-0">
+      <div className="min-w-0 flex-1">
         <Select value={branchId ?? ""} onValueChange={onChange}>
-          <SelectTrigger className="border-0 shadow-none p-0 h-auto font-semibold text-left">
+          <SelectTrigger className="h-auto border-0 p-0 text-left font-semibold shadow-none">
             <SelectValue placeholder="Seleccionar sucursal" />
           </SelectTrigger>
           <SelectContent>
-            {branches.map((b) => (
-              <SelectItem key={b.id} value={b.id}>
-                {b.name}
+            {branches.map((branch) => (
+              <SelectItem key={branch.id} value={branch.id}>
+                {branch.name}
               </SelectItem>
             ))}
           </SelectContent>

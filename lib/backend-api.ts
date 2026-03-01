@@ -30,6 +30,8 @@ import type {
   ProductsListResponse,
   ProductsQuery,
   RefreshRequest,
+  SessionResponse,
+  SwitchBranchRequest,
   Sale,
   SnapshotMetricsResponse,
   Stock,
@@ -140,6 +142,14 @@ function invalidateStockCache(branchId?: string | null) {
   stockCacheByBranch.clear();
 }
 
+function requireActiveBranchId() {
+  const branchId = getApiSession().branchId;
+  if (!branchId) {
+    throw new Error("No hay sucursal activa en la sesion.");
+  }
+  return branchId;
+}
+
 async function getCachedStocksForBranch(branchId: string) {
   const cached = stockCacheByBranch.get(branchId);
   const now = Date.now();
@@ -156,6 +166,10 @@ export const backendApi = {
   auth: {
     login: (body: LoginRequest) =>
       apiClientFetch.post<AuthResponse>("/auth/login", body, { branchScoped: false }),
+    switchBranch: (body: SwitchBranchRequest) =>
+      apiClientFetch.post<SessionResponse>("/auth/switch-branch", body, {
+        branchScoped: false,
+      }),
     refresh: (body?: RefreshRequest) =>
       apiClientFetch.post<AuthResponse>("/auth/refresh", body ?? {}, { branchScoped: false }),
     logout: (body?: LogoutRequest) =>
@@ -225,7 +239,11 @@ export const backendApi = {
   },
   stocks: {
     create: async (body: CreateStockRequest) => {
-      const created = await apiClientFetch.post<Stock>("/stocks", body);
+      const payload: CreateStockRequest = {
+        ...body,
+        branchId: body.branchId ?? requireActiveBranchId(),
+      };
+      const created = await apiClientFetch.post<Stock>("/stocks", payload);
       invalidateStockCache(getApiSession().branchId);
       return created;
     },
@@ -242,31 +260,55 @@ export const backendApi = {
         `/stock-movements/history${buildQuery({ productId })}`
       ),
     create: async (body: CreateMovementRequest) => {
-      const movement = await apiClientFetch.post<Movement>("/stock-movements", body);
+      const payload: CreateMovementRequest = {
+        ...body,
+        branchId: body.branchId ?? requireActiveBranchId(),
+      };
+      const movement = await apiClientFetch.post<Movement>(
+        "/stock-movements",
+        payload
+      );
       invalidateStockCache(getApiSession().branchId);
       return movement;
     },
     transfer: async (body: TransferMovementRequest) => {
+      const activeBranchId = getApiSession().branchId;
+      if (!activeBranchId) {
+        throw new Error("No hay sucursal activa en la sesion.");
+      }
+
+      const payload: TransferMovementRequest = {
+        ...body,
+        fromBranchId: activeBranchId,
+      };
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements/transfer",
-        body
+        payload
       );
-      invalidateStockCache(body.fromBranchId);
-      invalidateStockCache(body.toBranchId);
+      invalidateStockCache(payload.fromBranchId);
+      invalidateStockCache(payload.toBranchId);
       return movement;
     },
     adjustmentIn: async (body: CreateMovementRequest) => {
+      const payload: CreateMovementRequest = {
+        ...body,
+        branchId: body.branchId ?? requireActiveBranchId(),
+      };
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements/adjustment-in",
-        body
+        payload
       );
       invalidateStockCache(getApiSession().branchId);
       return movement;
     },
     adjustmentOut: async (body: CreateMovementRequest) => {
+      const payload: CreateMovementRequest = {
+        ...body,
+        branchId: body.branchId ?? requireActiveBranchId(),
+      };
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements/adjustment-out",
-        body
+        payload
       );
       invalidateStockCache(getApiSession().branchId);
       return movement;
@@ -274,7 +316,11 @@ export const backendApi = {
   },
   sales: {
     create: async (body: CreateSaleRequest) => {
-      const sale = await apiClientFetch.post<Sale>("/sales", body);
+      const payload: CreateSaleRequest = {
+        ...body,
+        branchId: body.branchId ?? requireActiveBranchId(),
+      };
+      const sale = await apiClientFetch.post<Sale>("/sales", payload);
       invalidateStockCache(getApiSession().branchId);
       return sale;
     },
@@ -289,8 +335,13 @@ export const backendApi = {
       ),
   },
   expenses: {
-    create: (body: CreateExpenseRequest) =>
-      apiClientFetch.post<Expense>("/expenses", body),
+    create: (body: CreateExpenseRequest) => {
+      const payload: CreateExpenseRequest = {
+        ...body,
+        branchId: body.branchId ?? requireActiveBranchId(),
+      };
+      return apiClientFetch.post<Expense>("/expenses", payload);
+    },
     list: (category?: string) =>
       apiClientFetch.get<Expense[]>(`/expenses${buildQuery({ category })}`),
     getById: (id: string) => apiClientFetch.get<Expense>(`/expenses/${id}`),
@@ -326,14 +377,32 @@ export const backendApi = {
         branchScoped: false,
       }),
   },
-  productsWithStock: async (query: ProductsQuery = {}) => {
-    const productsPayload = await apiClientFetch.get<ProductsListResponse>(
-      `/products${buildQuery(query)}`
-    );
-    const normalizedPage = normalizeProductsPage(productsPayload, query);
+  productsWithStock: async (
+    query: ProductsQuery = {},
+    branchIdOverride?: string | null
+  ) => {
+    const normalizedQuery: ProductsQuery = {
+      ...query,
+      name: query.name ?? query.search ?? query.q,
+      q: query.q ?? query.search ?? query.name,
+      search: query.search ?? query.q ?? query.name,
+    };
 
-    const { branchId } = getApiSession();
-    if (!branchId) return normalizedPage;
+    const explicitBranchId = branchIdOverride ?? null;
+    const productsPayload = await apiClientFetch.get<ProductsListResponse>(
+      `/products${buildQuery(normalizedQuery)}`,
+      explicitBranchId
+        ? {
+            headers: {
+              "x-branch-id": explicitBranchId,
+            },
+          }
+        : undefined
+    );
+    const normalizedPage = normalizeProductsPage(productsPayload, normalizedQuery);
+    const scopedBranchId = explicitBranchId ?? getApiSession().branchId;
+
+    if (!scopedBranchId) return normalizedPage;
 
     const allRowsHaveStock = normalizedPage.items.every(
       (item) => readItemStock(item) !== null
@@ -343,18 +412,18 @@ export const backendApi = {
       return {
         ...normalizedPage,
         items: normalizedPage.items.map((item) =>
-          applyStockToProduct(item, emptyStockMap, branchId)
+          applyStockToProduct(item, emptyStockMap, scopedBranchId)
         ),
       } satisfies NormalizedProductsPage;
     }
 
-    const stocks = await getCachedStocksForBranch(branchId);
+    const stocks = await getCachedStocksForBranch(scopedBranchId);
     const stockByProductId = mapStockByProduct(stocks);
 
     return {
       ...normalizedPage,
       items: normalizedPage.items.map((item) =>
-        applyStockToProduct(item, stockByProductId, branchId)
+        applyStockToProduct(item, stockByProductId, scopedBranchId)
       ),
     } satisfies NormalizedProductsPage;
   },

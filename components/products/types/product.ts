@@ -5,12 +5,7 @@ export type SortKey = "name" | "price" | "stock" | "category";
 export type SortOrder = "asc" | "desc";
 
 // backend soporta estos (según lo que armamos)
-export type ApiSortBy =
-  | "name"
-  | "createdAt"
-  | "costPrice"
-  | "retailPrice"
-  | "wholesalePrice";
+export type ApiSortBy = "createdAt" | "name" | "sku" | "price";
 
 export type PageResponse = {
   items: Product[];

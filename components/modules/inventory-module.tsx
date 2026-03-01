@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useBranches } from "@/components/providers/branch-provider";
+import { useUser } from "@/components/providers/user-provider";
 import {
   Dialog,
   DialogContent,
@@ -37,6 +37,7 @@ import { Product } from "@/lib/products";
 import { useProducts } from "@/components/providers/product-provider";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
+import type { MovementType } from "@/lib/api-types";
 
 type SortKey = "name" | "stock" | "category" | "price";
 type SortOrder = "asc" | "desc";
@@ -84,29 +85,65 @@ function getLooseCategoryValue(category: unknown): string {
 
 function AdjustStockDialog({
   item,
-  onAdjust,
+  branches,
+  onSubmitMovement,
 }: {
   item: Product;
-  onAdjust: (amount: number) => void;
+  branches: Array<{ id: string; name: string }>;
+  onSubmitMovement: (input: {
+    type: MovementType;
+    quantity: number;
+    direction?: "in" | "out";
+    reason?: string;
+    toBranchId?: string;
+  }) => void;
 }) {
   const [amount, setAmount] = useState<string>("");
-  const [mode, setMode] = useState<"add" | "subtract">("add");
+  const [operation, setOperation] = useState<
+    "adjust_in" | "adjust_out" | "loss" | "expired" | "transfer"
+  >("adjust_in");
+  const [toBranchId, setToBranchId] = useState("");
+  const [reason, setReason] = useState("");
   const [open, setOpen] = useState(false);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const val = parseInt(amount);
-    if (!isNaN(val) && val > 0) {
-      onAdjust(mode === "add" ? val : -val);
-      setAmount("");
-      setOpen(false);
-    }
+    const quantity = Math.abs(Math.trunc(Number(amount)));
+    if (!quantity || quantity < 1) return;
+
+    if (operation === "transfer" && !toBranchId) return;
+
+    const map: Record<
+      typeof operation,
+      { type: MovementType; direction?: "in" | "out" }
+    > = {
+      adjust_in: { type: "ADJUSTMENT", direction: "in" },
+      adjust_out: { type: "ADJUSTMENT", direction: "out" },
+      loss: { type: "LOSS" },
+      expired: { type: "EXPIRED" },
+      transfer: { type: "TRANSFER_OUT" },
+    };
+
+    const payload = map[operation];
+    onSubmitMovement({
+      type: payload.type,
+      direction: payload.direction,
+      quantity,
+      reason: reason.trim() || undefined,
+      toBranchId: operation === "transfer" ? toBranchId : undefined,
+    });
+
+    setAmount("");
+    setReason("");
+    setToBranchId("");
+    setOpen(false);
   };
 
+  const outgoing = operation === "adjust_out" || operation === "loss" || operation === "expired" || operation === "transfer";
   const currentTotal =
-    mode === "add"
-      ? item.stock + (parseInt(amount) || 0)
-      : Math.max(0, item.stock - (parseInt(amount) || 0));
+    outgoing
+      ? Math.max(0, item.stock - (parseInt(amount) || 0))
+      : item.stock + (parseInt(amount) || 0);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -128,37 +165,54 @@ function AdjustStockDialog({
             </DialogTitle>
             <DialogDescription>
               Modifica el stock actual de <strong>{item.name}</strong>{" "}
-              seleccionando el tipo de movimiento.
+              seleccionando el tipo de movimiento y motivo.
             </DialogDescription>
           </DialogHeader>
 
           <div className="grid gap-6 py-6">
-            <div className="flex p-1 bg-muted rounded-lg">
-              <button
-                type="button"
-                onClick={() => setMode("add")}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-all ${
-                  mode === "add"
-                    ? "bg-white shadow-sm text-green-600"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
+            <div className="space-y-2">
+              <Label className="font-bold text-sm">Operacion</Label>
+              <select
+                value={operation}
+                onChange={(e) =>
+                  setOperation(
+                    e.target.value as
+                      | "adjust_in"
+                      | "adjust_out"
+                      | "loss"
+                      | "expired"
+                      | "transfer"
+                  )
+                }
+                className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
-                <Plus className="h-4 w-4" />
-                Ingreso
-              </button>
-              <button
-                type="button"
-                onClick={() => setMode("subtract")}
-                className={`flex-1 flex items-center justify-center gap-2 py-2 text-sm font-bold rounded-md transition-all ${
-                  mode === "subtract"
-                    ? "bg-white shadow-sm text-red-600"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <Minus className="h-4 w-4" />
-                Egreso/Desecho
-              </button>
+                <option value="adjust_in">Ingreso manual (+)</option>
+                <option value="adjust_out">Ajuste negativo (-)</option>
+                <option value="loss">Perdida</option>
+                <option value="expired">Vencimiento</option>
+                <option value="transfer">Transferir a otra sucursal</option>
+              </select>
             </div>
+
+            {operation === "transfer" && (
+              <div className="space-y-2">
+                <Label className="font-bold text-sm">Sucursal destino</Label>
+                <select
+                  value={toBranchId}
+                  onChange={(e) => setToBranchId(e.target.value)}
+                  className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                >
+                  <option value="">Seleccionar sucursal destino</option>
+                  {branches
+                    .filter((branch) => branch.id !== item.branchId)
+                    .map((branch) => (
+                      <option key={branch.id} value={branch.id}>
+                        {branch.name}
+                      </option>
+                    ))}
+                </select>
+              </div>
+            )}
 
             <div className="flex items-center justify-between p-4 bg-muted/30 rounded-lg border border-dashed border-muted-foreground/30">
               <div className="space-y-1">
@@ -176,7 +230,7 @@ function AdjustStockDialog({
                 </p>
                 <p
                   className={`text-xl font-black ${
-                    mode === "add" ? "text-green-600" : "text-red-600"
+                    outgoing ? "text-red-600" : "text-green-600"
                   }`}
                 >
                   {currentTotal} {item.unit || "uds"}
@@ -186,7 +240,7 @@ function AdjustStockDialog({
 
             <div className="grid gap-2">
               <Label htmlFor="amount" className="font-bold text-sm">
-                Cantidad a {mode === "add" ? "sumar" : "restar"}
+                Cantidad
               </Label>
               <div className="relative">
                 <Input
@@ -199,13 +253,25 @@ function AdjustStockDialog({
                   className="text-2xl font-black h-14 pl-12 focus-visible:ring-primary/20"
                 />
                 <div className="absolute left-4 top-1/2 -translate-y-1/2">
-                  {mode === "add" ? (
-                    <Plus className="h-6 w-6 text-green-500" />
-                  ) : (
+                  {outgoing ? (
                     <Minus className="h-6 w-6 text-red-500" />
+                  ) : (
+                    <Plus className="h-6 w-6 text-green-500" />
                   )}
                 </div>
               </div>
+            </div>
+
+            <div className="grid gap-2">
+              <Label htmlFor="reason" className="font-bold text-sm">
+                Motivo (opcional)
+              </Label>
+              <Input
+                id="reason"
+                placeholder="Ej: conteo fisico, mercaderia danada, traslado"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+              />
             </div>
           </div>
 
@@ -221,12 +287,10 @@ function AdjustStockDialog({
             <Button
               type="submit"
               className={`font-bold px-8 ${
-                mode === "add"
-                  ? "bg-green-600 hover:bg-green-700"
-                  : "bg-red-600 hover:bg-red-700"
+                outgoing ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"
               }`}
             >
-              Confirmar {mode === "add" ? "Ingreso" : "Egreso"}
+              Confirmar Movimiento
             </Button>
           </DialogFooter>
         </form>
@@ -239,10 +303,9 @@ export function InventoryModule() {
   const {
     products: inventory,
     isLoading,
-    adjustStock,
-    updateStock: setStockValue,
+    registerStockMovement,
   } = useProducts();
-  const { branches } = useBranches();
+  const { branches } = useUser();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [selectedBranch, setSelectedBranch] = useState("all");
@@ -350,14 +413,37 @@ export function InventoryModule() {
     const status = getStockStatus(item);
     const progressValue = getProgressValue(item);
 
-    const handleAdjustStock = (amountToAdjust: number) => {
-      adjustStock(item.id, amountToAdjust, item.branchId ?? undefined);
-      toast({
-        title: "Stock Ajustado",
-        description: `Se ha modificado el stock de ${
-          item.name
-        } en ${amountToAdjust} ${item.unit || "unidades"}.`,
-      });
+    const handleMovementSubmit = async (input: {
+      type: MovementType;
+      quantity: number;
+      direction?: "in" | "out";
+      reason?: string;
+      toBranchId?: string;
+    }) => {
+      try {
+        await registerStockMovement({
+          productId: item.id,
+          branchId:
+            item.branchId ?? (selectedBranch !== "all" ? selectedBranch : undefined),
+          quantity: input.quantity,
+          type: input.type,
+          unitCost: Number(item.costPrice ?? 0),
+          direction: input.direction,
+          reason: input.reason,
+          toBranchId: input.toBranchId,
+        });
+
+        toast({
+          title: "Movimiento registrado",
+          description: `Se registro ${input.type} para ${item.name} (${input.quantity} ${item.unit || "unidades"}).`,
+        });
+      } catch (error: any) {
+        toast({
+          variant: "destructive",
+          title: "No se pudo registrar el movimiento",
+          description: error?.message ?? "Intenta nuevamente.",
+        });
+      }
     };
 
     return (
@@ -454,7 +540,11 @@ export function InventoryModule() {
 
           {/* New Control Flow */}
           <div className="flex items-center gap-3 w-full md:w-auto md:pl-4 border-t md:border-t-0 md:border-l pt-4 md:pt-0">
-            <AdjustStockDialog item={item} onAdjust={handleAdjustStock} />
+            <AdjustStockDialog
+              item={item}
+              branches={branches}
+              onSubmitMovement={handleMovementSubmit}
+            />
           </div>
         </div>
       </Card>
@@ -639,7 +729,7 @@ export function InventoryModule() {
                 <option value="all">Todas las sucursales</option>
                 {branches.map((branch) => (
                   <option key={branch.id} value={branch.id}>
-                    {branch.name}
+                    {branch.name || branch.id}
                   </option>
                 ))}
               </select>

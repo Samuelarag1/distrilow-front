@@ -37,8 +37,12 @@ interface TransactionsContextType {
   expenses: Expense[];
   sales: Sale[];
   isLoading: boolean;
-  addExpense: (expense: Omit<Expense, "id" | "date">) => Promise<void>;
-  addSale: (sale: Omit<Sale, "id" | "date">) => Promise<void>;
+  addExpense: (
+    expense: Omit<Expense, "id" | "date" | "branchId"> & { branchId?: string }
+  ) => Promise<void>;
+  addSale: (
+    sale: Omit<Sale, "id" | "date" | "branchId"> & { branchId?: string }
+  ) => Promise<void>;
   getExpensesByType: (type: BusinessType) => Expense[];
   getSalesByType: (type: BusinessType) => Sale[];
   getTotalExpensesByType: (type: BusinessType) => number;
@@ -48,6 +52,22 @@ interface TransactionsContextType {
 const TransactionsContext = createContext<TransactionsContextType | undefined>(
   undefined
 );
+
+const MAX_NUMERIC_10_2 = 99_999_999.99;
+const MAX_QUANTITY = 99_999_999;
+
+function toFiniteNumber(value: unknown) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeMoney(value: unknown) {
+  const parsed = toFiniteNumber(value);
+  if (parsed === null) return null;
+  const rounded = Math.round(parsed * 100) / 100;
+  if (rounded < 0) return null;
+  return rounded;
+}
 
 function normalizeExpense(row: any, businessType: BusinessType): Expense {
   return {
@@ -145,7 +165,9 @@ export function TransactionsProvider({
     loadData();
   }, [token, branchId]);
 
-  const addExpense = async (newExpense: Omit<Expense, "id" | "date">) => {
+  const addExpense = async (
+    newExpense: Omit<Expense, "id" | "date" | "branchId"> & { branchId?: string }
+  ) => {
     const resolvedBranchId = newExpense.branchId || branchId;
     if (!resolvedBranchId) {
       throw new Error("No hay sucursal activa para registrar el gasto.");
@@ -170,17 +192,43 @@ export function TransactionsProvider({
     );
   };
 
-  const addSale = async (newSale: Omit<Sale, "id" | "date">) => {
+  const addSale = async (
+    newSale: Omit<Sale, "id" | "date" | "branchId"> & { branchId?: string }
+  ) => {
     const resolvedBranchId = newSale.branchId || branchId;
     if (!resolvedBranchId) {
       throw new Error("No hay sucursal activa para registrar la venta.");
     }
 
-    const saleItems = (newSale.lineItems ?? []).map((item) => ({
-      productId: item.productId,
-      quantity: Number(item.quantity),
-      unitPrice: Number(item.price),
-    }));
+    const saleItems = (newSale.lineItems ?? []).map((item, index) => {
+      const quantity = Math.trunc(Number(item.quantity));
+      const unitPrice = normalizeMoney(item.price);
+
+      if (!Number.isFinite(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
+        throw new Error(
+          `Cantidad invalida en item ${index + 1}. Debe ser un entero entre 1 y ${MAX_QUANTITY}.`
+        );
+      }
+
+      if (unitPrice === null || unitPrice <= 0 || unitPrice > MAX_NUMERIC_10_2) {
+        throw new Error(
+          `Precio invalido en item ${index + 1}. Debe ser mayor a 0 y menor o igual a ${MAX_NUMERIC_10_2}.`
+        );
+      }
+
+      const lineTotal = quantity * unitPrice;
+      if (lineTotal > MAX_NUMERIC_10_2) {
+        throw new Error(
+          `El subtotal del item ${index + 1} excede el limite permitido (${MAX_NUMERIC_10_2}).`
+        );
+      }
+
+      return {
+        productId: item.productId,
+        quantity,
+        unitPrice,
+      };
+    });
 
     if (saleItems.length === 0) {
       throw new Error("La venta debe incluir al menos un item.");

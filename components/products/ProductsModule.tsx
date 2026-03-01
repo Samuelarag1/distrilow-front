@@ -38,7 +38,7 @@ export function ProductsModule() {
   const { addProduct, updateProduct, removeProduct } = useProductActions();
   const { activeBranchId } = useBranch();
 
-  const { token, branchId, branches, setBranchId } = useUser();
+  const { token, branchId, branches, switchBranch } = useUser();
   const { toast } = useToast();
 
   // mantiene tu sesión API sincronizada
@@ -75,7 +75,6 @@ export function ProductsModule() {
   } = useProductsInfinite({
     activeBranchId,
     take: 30,
-    maxItems: 30,
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     sortBy,
@@ -179,8 +178,17 @@ export function ProductsModule() {
               onCategoryChange={setSelectedCategory}
               branchId={branchId}
               branches={branches}
-              token={token}
-              onBranchChange={(id) => setBranchId(id)}
+              onBranchChange={async (id) => {
+                try {
+                  await switchBranch(id);
+                } catch (error: any) {
+                  toast({
+                    variant: "destructive",
+                    title: "No se pudo cambiar sucursal",
+                    description: error?.message ?? "Intenta nuevamente.",
+                  });
+                }
+              }}
             />
 
             <ProductsSortBar
@@ -227,7 +235,7 @@ export function ProductsModule() {
               )}
               {!hasMore && products.length > 0 && (
                 <div className="py-6 text-center text-xs text-muted-foreground">
-                  Mostrando hasta 30 productos. Usa la busqueda para traer mas.
+                  No hay mas productos para cargar.
                 </div>
               )}
             </>

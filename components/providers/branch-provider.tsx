@@ -59,38 +59,15 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const [activeBranch, setActiveBranch] = useState<Branch | null>(null);
   const { logEvent } = useAudit();
-  const { token, branchId, setBranchId, setBranches: setUserBranches } = useUser();
-
-  const syncUserBranches = (rows: Branch[]) => {
-    setUserBranches(
-      rows.map((b) => ({
-        id: b.id,
-        name: b.name,
-      }))
-    );
-  };
+  const { token, branchId, branches: sessionBranches, setBranchId, switchBranch } =
+    useUser();
 
   useEffect(() => {
     const fetchBranches = async () => {
       try {
         setIsLoading(true);
         const response = await backendApi.branches.list();
-        const data = response.map(normalizeBranch);
-        setBranches(data);
-        syncUserBranches(data);
-
-        if (branchId) {
-          const savedBranch = data.find((b) => b.id === branchId);
-          if (savedBranch) {
-            setActiveBranch(savedBranch);
-            return;
-          }
-        }
-
-        if (data.length > 0) {
-          setActiveBranch(data[0]);
-          setBranchId(data[0].id);
-        }
+        setBranches(response.map(normalizeBranch));
       } catch (error) {
         console.error("Failed to fetch branches:", error);
       } finally {
@@ -100,8 +77,47 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
 
     if (token) {
       fetchBranches();
+      return;
     }
+
+    setBranches([]);
+    setActiveBranch(null);
+    setIsLoading(false);
   }, [token]);
+
+  useEffect(() => {
+    if (!branches.length) {
+      setActiveBranch(null);
+      return;
+    }
+
+    if (branchId) {
+      const selected = branches.find((branch) => branch.id === branchId) ?? null;
+      if (selected) {
+        setActiveBranch(selected);
+        return;
+      }
+    }
+
+    const fallbackSessionBranchId = sessionBranches[0]?.id;
+    if (fallbackSessionBranchId) {
+      const fallback =
+        branches.find((branch) => branch.id === fallbackSessionBranchId) ?? null;
+      setActiveBranch(fallback);
+      if (fallback && fallback.id !== branchId) {
+        void switchBranch(fallback.id).catch(() => {
+          setBranchId(fallback.id);
+        });
+      }
+      return;
+    }
+
+    const firstBranch = branches[0] ?? null;
+    setActiveBranch(firstBranch);
+    if (firstBranch && !branchId) {
+      setBranchId(firstBranch.id);
+    }
+  }, [branches, branchId, sessionBranches, switchBranch, setBranchId]);
 
   const addBranch = async (branchData: Omit<Branch, "id" | "createdAt">) => {
     const payload: CreateBranchRequest = {
@@ -119,9 +135,7 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     logEvent("create", "branch", `Creo nueva sucursal: ${created.name}`, created.id);
 
     setBranches((prev) => {
-      const next = [...prev, created];
-      syncUserBranches(next);
-      return next;
+      return [...prev, created];
     });
   };
 
@@ -145,11 +159,7 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    setBranches((prev) => {
-      const next = prev.map((b) => (b.id === id ? updated : b));
-      syncUserBranches(next);
-      return next;
-    });
+    setBranches((prev) => prev.map((b) => (b.id === id ? updated : b)));
 
     if (activeBranch?.id === id) {
       setActiveBranch(updated);
@@ -164,16 +174,22 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
       logEvent("delete", "branch", `Elimino sucursal ${existing.name}`, id);
     }
 
-    setBranches((prev) => {
-      const next = prev.filter((b) => b.id !== id);
-      syncUserBranches(next);
-      return next;
-    });
+    setBranches((prev) => prev.filter((b) => b.id !== id));
 
     if (activeBranch?.id === id) {
-      const fallback = branches.find((b) => b.id !== id) || null;
+      const fallbackSessionBranchId =
+        sessionBranches.find((branch) => branch.id !== id)?.id ?? null;
+      const fallback = fallbackSessionBranchId
+        ? branches.find((b) => b.id === fallbackSessionBranchId) ?? null
+        : null;
       setActiveBranch(fallback);
-      setBranchId(fallback?.id ?? null);
+      if (fallback?.id) {
+        void switchBranch(fallback.id).catch(() => {
+          setBranchId(fallback.id);
+        });
+      } else {
+        setBranchId(null);
+      }
     }
   };
 
