@@ -1,6 +1,26 @@
 import { cookies } from "next/headers";
 import { ApiError } from "./api-client";
 
+function normalizeBaseUrl(base: string) {
+  return base.endsWith("/") ? base.slice(0, -1) : base;
+}
+
+function normalizeApiBaseCandidate(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  if (/^https?:\/\//i.test(trimmed)) return normalizeBaseUrl(trimmed);
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
+    return normalizeBaseUrl(`http://${trimmed}`);
+  }
+  return normalizeBaseUrl(`https://${trimmed}`);
+}
+
+function normalizeApiPrefix(prefix?: string) {
+  const value = (prefix ?? "/api").trim();
+  if (!value) return "/api";
+  return value.startsWith("/") ? value : `/${value}`;
+}
+
 async function serverRequest<T = any>(
   url: string,
   options: RequestInit = {}
@@ -24,11 +44,12 @@ async function serverRequest<T = any>(
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (branchId) headers.set("x-branch-id", branchId);
 
-  const base =
-    process.env.NEXT_PUBLIC_API_URL ||
-    `${process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3000"}${
-      process.env.NEXT_PUBLIC_API_PREFIX ?? "/api"
-    }`;
+  const legacyUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
+  const base = legacyUrl
+    ? normalizeApiBaseCandidate(legacyUrl)
+    : `${normalizeApiBaseCandidate(
+        process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3000"
+      )}${normalizeApiPrefix(process.env.NEXT_PUBLIC_API_PREFIX)}`;
 
   const res = await fetch(`${base}${url}`, {
     ...options,

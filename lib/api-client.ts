@@ -32,15 +32,33 @@ function normalizeBaseUrl(base: string) {
   return base.endsWith("/") ? base.slice(0, -1) : base;
 }
 
+function normalizeApiBaseCandidate(value: string) {
+  const trimmed = value.trim();
+  if (!trimmed) return trimmed;
+  if (trimmed.startsWith("/")) return normalizeBaseUrl(trimmed);
+  if (/^https?:\/\//i.test(trimmed)) return normalizeBaseUrl(trimmed);
+  if (/^(localhost|127\.0\.0\.1)(:\d+)?(\/.*)?$/i.test(trimmed)) {
+    return normalizeBaseUrl(`http://${trimmed}`);
+  }
+  return normalizeBaseUrl(`https://${trimmed}`);
+}
+
+function normalizeApiPrefix(prefix?: string) {
+  const value = (prefix ?? "/api").trim();
+  if (!value) return "/api";
+  return value.startsWith("/") ? value : `/${value}`;
+}
+
 function resolveApiBaseUrl() {
   const legacyUrl = process.env.NEXT_PUBLIC_API_URL;
-  if (legacyUrl) return normalizeBaseUrl(legacyUrl);
+  if (legacyUrl) return normalizeApiBaseCandidate(legacyUrl);
 
-  const origin =
+  const originRaw =
     process.env.NEXT_PUBLIC_BACKEND_URL ??
     process.env.NEXT_PUBLIC_API_BASE_URL ??
     "http://localhost:3000";
-  const prefix = process.env.NEXT_PUBLIC_API_PREFIX ?? "/api";
+  const origin = normalizeApiBaseCandidate(originRaw);
+  const prefix = normalizeApiPrefix(process.env.NEXT_PUBLIC_API_PREFIX);
   return `${normalizeBaseUrl(origin)}${prefix.startsWith("/") ? "" : "/"}${prefix}`;
 }
 
