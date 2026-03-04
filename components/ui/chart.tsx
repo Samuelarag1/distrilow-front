@@ -7,6 +7,9 @@ import { cn } from "@/lib/utils"
 
 // Format: { THEME_NAME: CSS_SELECTOR }
 const THEMES = { light: "", dark: ".dark" } as const
+const SAFE_CHART_ID = /^[a-zA-Z0-9_-]+$/
+const SAFE_COLOR_VALUE =
+  /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9\s.,%]+\)|hsla?\([0-9\s.,%]+\)|var\(--[a-zA-Z0-9_-]+\)|[a-zA-Z]+)$/
 
 export type ChartConfig = {
   [k in string]: {
@@ -34,6 +37,23 @@ function useChart() {
   return context
 }
 
+function sanitizeChartId(value: string) {
+  const trimmed = value.trim()
+  if (SAFE_CHART_ID.test(trimmed)) return trimmed
+  return trimmed.replace(/[^a-zA-Z0-9_-]/g, "")
+}
+
+function sanitizeCssToken(value: string) {
+  return value.trim().replace(/[^a-zA-Z0-9_-]/g, "")
+}
+
+function sanitizeColorValue(value?: string) {
+  if (!value) return null
+  const trimmed = value.trim()
+  if (!trimmed) return null
+  return SAFE_COLOR_VALUE.test(trimmed) ? trimmed : null
+}
+
 const ChartContainer = React.forwardRef<
   HTMLDivElement,
   React.ComponentProps<"div"> & {
@@ -44,7 +64,8 @@ const ChartContainer = React.forwardRef<
   }
 >(({ id, className, children, config, ...props }, ref) => {
   const uniqueId = React.useId()
-  const chartId = `chart-${id || uniqueId.replace(/:/g, "")}`
+  const rawChartId = `chart-${id || uniqueId.replace(/:/g, "")}`
+  const chartId = sanitizeChartId(rawChartId) || "chart-default"
 
   return (
     <ChartContext.Provider value={{ config }}>
@@ -82,14 +103,18 @@ const ChartStyle = ({ id, config }: { id: string; config: ChartConfig }) => {
         __html: Object.entries(THEMES)
           .map(
             ([theme, prefix]) => `
-${prefix} [data-chart=${id}] {
+${prefix} [data-chart="${sanitizeChartId(id)}"] {
 ${colorConfig
   .map(([key, itemConfig]) => {
-    const color =
+    const rawColor =
       itemConfig.theme?.[theme as keyof typeof itemConfig.theme] ||
       itemConfig.color
-    return color ? `  --color-${key}: ${color};` : null
+    const color = sanitizeColorValue(rawColor)
+    const cssToken = sanitizeCssToken(key)
+
+    return color && cssToken ? `  --color-${cssToken}: ${color};` : null
   })
+  .filter(Boolean)
   .join("\n")}
 }
 `

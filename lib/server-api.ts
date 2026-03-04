@@ -21,6 +21,24 @@ function normalizeApiPrefix(prefix?: string) {
   return value.startsWith("/") ? value : `/${value}`;
 }
 
+function resolveServerApiBaseUrl() {
+  const legacyUrl =
+    process.env.API_URL?.trim() ?? process.env.NEXT_PUBLIC_API_URL?.trim();
+
+  if (legacyUrl) {
+    return normalizeApiBaseCandidate(legacyUrl);
+  }
+
+  const backendUrl =
+    process.env.BACKEND_URL ??
+    process.env.NEXT_PUBLIC_BACKEND_URL ??
+    "http://localhost:3000";
+  const apiPrefix =
+    process.env.API_PREFIX ?? process.env.NEXT_PUBLIC_API_PREFIX;
+
+  return `${normalizeApiBaseCandidate(backendUrl)}${normalizeApiPrefix(apiPrefix)}`;
+}
+
 async function serverRequest<T = any>(
   url: string,
   options: RequestInit = {}
@@ -44,12 +62,7 @@ async function serverRequest<T = any>(
   if (token) headers.set("Authorization", `Bearer ${token}`);
   if (branchId) headers.set("x-branch-id", branchId);
 
-  const legacyUrl = process.env.NEXT_PUBLIC_API_URL?.trim();
-  const base = legacyUrl
-    ? normalizeApiBaseCandidate(legacyUrl)
-    : `${normalizeApiBaseCandidate(
-        process.env.NEXT_PUBLIC_BACKEND_URL ?? "http://localhost:3000"
-      )}${normalizeApiPrefix(process.env.NEXT_PUBLIC_API_PREFIX)}`;
+  const base = resolveServerApiBaseUrl();
 
   const res = await fetch(`${base}${url}`, {
     ...options,

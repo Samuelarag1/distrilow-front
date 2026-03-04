@@ -1,4 +1,5 @@
 import type { AuthResponse } from "@/lib/api-types";
+import { clearSessionCookies } from "@/lib/client-cookies";
 
 type ApiSessionInput =
   | {
@@ -240,14 +241,9 @@ async function request<T = unknown>(
 
   if (!res.ok) {
     if (res.status === 401 && typeof window !== "undefined") {
-      const expire = "expires=Thu, 01 Jan 1970 00:00:00 UTC";
-      document.cookie = `token=; path=/; ${expire}`;
-      document.cookie = `accessToken=; path=/; ${expire}`;
-      document.cookie = `refreshToken=; path=/; ${expire}`;
-      document.cookie = `user=; path=/; ${expire}`;
-      document.cookie = `branches=; path=/; ${expire}`;
-      document.cookie = `activeBranchId=; path=/; ${expire}`;
-      document.cookie = `needsOnboarding=; path=/; ${expire}`;
+      authToken = null;
+      activeBranchId = null;
+      clearSessionCookies();
       window.location.href = "/login";
     }
 
@@ -277,10 +273,14 @@ async function request<T = unknown>(
       res.status === 403
         ? "No tienes acceso a esta sucursal o no hay sucursal activa en la sesion."
         : `API request failed (${res.status})`;
+    const publicMessage =
+      res.status >= 500
+        ? "Ocurrio un error del servidor. Intenta nuevamente en unos minutos."
+        : friendlyMessage || bodyText || statusHint;
 
     throw new ApiError(
       res.status,
-      friendlyMessage || bodyText || statusHint,
+      publicMessage,
       parsedBody
     );
   }

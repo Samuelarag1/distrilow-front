@@ -2,6 +2,7 @@
 
 import { setApiSession } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
+import { clearSessionCookies, setClientCookie } from "@/lib/client-cookies";
 import React, {
   useCallback,
   createContext,
@@ -85,37 +86,36 @@ function getCookie(name: string): string | null {
   const match = document.cookie
     .split("; ")
     .find((row) => row.startsWith(`${name}=`));
-  return match ? match.split("=").slice(1).join("=") : null;
+  if (!match) return null;
+  const value = match.split("=").slice(1).join("=");
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 function writeSessionCookies(payload: {
   accessToken?: string | null;
-  refreshToken?: string | null;
   branches?: Branch[];
   activeBranchId?: string | null;
   needsOnboarding?: boolean;
 }) {
   if (payload.accessToken !== undefined && payload.accessToken !== null) {
-    document.cookie = `token=${payload.accessToken}; path=/`;
-    document.cookie = `accessToken=${payload.accessToken}; path=/`;
-  }
-
-  if (payload.refreshToken !== undefined && payload.refreshToken !== null) {
-    document.cookie = `refreshToken=${payload.refreshToken}; path=/`;
+    setClientCookie("accessToken", payload.accessToken);
   }
 
   if (payload.branches) {
-    document.cookie = `branches=${encodeURIComponent(
-      JSON.stringify(payload.branches)
-    )}; path=/`;
+    setClientCookie("branches", JSON.stringify(payload.branches));
   }
 
   if (payload.activeBranchId !== undefined) {
-    document.cookie = `activeBranchId=${payload.activeBranchId ?? ""}; path=/`;
+    setClientCookie("activeBranchId", payload.activeBranchId ?? "");
   }
 
   if (payload.needsOnboarding !== undefined) {
-    document.cookie = `needsOnboarding=${payload.needsOnboarding}; path=/`;
+    setClientCookie("needsOnboarding", payload.needsOnboarding);
   }
 }
 
@@ -138,7 +138,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     if (userCookie) {
       try {
-        const parsed = JSON.parse(decodeURIComponent(userCookie));
+        const parsed = JSON.parse(userCookie);
         setCurrentUser({
           ...parsed,
           name: parsed.name ?? parsed.email,
@@ -150,9 +150,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     if (branchesCookie) {
       try {
-        parsedBranches = normalizeSessionBranches(
-          JSON.parse(decodeURIComponent(branchesCookie))
-        );
+        parsedBranches = normalizeSessionBranches(JSON.parse(branchesCookie));
         setBranches(parsedBranches);
       } catch (err) {
         console.error("Error parsing branches cookie:", err);
@@ -172,14 +170,14 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!activeBranchCookie && resolvedBranchId) {
-      document.cookie = `activeBranchId=${resolvedBranchId}; path=/`;
+      setClientCookie("activeBranchId", resolvedBranchId);
     }
   }, []);
 
   useEffect(() => {
     setApiSession({ accessToken: token, branchId: branchId ?? undefined });
     if (branchId !== undefined) {
-      document.cookie = `activeBranchId=${branchId ?? ""}; path=/`;
+      setClientCookie("activeBranchId", branchId ?? "");
     }
   }, [token, branchId]);
 
@@ -214,7 +212,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     writeSessionCookies({
       accessToken: nextToken,
-      refreshToken: response.refreshToken,
       branches: nextBranches,
       activeBranchId: nextBranchId,
       needsOnboarding: nextNeedsOnboarding,
@@ -228,14 +225,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       // ignore logout API errors, continue local cleanup
     }
 
-    const expire = "expires=Thu, 01 Jan 1970 00:00:00 UTC";
-    document.cookie = `token=; path=/; ${expire}`;
-    document.cookie = `accessToken=; path=/; ${expire}`;
-    document.cookie = `refreshToken=; path=/; ${expire}`;
-    document.cookie = `user=; path=/; ${expire}`;
-    document.cookie = `branches=; path=/; ${expire}`;
-    document.cookie = `activeBranchId=; path=/; ${expire}`;
-    document.cookie = `needsOnboarding=; path=/; ${expire}`;
+    clearSessionCookies();
 
     setCurrentUser(null);
     setToken(null);

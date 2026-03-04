@@ -1,8 +1,9 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Loader2, Sparkles } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { Activity, BarChart3, Boxes, Loader2, ShieldCheck, Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,8 +11,31 @@ import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
 import { setApiSession } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
+import { setClientCookie } from "@/lib/client-cookies";
 import { isPosCashOnlyUser } from "@/lib/permissions";
 import type { SessionBranch } from "@/lib/api-types";
+
+const systemHighlights: Array<{
+  title: string;
+  description: string;
+  icon: LucideIcon;
+}> = [
+  {
+    title: "Stock centralizado",
+    description: "Controla inventario, compras y reposicion desde una sola vista.",
+    icon: Boxes,
+  },
+  {
+    title: "Ventas en vivo",
+    description: "Monitorea caja, POS y rendimiento por sucursal en tiempo real.",
+    icon: Activity,
+  },
+  {
+    title: "Decision rapida",
+    description: "Reportes claros para decidir precios, margenes y movimiento.",
+    icon: BarChart3,
+  },
+];
 
 function normalizeSessionBranches(input: unknown): SessionBranch[] {
   if (!Array.isArray(input)) return [];
@@ -77,15 +101,11 @@ export default function LoginPage() {
         branchId: activeBranchId ?? undefined,
       });
 
-      document.cookie = `token=${data.accessToken}; path=/`;
-      document.cookie = `accessToken=${data.accessToken}; path=/`;
-      document.cookie = `refreshToken=${data.refreshToken}; path=/`;
-      document.cookie = `user=${encodeURIComponent(JSON.stringify(currentUser))}; path=/`;
-      document.cookie = `branches=${encodeURIComponent(
-        JSON.stringify(availableBranches)
-      )}; path=/`;
-      document.cookie = `activeBranchId=${activeBranchId ?? ""}; path=/`;
-      document.cookie = `needsOnboarding=${needsOnboarding}; path=/`;
+      setClientCookie("accessToken", data.accessToken);
+      setClientCookie("user", JSON.stringify(currentUser));
+      setClientCookie("branches", JSON.stringify(availableBranches));
+      setClientCookie("activeBranchId", activeBranchId ?? "");
+      setClientCookie("needsOnboarding", needsOnboarding);
 
       toast({
         title: "Inicio de sesion exitoso",
@@ -113,161 +133,218 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-[#070b1a] p-3 md:p-6">
+    <div className="relative min-h-screen overflow-hidden bg-background p-4 text-foreground md:p-6">
       <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -left-24 top-10 h-96 w-96 rounded-full bg-cyan-500/20 blur-3xl orb-float-slow" />
-        <div className="absolute right-0 top-1/3 h-[28rem] w-[28rem] rounded-full bg-blue-600/25 blur-3xl orb-float" />
-        <div className="absolute bottom-0 left-1/3 h-80 w-80 rounded-full bg-indigo-500/20 blur-3xl orb-float-reverse" />
+        <div className="absolute inset-0 login-ambient" />
+        <div className="absolute inset-0 mesh-grid opacity-45" />
+        <div className="absolute -left-24 top-10 h-80 w-80 rounded-full orb-a blur-3xl orb-float-slow" />
+        <div className="absolute right-10 top-1/4 h-72 w-72 rounded-full orb-b blur-3xl orb-float" />
+        <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full orb-c blur-3xl orb-float-reverse" />
       </div>
 
-      <div className="mx-auto grid min-h-[calc(100vh-1.5rem)] w-full max-w-6xl overflow-hidden rounded-2xl border border-white/15 bg-white/95 shadow-2xl backdrop-blur-sm md:min-h-[calc(100vh-3rem)] md:grid-cols-2">
-        <section className="relative hidden overflow-hidden bg-gradient-to-br from-blue-700 via-blue-600 to-indigo-800 p-10 text-white md:flex md:flex-col md:justify-between">
-          <div className="absolute inset-0 gradient-flow opacity-80" />
-          <div className="absolute inset-0 grid-overlay opacity-25" />
+      <div className="login-frame mx-auto grid min-h-[calc(100vh-2rem)] w-full max-w-7xl overflow-hidden rounded-3xl border border-border/60 bg-card/80 backdrop-blur-md md:min-h-[calc(100vh-3rem)] md:grid-cols-[1.15fr_0.85fr]">
+        <section className="relative hidden overflow-hidden border-r border-border/60 p-10 text-card-foreground md:flex md:flex-col md:justify-between lg:p-14">
+          <div className="absolute inset-0 left-panel-gradient" />
+          <div className="absolute inset-0 scan-line opacity-40 animate-scan" />
 
-          <div className="absolute -right-24 top-8 h-64 w-64 rounded-full border border-white/30 pulse-ring" />
-          <div className="absolute left-6 top-24 h-72 w-72 rounded-full border border-white/20 pulse-ring-delayed" />
-          <div className="absolute left-24 top-40 h-80 w-80 rounded-full border border-white/15 pulse-ring-slow" />
+          <div className="relative z-10 space-y-8">
+            <div className="inline-flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/10 px-4 py-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/15">
+                <Store className="h-5 w-5 text-primary" />
+              </div>
+              <div>
+                <p className="text-[11px] uppercase tracking-[0.22em] text-primary/80">
+                  Plataforma oficial
+                </p>
+                <p className="text-lg font-semibold tracking-tight">DistriLow</p>
+              </div>
+            </div>
 
-          <div className="relative z-10 animate-in-up">
-            <Sparkles className="mb-8 h-12 w-12" />
-            <h1 className="text-5xl font-black leading-tight tracking-tight">
-              Hello
-              <br />
-              SaleSkip!
-            </h1>
-            <p className="mt-6 max-w-sm text-base text-white/90">
-              Skip repetitive sales tasks. Get highly productive through automation and
-              save tons of time.
-            </p>
+            <div className="space-y-4 animate-in-up">
+              <h1 className="text-4xl font-bold leading-tight lg:text-5xl">
+                Centro de operaciones para tu distribuidora.
+              </h1>
+              <p className="max-w-xl text-base leading-relaxed text-muted-foreground lg:text-lg">
+                DistriLow conecta sucursales, inventario, ventas y reportes en una sola
+                experiencia de gestion.
+              </p>
+            </div>
+
+            <div className="grid gap-3">
+              {systemHighlights.map(({ icon: Icon, title, description }) => (
+                <article
+                  key={title}
+                  className="rounded-2xl border border-border/70 bg-background/50 p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/35 hover:bg-background/70"
+                >
+                  <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary/12">
+                    <Icon className="h-4 w-4 text-primary" />
+                  </div>
+                  <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+                  <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                    {description}
+                  </p>
+                </article>
+              ))}
+            </div>
           </div>
 
-          <p className="relative z-10 text-sm text-white/70">
-            © 2026 SaleSkip. All rights reserved.
+          <p className="relative z-10 text-xs uppercase tracking-[0.15em] text-muted-foreground">
+            Acceso para personal autorizado
           </p>
         </section>
 
-        <section className="relative flex items-center justify-center overflow-hidden px-6 py-10 sm:px-10">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,rgba(59,130,246,0.12),transparent_45%)]" />
-          <div className="absolute inset-0 subtle-lines opacity-40" />
+        <section className="relative flex items-center justify-center px-5 py-8 sm:px-10">
+          <div className="absolute inset-0 right-panel-gradient" />
 
-          <form onSubmit={handleLogin} className="relative z-10 w-full max-w-sm space-y-6 animate-in-up">
-            <div className="space-y-5">
-              <div>
-                <p className="text-xl font-bold tracking-tight text-slate-900">SaleSkip</p>
+          <form
+            onSubmit={handleLogin}
+            className="form-shell relative z-10 w-full max-w-md space-y-7 rounded-3xl border border-border/70 bg-background/80 p-7 backdrop-blur-xl sm:p-8"
+          >
+            <div className="space-y-4">
+              <div className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
+                <ShieldCheck className="h-3.5 w-3.5" />
+                Conexion cifrada
               </div>
 
               <div className="space-y-2">
-                <h2 className="text-3xl font-bold text-slate-900">Welcome Back!</h2>
-                <p className="text-sm text-slate-500">
-                  Enter your credentials to continue.
+                <p className="text-sm uppercase tracking-[0.16em] text-muted-foreground">
+                  Ingreso al sistema
+                </p>
+                <h2 className="text-3xl font-semibold tracking-tight text-foreground">
+                  Bienvenido a DistriLow
+                </h2>
+                <p className="text-sm text-muted-foreground">
+                  Inicia sesion para administrar ventas, stock y sucursales.
                 </p>
               </div>
             </div>
 
             <div className="space-y-4">
               <div className="space-y-2">
-                <Label htmlFor="email" className="text-slate-600">
-                  Email
+                <Label htmlFor="email" className="text-foreground/90">
+                  Correo
                 </Label>
                 <Input
                   id="email"
                   type="email"
-                  placeholder="name@company.com"
+                  placeholder="equipo@distrilow.com"
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  className="border-0 border-b border-slate-300 rounded-none px-0 shadow-none focus-visible:ring-0 focus-visible:border-slate-900"
+                  onChange={(event) => setEmail(event.target.value)}
+                  className="h-12 border-input bg-background/80 text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/40"
                   required
                 />
               </div>
 
               <div className="space-y-2">
-                <Label htmlFor="password" className="text-slate-600">
-                  Password
+                <Label htmlFor="password" className="text-foreground/90">
+                  Contrasena
                 </Label>
                 <Input
                   id="password"
                   type="password"
-                  placeholder="••••••••"
+                  placeholder="********"
                   value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  className="border-0 border-b border-slate-300 rounded-none px-0 shadow-none focus-visible:ring-0 focus-visible:border-slate-900"
+                  onChange={(event) => setPassword(event.target.value)}
+                  className="h-12 border-input bg-background/80 text-foreground placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-ring/40"
                   required
                 />
               </div>
             </div>
 
-            <div className="space-y-3">
-              <Button
-                className="h-11 w-full bg-slate-900 text-white transition-all hover:-translate-y-0.5 hover:bg-slate-800"
-                type="submit"
-                disabled={isLoading}
-              >
-                {isLoading ? (
-                  <span className="inline-flex items-center gap-2">
-                    <Loader2 className="h-4 w-4 animate-spin" />
-                    Ingresando...
-                  </span>
-                ) : (
-                  "Login Now"
-                )}
-              </Button>
+            <Button
+              className="h-12 w-full bg-primary font-semibold text-primary-foreground transition-all duration-300 hover:-translate-y-0.5 hover:bg-primary/90"
+              type="submit"
+              disabled={isLoading}
+            >
+              {isLoading ? (
+                <span className="inline-flex items-center gap-2">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Validando acceso...
+                </span>
+              ) : (
+                "Ingresar al panel"
+              )}
+            </Button>
 
-              <Button
-                type="button"
-                variant="outline"
-                className="h-11 w-full border-slate-300 text-slate-700"
-                disabled
-              >
-                Login with Google
-              </Button>
+            <div className="rounded-xl border border-border bg-muted/45 px-3 py-2 text-xs text-muted-foreground">
+              <p className="inline-flex items-center gap-2">
+                <Activity className="h-3.5 w-3.5" />
+                Sesion monitoreada para trazabilidad y seguridad operativa.
+              </p>
             </div>
-
-            <p className="text-center text-xs text-slate-500">
-              Forgot password <span className="font-semibold text-slate-700">Click here</span>
-            </p>
           </form>
         </section>
       </div>
 
       <style jsx>{`
-        .gradient-flow {
-          background: linear-gradient(135deg, #2563eb, #1d4ed8, #4f46e5, #2563eb);
-          background-size: 250% 250%;
-          animation: gradientShift 12s ease infinite;
+        .login-frame {
+          box-shadow:
+            0 35px 90px -55px hsl(var(--ring) / 0.55),
+            0 10px 30px -20px hsl(var(--foreground) / 0.2);
         }
 
-        .grid-overlay {
-          background-image: linear-gradient(
-              rgba(255, 255, 255, 0.35) 1px,
-              transparent 1px
-            ),
-            linear-gradient(90deg, rgba(255, 255, 255, 0.35) 1px, transparent 1px);
-          background-size: 64px 64px;
-          mask-image: radial-gradient(circle at center, black 15%, transparent 75%);
+        .form-shell {
+          box-shadow: 0 30px 80px -50px hsl(var(--ring) / 0.5);
         }
 
-        .subtle-lines {
-          background-image: linear-gradient(
-            to right,
-            transparent,
-            rgba(15, 23, 42, 0.08) 50%,
-            transparent
+        .login-ambient {
+          background:
+            radial-gradient(circle at 12% 8%, hsl(var(--chart-2) / 0.22), transparent 36%),
+            radial-gradient(circle at 88% 85%, hsl(var(--chart-1) / 0.2), transparent 34%),
+            linear-gradient(
+              145deg,
+              hsl(var(--background)),
+              hsl(var(--muted) / 0.45) 55%,
+              hsl(var(--background))
+            );
+        }
+
+        .mesh-grid {
+          background-image:
+            linear-gradient(hsl(var(--border) / 0.45) 1px, transparent 1px),
+            linear-gradient(90deg, hsl(var(--border) / 0.45) 1px, transparent 1px);
+          background-size: 52px 52px;
+          mask-image: radial-gradient(circle at center, black 14%, transparent 78%);
+        }
+
+        .left-panel-gradient {
+          background: linear-gradient(
+            165deg,
+            hsl(var(--primary) / 0.14),
+            hsl(var(--chart-2) / 0.12) 45%,
+            hsl(var(--background) / 0.08)
           );
-          background-size: 220% 100%;
-          animation: shimmer 8s linear infinite;
         }
 
-        .pulse-ring {
-          animation: pulseScale 8s ease-in-out infinite;
+        .right-panel-gradient {
+          background:
+            radial-gradient(circle at 15% 10%, hsl(var(--primary) / 0.14), transparent 40%),
+            radial-gradient(circle at 95% 90%, hsl(var(--chart-2) / 0.12), transparent 32%);
         }
 
-        .pulse-ring-delayed {
-          animation: pulseScale 9s ease-in-out infinite 1s;
+        .scan-line {
+          background: linear-gradient(
+            120deg,
+            transparent 0%,
+            hsl(var(--foreground) / 0.12) 50%,
+            transparent 100%
+          );
         }
 
-        .pulse-ring-slow {
-          animation: pulseScale 11s ease-in-out infinite 2s;
+        .orb-a {
+          background: hsl(var(--chart-2) / 0.24);
+        }
+
+        .orb-b {
+          background: hsl(var(--primary) / 0.2);
+        }
+
+        .orb-c {
+          background: hsl(var(--chart-1) / 0.2);
+        }
+
+        .animate-scan {
+          animation: scan 10s linear infinite;
         }
 
         .orb-float {
@@ -275,38 +352,23 @@ export default function LoginPage() {
         }
 
         .orb-float-slow {
-          animation: float 12s ease-in-out infinite;
+          animation: float 13s ease-in-out infinite;
         }
 
         .orb-float-reverse {
-          animation: floatReverse 10s ease-in-out infinite;
+          animation: floatReverse 11s ease-in-out infinite;
         }
 
         .animate-in-up {
           animation: fadeInUp 0.7s ease-out both;
         }
 
-        @keyframes gradientShift {
+        @keyframes scan {
           0% {
-            background-position: 0% 50%;
-          }
-          50% {
-            background-position: 100% 50%;
+            transform: translateX(-20%);
           }
           100% {
-            background-position: 0% 50%;
-          }
-        }
-
-        @keyframes pulseScale {
-          0%,
-          100% {
-            transform: scale(1);
-            opacity: 0.45;
-          }
-          50% {
-            transform: scale(1.06);
-            opacity: 0.75;
+            transform: translateX(20%);
           }
         }
 
@@ -316,7 +378,7 @@ export default function LoginPage() {
             transform: translateY(0px) translateX(0px);
           }
           50% {
-            transform: translateY(-20px) translateX(12px);
+            transform: translateY(-14px) translateX(10px);
           }
         }
 
@@ -326,23 +388,14 @@ export default function LoginPage() {
             transform: translateY(0px) translateX(0px);
           }
           50% {
-            transform: translateY(16px) translateX(-14px);
-          }
-        }
-
-        @keyframes shimmer {
-          0% {
-            background-position: 0% 50%;
-          }
-          100% {
-            background-position: 220% 50%;
+            transform: translateY(16px) translateX(-10px);
           }
         }
 
         @keyframes fadeInUp {
           0% {
             opacity: 0;
-            transform: translateY(16px);
+            transform: translateY(14px);
           }
           100% {
             opacity: 1;
