@@ -1,12 +1,28 @@
-"use client"
-import { useState } from "react"
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Button } from "@/components/ui/button"
-import { Plus, FileText, Users, Package, TrendingUp, DollarSign } from "lucide-react"
-import { AddExpenseDialog } from "./add-expense-dialog"
+"use client";
+
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import {
+  Plus,
+  FileText,
+  Users,
+  Package,
+  TrendingUp,
+  DollarSign,
+} from "lucide-react";
+import { AddExpenseDialog } from "./add-expense-dialog";
 
 export function QuickActions() {
-  const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false)
+  const router = useRouter();
+  const [isExpenseDialogOpen, setIsExpenseDialogOpen] = useState(false);
 
   const actions = [
     {
@@ -18,63 +34,72 @@ export function QuickActions() {
     },
     {
       title: "Nuevo Producto",
-      description: "Agregar producto al catálogo",
+      description: "Agregar producto al catalogo",
       icon: Plus,
       color: "bg-blue-500 hover:bg-blue-600",
+      action: () => router.push("/products?create=1"),
     },
     {
       title: "Ver Reportes",
       description: "Generar reportes de ventas",
       icon: FileText,
       color: "bg-green-500 hover:bg-green-600",
+      action: () => router.push("/reports"),
     },
     {
       title: "Gestionar Clientes",
       description: "Ver y editar clientes",
       icon: Users,
       color: "bg-purple-500 hover:bg-purple-600",
+      action: () => router.push("/customers"),
     },
     {
       title: "Control de Stock",
       description: "Revisar inventario",
       icon: Package,
       color: "bg-orange-500 hover:bg-orange-600",
+      action: () => router.push("/inventory"),
     },
     {
-      title: "Análisis",
-      description: "Ver métricas detalladas",
+      title: "Analisis",
+      description: "Ver metricas detalladas",
       icon: TrendingUp,
       color: "bg-indigo-500 hover:bg-indigo-600",
+      action: () => router.push("/sales"),
     },
-  ]
+  ];
 
   return (
     <>
       <Card>
         <CardHeader>
-          <CardTitle>Acciones Rápidas</CardTitle>
-          <CardDescription>Accesos directos a las funciones más utilizadas</CardDescription>
+          <CardTitle>Acciones Rapidas</CardTitle>
+          <CardDescription>
+            Accesos directos a las funciones mas utilizadas
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
             {actions.map((action) => {
-              const Icon = action.icon
+              const Icon = action.icon;
               return (
                 <Button
                   key={action.title}
                   variant="outline"
-                  className="h-auto p-4 flex flex-col items-start space-y-2 hover:shadow-md transition-all"
+                  className="h-auto flex flex-col items-start space-y-2 p-4 transition-all hover:shadow-md"
                   onClick={action.action}
                 >
-                  <div className={`p-2 rounded-md text-white ${action.color}`}>
+                  <div className={`rounded-md p-2 text-white ${action.color}`}>
                     <Icon className="h-4 w-4" />
                   </div>
                   <div className="text-left">
                     <div className="font-medium">{action.title}</div>
-                    <div className="text-sm text-muted-foreground">{action.description}</div>
+                    <div className="text-sm text-muted-foreground">
+                      {action.description}
+                    </div>
                   </div>
                 </Button>
-              )
+              );
             })}
           </div>
         </CardContent>
@@ -85,5 +110,5 @@ export function QuickActions() {
         onOpenChange={setIsExpenseDialogOpen}
       />
     </>
-  )
+  );
 }

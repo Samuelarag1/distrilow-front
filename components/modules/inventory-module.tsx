@@ -37,6 +37,7 @@ import { useProducts } from "@/components/providers/product-provider";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import type { MovementType } from "@/lib/api-types";
+import { resolveProductImageUrl } from "@/lib/media-utils";
 
 type SortKey = "name" | "stock" | "category" | "price";
 type SortOrder = "asc" | "desc";
@@ -484,10 +485,10 @@ export function InventoryModule() {
                     status === "low" ? "bg-red-500/10" : "bg-primary/10"
                   }`}
                 >
-                  <Package
-                    className={`h-6 w-6 ${
-                      status === "low" ? "text-red-500" : "text-primary"
-                    }`}
+                  <img
+                    src={resolveProductImageUrl(item)}
+                    alt={item.name}
+                    className="h-10 w-10 rounded-md object-cover"
                   />
                 </div>
                 <div>

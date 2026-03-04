@@ -21,8 +21,8 @@ import {
 } from "@/components/ui/select";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
-import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 interface AddExpenseDialogProps {
   open: boolean;
@@ -46,6 +46,7 @@ export function AddExpenseDialog({
 }: AddExpenseDialogProps) {
   const { addExpense } = useTransactions();
   const { branchId, branches } = useUser();
+  const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
 
   const [formData, setFormData] = useState({
@@ -63,12 +64,20 @@ export function AddExpenseDialog({
     e.preventDefault();
 
     if (!branchId) {
-      toast.error("Selecciona una sucursal antes de registrar un gasto");
+      toast({
+        variant: "destructive",
+        title: "Sucursal requerida",
+        description: "Selecciona una sucursal antes de registrar un gasto.",
+      });
       return;
     }
 
     if (!formData.amount || !formData.category || !formData.description) {
-      toast.error("Por favor completa todos los campos");
+      toast({
+        variant: "destructive",
+        title: "Campos incompletos",
+        description: "Completa todos los campos para registrar el gasto.",
+      });
       return;
     }
 
@@ -83,11 +92,18 @@ export function AddExpenseDialog({
         businessType: "retail",
       });
 
-      toast.success("Gasto registrado correctamente");
+      toast({
+        title: "Gasto registrado",
+        description: "El egreso se guardo correctamente.",
+      });
       setFormData({ amount: "", category: "", description: "" });
       onOpenChange(false);
-    } catch {
-      toast.error("Error al registrar el gasto");
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "Error al registrar gasto",
+        description: error?.message ?? "No se pudo registrar el gasto.",
+      });
     } finally {
       setIsLoading(false);
     }

@@ -12,11 +12,10 @@ interface DashboardProps {
 }
 
 export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
-  const { activeBranchId, availableBranches } = useBranch();
+  const { activeBranchId, availableBranches, businessType } = useBranch();
 
   const activeBranch = availableBranches.find((b) => b.id === activeBranchId);
-
-  // const currentData = businessType === "wholesale" ? wholesaleData : retailData;
+  const currentData = businessType === "wholesale" ? wholesaleData : retailData;
 
   return (
     <div className="space-y-6">
@@ -29,7 +28,7 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
         </div>
       </div>
 
-      <MetricsCards metrics={retailData} type="retail" />
+      <MetricsCards metrics={currentData} type={businessType} />
 
       <div className="space-y-6">
         <SalesChart />

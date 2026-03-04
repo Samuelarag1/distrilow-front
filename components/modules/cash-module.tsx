@@ -17,20 +17,22 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
 import { useBranches } from "@/components/providers/branch-provider";
+import { useTransactions } from "@/components/providers/transactions-provider";
+import { useBusiness } from "@/components/providers/business-provider";
 import { backendApi } from "@/lib/backend-api";
 import type { CashMovementType, CashSession } from "@/lib/api-types";
-import { canSwitchBranches } from "@/lib/permissions";
 
 export function CashModule() {
-  const { currentUser, branchId, switchBranch } = useUser();
+  const { currentUser, branchId } = useUser();
   const { branches } = useBranches();
+  const { addExpense } = useTransactions();
+  const { businessType } = useBusiness();
   const { toast } = useToast();
 
   const canManageCash =
     currentUser?.role === "admin" ||
     currentUser?.role === "manager" ||
     currentUser?.role === "cashier";
-  const canChangeBranch = canSwitchBranches(currentUser?.role, branches.length);
 
   const [cashSession, setCashSession] = useState<CashSession | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -42,14 +44,6 @@ export function CashModule() {
   const [movementAmount, setMovementAmount] = useState("");
   const [countedCash, setCountedCash] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
-
-  useEffect(() => {
-    if (!branchId && branches.length > 0) {
-      void switchBranch(branches[0].id).catch(() => {
-        // ignore bootstrap switch errors here, cash screen will show validation feedback
-      });
-    }
-  }, [branchId, branches, switchBranch]);
 
   const activeBranchName = useMemo(
     () => branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal",
@@ -112,15 +106,36 @@ export function CashModule() {
     if (!cashSession) return;
 
     const amount = Number(movementAmount);
-    if (!Number.isFinite(amount) || amount < 0.01 || !movementReason.trim()) return;
+    const reason = movementReason.trim();
+    if (!Number.isFinite(amount) || amount < 0.01 || !reason) return;
 
     try {
       setIsSaving(true);
       const updated = await backendApi.cash.addMovement(cashSession.id, {
         type: movementType,
-        reason: movementReason.trim(),
+        reason,
         amount,
       });
+
+      if (movementType === "OUT") {
+        try {
+          await addExpense({
+            amount,
+            category: "OTHER",
+            description: `Egreso de caja: ${reason}`,
+            branchId: cashSession.branchId ?? branchId ?? undefined,
+            businessType,
+          });
+        } catch (expenseError: any) {
+          toast({
+            variant: "destructive",
+            title: "Movimiento registrado sin gasto",
+            description:
+              expenseError?.message ||
+              "El egreso de caja se registro, pero no pudo crearse el gasto asociado.",
+          });
+        }
+      }
 
       setCashSession(updated);
       setMovementAmount("");
@@ -201,32 +216,13 @@ export function CashModule() {
           </div>
 
           <div className="grid gap-2 sm:max-w-sm">
-            <Label>Sucursal activa</Label>
-            <Select
-              value={branchId ?? ""}
-              onValueChange={(value) =>
-                void switchBranch(value).catch((error: any) => {
-                  toast({
-                    variant: "destructive",
-                    title: "No se pudo cambiar sucursal",
-                    description: error?.message ?? "Intenta nuevamente.",
-                  });
-                })
-              }
-              disabled={!canChangeBranch}
-            >
-              <SelectTrigger>
-                <SelectValue placeholder="Seleccionar sucursal" />
-              </SelectTrigger>
-              <SelectContent>
-                {branches.map((branch) => (
-                  <SelectItem key={branch.id} value={branch.id}>
-                    {branch.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">Trabajando sobre: {activeBranchName}</p>
+            <Label>Sucursal activa (sesion)</Label>
+            <div className="rounded-md border bg-muted/40 px-3 py-2 text-sm font-medium">
+              {activeBranchName}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              La caja opera con la sucursal actual de tu sesion.
+            </p>
           </div>
         </CardHeader>
 

@@ -27,6 +27,9 @@ import { Switch } from "@/components/ui/switch";
 
 import { useBranch } from "@/components/providers/business-provider";
 import { Product } from "@/lib/products";
+import { backendApi } from "@/lib/backend-api";
+import { useToast } from "@/hooks/use-toast";
+import { resolveProductImageUrl } from "@/lib/media-utils";
 
 // IMPORTANTE: usÃ¡ el enum que ya tenÃ©s (ajustÃ¡ el path a tu estructura real)
 import { MeasurementType } from "@/lib/measurement-type";
@@ -64,6 +67,7 @@ export function ProductDialog({
   isSaving = false,
 }: ProductDialogProps) {
   const { activeBranchId } = useBranch();
+  const { toast } = useToast();
   const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
 
   const categoryOptions = useMemo(() => {
@@ -90,7 +94,11 @@ export function ProductDialog({
     measurementType: MeasurementType.UNIT as MeasurementType,
     // estado: en tu entity esActive boolean
     isActive: true,
+    imageUrl: "",
   });
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [localImagePreview, setLocalImagePreview] = useState<string | null>(null);
+  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Si tu Product del front NO tiene algunos campos (sku, etc), ajustÃ¡ el mapeo.
   useEffect(() => {
@@ -118,7 +126,10 @@ export function ProductDialog({
         measurementType: ((product as any).measurementType ??
           MeasurementType.UNIT) as MeasurementType,
         isActive: Boolean((product as any).isActive ?? true),
+        imageUrl: (product as any).imageUrl ?? "",
       });
+      setImageFile(null);
+      setLocalImagePreview(null);
     } else {
       setFormData({
         sku: "",
@@ -135,15 +146,37 @@ export function ProductDialog({
         allowNegativeStock: false,
         measurementType: MeasurementType.UNIT,
         isActive: true,
+        imageUrl: "",
       });
+      setImageFile(null);
+      setLocalImagePreview(null);
     }
   }, [product, open]);
+
+  useEffect(() => {
+    if (!imageFile) {
+      setLocalImagePreview(null);
+      return;
+    }
+
+    const objectUrl = URL.createObjectURL(imageFile);
+    setLocalImagePreview(objectUrl);
+
+    return () => {
+      URL.revokeObjectURL(objectUrl);
+    };
+  }, [imageFile]);
 
   const computeMargin = (cost: number, retail: number) => {
     if (!cost || cost <= 0) return 0;
     const m = ((retail - cost) / cost) * 100;
     // redondeo 2 decimales
     return Math.round(m * 100) / 100;
+  };
+
+  const handleImageChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    setImageFile(file);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -167,6 +200,32 @@ export function ProductDialog({
       formData.retailPrice
     );
 
+    let imageUrl = formData.imageUrl?.trim() || undefined;
+    if (imageFile) {
+      try {
+        setIsUploadingImage(true);
+        const uploadFormData = new FormData();
+        uploadFormData.append("file", imageFile);
+
+        const uploaded = await backendApi.files.uploadProductImage(uploadFormData);
+        imageUrl =
+          uploaded?.imageUrl || (uploaded as any)?.product?.imageUrl || undefined;
+
+        if (!imageUrl) {
+          throw new Error("No se recibio URL de imagen desde el backend.");
+        }
+      } catch (error: any) {
+        toast({
+          variant: "destructive",
+          title: "Error al subir imagen",
+          description: error?.message || "No se pudo subir la imagen del producto.",
+        });
+        return;
+      } finally {
+        setIsUploadingImage(false);
+      }
+    }
+
     await onSave({
       sku: formData.sku.trim(),
       barcode: formData.barcode?.trim() || undefined,
@@ -183,10 +242,13 @@ export function ProductDialog({
       measurementType: formData.measurementType,
 
       isActive: formData.isActive,
+      imageUrl,
     } as any);
   };
 
-  const disableForm = isSaving;
+  const disableForm = isSaving || isUploadingImage;
+  const previewSrc =
+    localImagePreview || formData.imageUrl || resolveProductImageUrl(product);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -230,6 +292,30 @@ export function ProductDialog({
                     ))}
                   </SelectContent>
                 </Select>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Foto del producto</Label>
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
+                <div className="h-24 w-24 overflow-hidden rounded-md border bg-muted">
+                  <img
+                    src={previewSrc}
+                    alt={formData.name || "Imagen de producto"}
+                    className="h-full w-full object-cover"
+                  />
+                </div>
+                <div className="flex-1 space-y-2">
+                  <Input
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    onChange={handleImageChange}
+                    disabled={disableForm}
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Se envia al backend para alojarla en Supabase Storage.
+                  </p>
+                </div>
               </div>
             </div>
 
@@ -472,6 +558,8 @@ export function ProductDialog({
             >
               {isSaving
                 ? "Guardando..."
+                : isUploadingImage
+                ? "Subiendo imagen..."
                 : product
                 ? "Guardar Cambios"
                 : "Crear Producto"}

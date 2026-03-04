@@ -18,10 +18,24 @@ interface MetricsCardsProps {
 }
 
 export function MetricsCards({ metrics, type }: MetricsCardsProps) {
-  const { getTotalExpensesByType } = useTransactions();
+  const { sales, expenses } = useTransactions();
 
-  const totalExpenses = getTotalExpensesByType(type);
-  const netProfit = metrics.totalRevenue - totalExpenses;
+  const hasLiveTransactions = sales.length > 0 || expenses.length > 0;
+  const liveRevenue = sales.reduce(
+    (acc, sale) => acc + Number(sale.amount ?? 0),
+    0
+  );
+  const liveExpenses = expenses.reduce(
+    (acc, expense) => acc + Number(expense.amount ?? 0),
+    0
+  );
+
+  // Usa datos vivos cuando existen; si no, mantiene fallback al snapshot inicial.
+  const totalRevenue = hasLiveTransactions
+    ? liveRevenue
+    : Number(metrics.totalRevenue ?? 0);
+  const totalExpenses = hasLiveTransactions ? liveExpenses : 0;
+  const netProfit = totalRevenue - totalExpenses;
 
   // const lowStockCount = products.filter(p => p.stock <= (p.minStock || 0)).length
 
@@ -31,7 +45,7 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
       value: new Intl.NumberFormat("es-AR", {
         style: "currency",
         currency: "ARS",
-      }).format(metrics.totalRevenue),
+      }).format(totalRevenue),
       change: "+12.5%",
       trend: "up",
       icon: DollarSign,

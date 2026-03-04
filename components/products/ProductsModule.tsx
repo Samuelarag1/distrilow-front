@@ -1,8 +1,9 @@
 // components/products/ProductsModule.tsx
 // "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
+import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
@@ -35,6 +36,8 @@ type Category = {
 };
 
 export function ProductsModule() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const { addProduct, updateProduct, removeProduct } = useProductActions();
   const { activeBranchId } = useBranch();
 
@@ -160,6 +163,16 @@ export function ProductsModule() {
     onLoadMore: loadMore,
   });
 
+  useEffect(() => {
+    const shouldOpenCreate = searchParams.get("create");
+    if (shouldOpenCreate !== "1") return;
+    if (!activeBranchId) return;
+
+    setEditingProduct(null);
+    setIsDialogOpen(true);
+    router.replace("/products");
+  }, [searchParams, activeBranchId, router]);
+
   const isLoading = isLoadingInitial;
   const isEmpty = !isLoading && products.length === 0;
   return (
@@ -235,8 +248,7 @@ export function ProductsModule() {
         onOpenChange={setIsDialogOpen}
         product={editingProduct}
         onSave={handleSave}
-        // si tu dialog no acepta esta prop, borrala
-        // isSaving={isSaving as any}
+        isSaving={isSaving}
       />
 
       <DeleteProductDialog

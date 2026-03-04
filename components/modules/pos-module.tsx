@@ -37,9 +37,27 @@ import { Product, productsApi } from "@/lib/products";
 import { useProducts } from "@/hooks/useProducts";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { backendApi } from "@/lib/backend-api";
+import { resolveProductImageUrl } from "@/lib/media-utils";
+import useSWR from "swr";
+import { swrFetcher } from "@/lib/swr-fetcher";
 
 interface CartItem extends Product {
   quantity: number;
+}
+
+type Category = {
+  id: string;
+  name: string;
+};
+
+function getLooseCategoryLabel(category: unknown): string {
+  if (typeof category === "string" && category.trim()) return category;
+  if (category && typeof category === "object") {
+    const value = category as { name?: unknown; id?: unknown };
+    if (typeof value.name === "string" && value.name.trim()) return value.name;
+    if (typeof value.id === "string" && value.id.trim()) return value.id;
+  }
+  return "Sin categoria";
 }
 
 export function POSModule() {
@@ -57,9 +75,9 @@ export function POSModule() {
   const [searchQuery, setSearchQuery] = useState("");
   const [scanQuery, setScanQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<string | null>(
-    null
-  );
+  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<
+    string | null
+  >(null);
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const previousBranchRef = useRef<string | null>(null);
@@ -72,6 +90,15 @@ export function POSModule() {
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     branchId: branchId ?? null,
   });
+  const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
+
+  const categoryNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    (categoriesData ?? []).forEach((category) => {
+      if (category?.id && category?.name) map.set(category.id, category.name);
+    });
+    return map;
+  }, [categoriesData]);
 
   useEffect(() => {
     if (!branchId) {
@@ -107,11 +134,40 @@ export function POSModule() {
     });
   }, [products, searchQuery, selectedCategory]);
 
+  const getProductCategoryLabel = (product: Product) => {
+    if (product.categoryId) {
+      return categoryNameById.get(product.categoryId) ?? product.categoryId;
+    }
+
+    return getLooseCategoryLabel((product as Product & { category?: unknown }).category);
+  };
+
+  const getStockBadgeClassName = (product: Product) => {
+    const stock = Number(product.stock ?? 0);
+    const minStock = Number(product.minStock ?? 0);
+
+    if (stock <= minStock) {
+      return "border-red-300 bg-red-50 text-red-700";
+    }
+
+    const warningThreshold = minStock > 0 ? Math.ceil(minStock * 1.5) : 3;
+    if (stock <= warningThreshold) {
+      return "border-yellow-300 bg-yellow-50 text-yellow-700";
+    }
+
+    return "border-emerald-300 bg-emerald-50 text-emerald-700";
+  };
+
   const categories = useMemo(
     () =>
-      Array.from(new Set(products.map((product) => product.categoryId).filter(Boolean))),
-    [products]
-  ) as string[];
+      Array.from(new Set(products.map((product) => product.categoryId).filter(Boolean)))
+        .map((id) => ({
+          value: id as string,
+          label: categoryNameById.get(id as string) ?? (id as string),
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [products, categoryNameById]
+  );
 
   const addToCart = (product: Product) => {
     if (branchId && product.branchId && product.branchId !== branchId) {
@@ -189,8 +245,9 @@ export function POSModule() {
 
     try {
       let scanned =
-        products.find((product) => product.barcode === code || product.sku === code) ||
-        null;
+        products.find(
+          (product) => product.barcode === code || product.sku === code
+        ) || null;
 
       if (!scanned) {
         scanned = await productsApi.getByBarcode(code);
@@ -356,7 +413,9 @@ export function POSModule() {
           <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
             Punto de Venta
           </h1>
-          <p className="text-muted-foreground">Flujo rapido para caja y mostrador</p>
+          <p className="text-muted-foreground">
+            Flujo rapido para caja y mostrador
+          </p>
         </div>
       </div>
 
@@ -397,13 +456,15 @@ export function POSModule() {
                   </div>
                   <select
                     value={selectedCategory}
-                    onChange={(event) => setSelectedCategory(event.target.value)}
+                    onChange={(event) =>
+                      setSelectedCategory(event.target.value)
+                    }
                     className="rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   >
                     <option value="all">Todas las categorias</option>
                     {categories.map((category) => (
-                      <option key={category} value={category}>
-                        {category}
+                      <option key={category.value} value={category.value}>
+                        {category.label}
                       </option>
                     ))}
                   </select>
@@ -444,13 +505,15 @@ export function POSModule() {
                       <Card
                         key={product.id}
                         className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-md"
-                        onClick={() => addToCart({ ...product, costPrice: activePrice })}
+                        onClick={() =>
+                          addToCart({ ...product, costPrice: activePrice })
+                        }
                       >
                         <CardContent className="p-3">
                           <div className="flex items-center space-x-3">
                             <div className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-md bg-muted">
                               <img
-                                src={product.brand || "/placeholder.svg"}
+                                src={resolveProductImageUrl(product)}
                                 alt={product.name}
                                 className="h-full w-full object-cover"
                               />
@@ -462,19 +525,25 @@ export function POSModule() {
                               <div className="flex items-center gap-2">
                                 <Badge
                                   variant="outline"
-                                  className="h-4 px-1 py-0 text-[10px] font-black uppercase"
+                                  className={`h-5 min-w-[82px] justify-center px-1.5 py-0 text-[10px] font-black uppercase ${getStockBadgeClassName(
+                                    product
+                                  )}`}
                                 >
                                   stock {product.stock ?? 0}
                                 </Badge>
                                 <p className="truncate text-[10px] font-bold uppercase text-muted-foreground">
-                                  {product.categoryId}
+                                  {getProductCategoryLabel(product)}
                                 </p>
                               </div>
                               <p className="text-sm font-black text-primary">
                                 ${activePrice.toLocaleString()}
                               </p>
                             </div>
-                            <Button size="sm" variant="ghost" className="h-8 w-8 p-0">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-8 w-8 p-0"
+                            >
                               <Plus className="h-4 w-4" />
                             </Button>
                           </div>
@@ -484,12 +553,15 @@ export function POSModule() {
                   })
                 ) : (
                   <div className="col-span-full py-12 text-center">
-                    <p className="text-muted-foreground">No se encontraron productos.</p>
+                    <p className="text-muted-foreground">
+                      No se encontraron productos.
+                    </p>
                   </div>
                 )}
               </div>
               <div className="pt-4 text-xs text-muted-foreground">
-                Mostrando hasta 30 productos por busqueda para mantener la velocidad.
+                Mostrando hasta 30 productos por busqueda para mantener la
+                velocidad.
               </div>
             </CardContent>
           </Card>
@@ -505,19 +577,26 @@ export function POSModule() {
             </CardHeader>
             <CardContent className="space-y-4">
               {cart.length === 0 ? (
-                <p className="py-8 text-center text-muted-foreground">Carrito vacio</p>
+                <p className="py-8 text-center text-muted-foreground">
+                  Carrito vacio
+                </p>
               ) : (
                 <>
                   <div className="max-h-64 space-y-3 overflow-y-auto">
                     {cart.map((item) => (
-                      <div key={item.id} className="flex items-center space-x-2">
+                      <div
+                        key={item.id}
+                        className="flex items-center space-x-2"
+                      >
                         <img
-                          src={item.brand || "/placeholder.svg"}
+                          src={resolveProductImageUrl(item)}
                           alt={item.name}
                           className="h-10 w-10 rounded bg-muted object-cover"
                         />
                         <div className="min-w-0 flex-1">
-                          <h4 className="truncate text-sm font-medium">{item.name}</h4>
+                          <h4 className="truncate text-sm font-medium">
+                            {item.name}
+                          </h4>
                           <p className="text-xs text-muted-foreground">
                             ${Number(item.costPrice).toFixed(2)}
                           </p>
@@ -526,15 +605,21 @@ export function POSModule() {
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => updateQuantity(item.id, item.quantity - 1)}
+                            onClick={() =>
+                              updateQuantity(item.id, item.quantity - 1)
+                            }
                           >
                             <Minus className="h-3 w-3" />
                           </Button>
-                          <span className="w-8 text-center text-sm">{item.quantity}</span>
+                          <span className="w-8 text-center text-sm">
+                            {item.quantity}
+                          </span>
                           <Button
                             size="sm"
                             variant="outline"
-                            onClick={() => updateQuantity(item.id, item.quantity + 1)}
+                            onClick={() =>
+                              updateQuantity(item.id, item.quantity + 1)
+                            }
                           >
                             <Plus className="h-3 w-3" />
                           </Button>
@@ -587,7 +672,9 @@ export function POSModule() {
                       </AlertDialogTrigger>
                       <AlertDialogContent>
                         <AlertDialogHeader>
-                          <AlertDialogTitle>Limpiar el carrito?</AlertDialogTitle>
+                          <AlertDialogTitle>
+                            Limpiar el carrito?
+                          </AlertDialogTitle>
                           <AlertDialogDescription>
                             Se quitaran todos los productos seleccionados.
                           </AlertDialogDescription>
@@ -611,13 +698,16 @@ export function POSModule() {
         </div>
       </div>
 
-      <AlertDialog open={isPaymentConfirmOpen} onOpenChange={setIsPaymentConfirmOpen}>
+      <AlertDialog
+        open={isPaymentConfirmOpen}
+        onOpenChange={setIsPaymentConfirmOpen}
+      >
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar Pago</AlertDialogTitle>
             <AlertDialogDescription>
-              Deseas procesar el pago de <strong>${Number(total).toLocaleString()}</strong>{" "}
-              usando{" "}
+              Deseas procesar el pago de{" "}
+              <strong>${Number(total).toLocaleString()}</strong> usando{" "}
               <strong>
                 {pendingPaymentMethod === "Efectivo" ? "Efectivo" : "Tarjeta"}
               </strong>
@@ -633,7 +723,9 @@ export function POSModule() {
               className="bg-primary hover:bg-primary/90"
               disabled={isProcessingPayment}
             >
-              {isProcessingPayment && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {isProcessingPayment && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
               Confirmar y Registrar
             </AlertDialogAction>
           </AlertDialogFooter>
