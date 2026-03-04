@@ -72,13 +72,24 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   const { branchId: sessionBranchId } = useUser();
 
   const invalidateProducts = () =>
-    mutate((key) => {
-      if (typeof key === "string") return key.includes("/products");
-      if (Array.isArray(key) && typeof key[0] === "string") {
-        return key[0].includes("/products");
-      }
-      return false;
-    });
+    mutate(
+      (key) => {
+        if (typeof key === "string") {
+          return key === "products" || key.startsWith("products") || key.includes("/products");
+        }
+        if (Array.isArray(key) && typeof key[0] === "string") {
+          return (
+            key[0] === "products" ||
+            key[0] === "product" ||
+            key[0].startsWith("products") ||
+            key[0].includes("/products")
+          );
+        }
+        return false;
+      },
+      undefined,
+      { revalidate: true }
+    );
 
   const resolveBranchId = (candidate?: string) => {
     const resolved = candidate || sessionBranchId || null;
@@ -205,8 +216,10 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       reason: input.reason,
     });
 
-    invalidateProducts();
-    mutate(["product", input.productId]);
+    await Promise.all([
+      invalidateProducts(),
+      mutate(["product", input.productId], undefined, { revalidate: true }),
+    ]);
   };
 
   const updateStock = async (
@@ -285,7 +298,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
 
     logEvent("create", "product", "Agrego nuevo producto", created.id);
 
-    invalidateProducts();
+    await invalidateProducts();
   };
 
   const updateProduct = async (id: string, productData: Partial<Product>) => {
@@ -295,8 +308,10 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       productData,
     });
 
-    invalidateProducts();
-    mutate(["product", id]);
+    await Promise.all([
+      invalidateProducts(),
+      mutate(["product", id], undefined, { revalidate: true }),
+    ]);
   };
 
   const removeProduct = async (id: string) => {
@@ -304,7 +319,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
 
     logEvent("delete", "product", "Elimino producto", id);
 
-    invalidateProducts();
+    await invalidateProducts();
   };
 
   return (

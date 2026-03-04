@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -17,7 +17,6 @@ import {
   ArrowUpDown,
   ArrowUp,
   ArrowDown,
-  Check,
   History,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
@@ -96,7 +95,7 @@ function AdjustStockDialog({
     direction?: "in" | "out";
     reason?: string;
     toBranchId?: string;
-  }) => void;
+  }) => Promise<void>;
 }) {
   const [amount, setAmount] = useState<string>("");
   const [operation, setOperation] = useState<
@@ -105,9 +104,11 @@ function AdjustStockDialog({
   const [toBranchId, setToBranchId] = useState("");
   const [reason, setReason] = useState("");
   const [open, setOpen] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmitting) return;
     const quantity = Math.abs(Math.trunc(Number(amount)));
     if (!quantity || quantity < 1) return;
 
@@ -124,19 +125,24 @@ function AdjustStockDialog({
       transfer: { type: "TRANSFER_OUT" },
     };
 
-    const payload = map[operation];
-    onSubmitMovement({
-      type: payload.type,
-      direction: payload.direction,
-      quantity,
-      reason: reason.trim() || undefined,
-      toBranchId: operation === "transfer" ? toBranchId : undefined,
-    });
+    try {
+      setIsSubmitting(true);
+      const payload = map[operation];
+      await onSubmitMovement({
+        type: payload.type,
+        direction: payload.direction,
+        quantity,
+        reason: reason.trim() || undefined,
+        toBranchId: operation === "transfer" ? toBranchId : undefined,
+      });
 
-    setAmount("");
-    setReason("");
-    setToBranchId("");
-    setOpen(false);
+      setAmount("");
+      setReason("");
+      setToBranchId("");
+      setOpen(false);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const outgoing = operation === "adjust_out" || operation === "loss" || operation === "expired" || operation === "transfer";
@@ -185,6 +191,7 @@ function AdjustStockDialog({
                   )
                 }
                 className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                disabled={isSubmitting}
               >
                 <option value="adjust_in">Ingreso manual (+)</option>
                 <option value="adjust_out">Ajuste negativo (-)</option>
@@ -201,6 +208,7 @@ function AdjustStockDialog({
                   value={toBranchId}
                   onChange={(e) => setToBranchId(e.target.value)}
                   className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  disabled={isSubmitting}
                 >
                   <option value="">Seleccionar sucursal destino</option>
                   {branches
@@ -251,6 +259,7 @@ function AdjustStockDialog({
                   onChange={(e) => setAmount(e.target.value)}
                   autoFocus
                   className="text-2xl font-black h-14 pl-12 focus-visible:ring-primary/20"
+                  disabled={isSubmitting}
                 />
                 <div className="absolute left-4 top-1/2 -translate-y-1/2">
                   {outgoing ? (
@@ -271,6 +280,7 @@ function AdjustStockDialog({
                 placeholder="Ej: conteo fisico, mercaderia danada, traslado"
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
+                disabled={isSubmitting}
               />
             </div>
           </div>
@@ -281,6 +291,7 @@ function AdjustStockDialog({
               variant="ghost"
               onClick={() => setOpen(false)}
               className="font-bold"
+              disabled={isSubmitting}
             >
               Cancelar
             </Button>
@@ -289,8 +300,9 @@ function AdjustStockDialog({
               className={`font-bold px-8 ${
                 outgoing ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"
               }`}
+              disabled={isSubmitting}
             >
-              Confirmar Movimiento
+              {isSubmitting ? "Registrando..." : "Confirmar Movimiento"}
             </Button>
           </DialogFooter>
         </form>
@@ -304,11 +316,11 @@ export function InventoryModule() {
     products: inventory,
     isLoading,
     registerStockMovement,
+    mutateProducts,
   } = useProducts();
-  const { branches } = useUser();
+  const { branches, branchId } = useUser();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [selectedBranch, setSelectedBranch] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const { toast } = useToast();
@@ -351,9 +363,7 @@ export function InventoryModule() {
       const matchesCategory =
         selectedCategory === "all" ||
         getProductCategoryValue(item) === selectedCategory;
-      const matchesBranch =
-        selectedBranch === "all" || item.branchId === selectedBranch;
-      return matchesSearch && matchesCategory && matchesBranch;
+      return matchesSearch && matchesCategory;
     })
     .sort((a: Product, b: Product) => {
       const factor = sortOrder === "asc" ? 1 : -1;
@@ -423,8 +433,7 @@ export function InventoryModule() {
       try {
         await registerStockMovement({
           productId: item.id,
-          branchId:
-            item.branchId ?? (selectedBranch !== "all" ? selectedBranch : undefined),
+          branchId: item.branchId ?? branchId ?? undefined,
           quantity: input.quantity,
           type: input.type,
           unitCost: Number(item.costPrice ?? 0),
@@ -432,6 +441,7 @@ export function InventoryModule() {
           reason: input.reason,
           toBranchId: input.toBranchId,
         });
+        await mutateProducts();
 
         toast({
           title: "Movimiento registrado",
@@ -443,6 +453,7 @@ export function InventoryModule() {
           title: "No se pudo registrar el movimiento",
           description: error?.message ?? "Intenta nuevamente.",
         });
+        throw error;
       }
     };
 
@@ -590,6 +601,12 @@ export function InventoryModule() {
           <p className="text-muted-foreground">
             Gestión inteligente de existencias y valorización
           </p>
+          <p className="text-xs text-muted-foreground">
+            Sucursal activa:{" "}
+            <span className="font-semibold text-foreground">
+              {branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal"}
+            </span>
+          </p>
         </div>
       </div>
 
@@ -721,18 +738,6 @@ export function InventoryModule() {
                 ))}
               </select>
 
-              <select
-                value={selectedBranch}
-                onChange={(e) => setSelectedBranch(e.target.value)}
-                className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-              >
-                <option value="all">Todas las sucursales</option>
-                {branches.map((branch) => (
-                  <option key={branch.id} value={branch.id}>
-                    {branch.name || branch.id}
-                  </option>
-                ))}
-              </select>
             </div>
 
             <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">

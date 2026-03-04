@@ -38,7 +38,7 @@ export function ProductsModule() {
   const { addProduct, updateProduct, removeProduct } = useProductActions();
   const { activeBranchId } = useBranch();
 
-  const { token, branchId, branches, switchBranch } = useUser();
+  const { token, branchId } = useUser();
   const { toast } = useToast();
 
   // mantiene tu sesión API sincronizada
@@ -176,19 +176,6 @@ export function ProductsModule() {
               selectedCategory={selectedCategory}
               categories={categories}
               onCategoryChange={setSelectedCategory}
-              branchId={branchId}
-              branches={branches}
-              onBranchChange={async (id) => {
-                try {
-                  await switchBranch(id);
-                } catch (error: any) {
-                  toast({
-                    variant: "destructive",
-                    title: "No se pudo cambiar sucursal",
-                    description: error?.message ?? "Intenta nuevamente.",
-                  });
-                }
-              }}
             />
 
             <ProductsSortBar

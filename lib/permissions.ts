@@ -12,7 +12,7 @@ export function isBranchLockedUser(role?: UserRole | null, branchesCount = 0) {
 }
 
 export function canSwitchBranches(role?: UserRole | null, branchesCount = 0) {
-  return isManagementRole(role) && branchesCount > 1;
+  return branchesCount > 1;
 }
 
 export function isPosCashOnlyUser(role?: UserRole | null, branchesCount = 0) {

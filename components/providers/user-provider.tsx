@@ -3,6 +3,7 @@
 import { setApiSession } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
 import { clearSessionCookies, setClientCookie } from "@/lib/client-cookies";
+import { isManagementRole } from "@/lib/permissions";
 import React, {
   useCallback,
   createContext,
@@ -188,6 +189,27 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       throw new Error("No tienes acceso a la sucursal seleccionada.");
     }
 
+    const applyLocalBranchSelection = (nextBranchId: string) => {
+      setBranchId(nextBranchId);
+      setApiSession({
+        accessToken: token,
+        branchId: nextBranchId,
+      });
+      writeSessionCookies({
+        accessToken: token,
+        branches,
+        activeBranchId: nextBranchId,
+        needsOnboarding,
+      });
+    };
+
+    // Para roles no-management, cambiar sucursal localmente evita depender de
+    // /auth/switch-branch, que suele restringirse por rol.
+    if (!isManagementRole(currentUser?.role)) {
+      applyLocalBranchSelection(id);
+      return;
+    }
+
     const response = await backendApi.auth.switchBranch({ branchId: id });
 
     const nextToken = response.accessToken ?? token;
@@ -216,7 +238,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       activeBranchId: nextBranchId,
       needsOnboarding: nextNeedsOnboarding,
     });
-  }, [branchId, token, branches, needsOnboarding]);
+  }, [branchId, token, branches, needsOnboarding, currentUser?.role]);
 
   const logout = async () => {
     try {

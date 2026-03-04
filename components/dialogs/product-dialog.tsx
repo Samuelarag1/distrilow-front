@@ -30,7 +30,6 @@ import { Product } from "@/lib/products";
 
 // IMPORTANTE: usÃ¡ el enum que ya tenÃ©s (ajustÃ¡ el path a tu estructura real)
 import { MeasurementType } from "@/lib/measurement-type";
-import { useUser } from "../providers/user-provider";
 import { swrFetcher } from "@/lib/swr-fetcher";
 // Si no lo tenÃ©s en front, podÃ©s usar:
 // type MeasurementType = "unit" | "gram" | "kg" | "ml" | "liter";
@@ -64,17 +63,8 @@ export function ProductDialog({
   onSave,
   isSaving = false,
 }: ProductDialogProps) {
-  const { activeBranchId, availableBranches } = useBranch();
-  const { branchId, branches, switchBranch } = useUser();
+  const { activeBranchId } = useBranch();
   const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
-  const defaultBranchId = useMemo(() => {
-    return (
-      activeBranchId ??
-      availableBranches.find((b) => b.isDefault)?.id ??
-      availableBranches[0]?.id ??
-      null
-    );
-  }, [activeBranchId, availableBranches]);
 
   const categoryOptions = useMemo(() => {
     return (categoriesData ?? [])
@@ -98,9 +88,6 @@ export function ProductDialog({
     trackStock: false,
     allowNegativeStock: false,
     measurementType: MeasurementType.UNIT as MeasurementType,
-
-    // branch (si tu API lo requiere en body, mantenelo; si NO, podÃ©s sacarlo)
-    branchId: "",
     // estado: en tu entity esActive boolean
     isActive: true,
   });
@@ -130,8 +117,6 @@ export function ProductDialog({
         ),
         measurementType: ((product as any).measurementType ??
           MeasurementType.UNIT) as MeasurementType,
-
-        branchId: (product as any).branchId ?? defaultBranchId ?? "",
         isActive: Boolean((product as any).isActive ?? true),
       });
     } else {
@@ -149,12 +134,10 @@ export function ProductDialog({
         trackStock: false,
         allowNegativeStock: false,
         measurementType: MeasurementType.UNIT,
-
-        branchId: defaultBranchId ?? "",
         isActive: true,
       });
     }
-  }, [product, open, defaultBranchId]);
+  }, [product, open]);
 
   const computeMargin = (cost: number, retail: number) => {
     if (!cost || cost <= 0) return 0;
@@ -166,12 +149,8 @@ export function ProductDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    const resolvedBranchId =
-      formData.branchId || branchId || defaultBranchId || (product as any)?.branchId;
-
-    if (!resolvedBranchId) return;
-    if (resolvedBranchId !== branchId) {
-      await switchBranch(resolvedBranchId);
+    if (!activeBranchId) {
+      return;
     }
     if (!formData.sku.trim()) return;
     if (!formData.name.trim()) return;
@@ -225,34 +204,8 @@ export function ProductDialog({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid gap-4">
-            {/* Branch + Category */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div className="space-y-2">
-                <Label>Sucursal *</Label>
-                <Select
-                  value={formData.branchId || undefined}
-                  onValueChange={(value) => {
-                    setFormData((p) => ({ ...p, branchId: value }));
-
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecciona una sucursal" />
-                  </SelectTrigger>
-
-                  <SelectContent>
-                    {branches.map((branch) => (
-                      <SelectItem key={branch.id} value={branch.id}>
-                        {branch.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-
-                {/* si querÃ©s forzar siempre branch activa */}
-                {/* <p className="text-xs text-muted-foreground">Los productos se crean en la sucursal activa.</p> */}
-              </div>
-
+            {/* Category */}
+            <div className="grid grid-cols-1 gap-4">
               <div className="space-y-2">
                 <Label>Categoria</Label>
                 <Select

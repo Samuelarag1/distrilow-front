@@ -1,7 +1,6 @@
 // components/products/components/ProductsToolbar.tsx
 import { SearchInput } from "./SearchInput";
 import { CategorySelect } from "./CategorySelect";
-import { BranchSelect } from "./BranchSelect";
 
 export function ProductsToolbar(props: {
   activeBranchId: string | null;
@@ -11,10 +10,6 @@ export function ProductsToolbar(props: {
   selectedCategory: string;
   categories: Array<{ value: string; label: string }>;
   onCategoryChange: (v: string) => void;
-
-  branchId: string | null;
-  branches: Array<{ id: string; name: string }> | undefined;
-  onBranchChange: (id: string) => Promise<void> | void;
 }) {
   const disabled = !props.activeBranchId;
 
@@ -31,12 +26,6 @@ export function ProductsToolbar(props: {
         categories={props.categories}
         onChange={props.onCategoryChange}
         disabled={disabled}
-      />
-
-      <BranchSelect
-        value={props.branchId ?? ""}
-        branches={props.branches}
-        onChange={props.onBranchChange}
       />
     </div>
   );

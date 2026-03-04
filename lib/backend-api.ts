@@ -244,7 +244,7 @@ export const backendApi = {
         branchId: body.branchId ?? requireActiveBranchId(),
       };
       const created = await apiClientFetch.post<Stock>("/stocks", payload);
-      invalidateStockCache(getApiSession().branchId);
+      invalidateStockCache(payload.branchId);
       return created;
     },
     list: () => apiClientFetch.get<Stock[]>("/stocks"),
@@ -268,7 +268,7 @@ export const backendApi = {
         "/stock-movements",
         payload
       );
-      invalidateStockCache(getApiSession().branchId);
+      invalidateStockCache(payload.branchId);
       return movement;
     },
     transfer: async (body: TransferMovementRequest) => {
@@ -298,7 +298,7 @@ export const backendApi = {
         "/stock-movements/adjustment-in",
         payload
       );
-      invalidateStockCache(getApiSession().branchId);
+      invalidateStockCache(payload.branchId);
       return movement;
     },
     adjustmentOut: async (body: CreateMovementRequest) => {
@@ -310,7 +310,7 @@ export const backendApi = {
         "/stock-movements/adjustment-out",
         payload
       );
-      invalidateStockCache(getApiSession().branchId);
+      invalidateStockCache(payload.branchId);
       return movement;
     },
   },
@@ -321,7 +321,7 @@ export const backendApi = {
         branchId: body.branchId ?? requireActiveBranchId(),
       };
       const sale = await apiClientFetch.post<Sale>("/sales", payload);
-      invalidateStockCache(getApiSession().branchId);
+      invalidateStockCache(payload.branchId);
       return sale;
     },
     list: () => apiClientFetch.get<Sale[]>("/sales"),

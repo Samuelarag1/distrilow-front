@@ -136,32 +136,28 @@ export default function LoginPage() {
     <div className="relative min-h-screen overflow-hidden bg-background p-4 text-foreground md:p-6">
       <div className="pointer-events-none absolute inset-0">
         <div className="absolute inset-0 login-ambient" />
-        <div className="absolute inset-0 mesh-grid opacity-45" />
-        <div className="absolute -left-24 top-10 h-80 w-80 rounded-full orb-a blur-3xl orb-float-slow" />
-        <div className="absolute right-10 top-1/4 h-72 w-72 rounded-full orb-b blur-3xl orb-float" />
-        <div className="absolute bottom-0 left-1/3 h-64 w-64 rounded-full orb-c blur-3xl orb-float-reverse" />
+        <div className="absolute inset-0 soft-grid opacity-45" />
       </div>
 
-      <div className="login-frame mx-auto grid min-h-[calc(100vh-2rem)] w-full max-w-7xl overflow-hidden rounded-3xl border border-border/60 bg-card/80 backdrop-blur-md md:min-h-[calc(100vh-3rem)] md:grid-cols-[1.15fr_0.85fr]">
-        <section className="relative hidden overflow-hidden border-r border-border/60 p-10 text-card-foreground md:flex md:flex-col md:justify-between lg:p-14">
+      <div className="login-frame mx-auto grid min-h-[calc(100vh-2rem)] w-full max-w-6xl overflow-hidden rounded-3xl border border-border/60 bg-card/90 backdrop-blur-md md:min-h-[calc(100vh-3rem)] md:grid-cols-[1fr_0.9fr]">
+        <section className="relative hidden border-r border-border/60 p-10 md:flex md:flex-col md:justify-between lg:p-12">
           <div className="absolute inset-0 left-panel-gradient" />
-          <div className="absolute inset-0 scan-line opacity-40 animate-scan" />
 
-          <div className="relative z-10 space-y-8">
-            <div className="inline-flex items-center gap-3 rounded-2xl border border-primary/25 bg-primary/10 px-4 py-3">
-              <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/15">
+          <div className="relative z-10 space-y-10">
+            <div className="inline-flex items-center gap-3 rounded-2xl border border-primary/20 bg-background/70 px-4 py-3">
+              <div className="grid h-10 w-10 place-items-center rounded-xl bg-primary/12">
                 <Store className="h-5 w-5 text-primary" />
               </div>
               <div>
-                <p className="text-[11px] uppercase tracking-[0.22em] text-primary/80">
+                <p className="text-[11px] uppercase tracking-[0.2em] text-muted-foreground">
                   Plataforma oficial
                 </p>
                 <p className="text-lg font-semibold tracking-tight">DistriLow</p>
               </div>
             </div>
 
-            <div className="space-y-4 animate-in-up">
-              <h1 className="text-4xl font-bold leading-tight lg:text-5xl">
+            <div className="space-y-4">
+              <h1 className="text-4xl font-semibold leading-tight lg:text-5xl">
                 Centro de operaciones para tu distribuidora.
               </h1>
               <p className="max-w-xl text-base leading-relaxed text-muted-foreground lg:text-lg">
@@ -170,20 +166,22 @@ export default function LoginPage() {
               </p>
             </div>
 
-            <div className="grid gap-3">
+            <div className="space-y-3">
               {systemHighlights.map(({ icon: Icon, title, description }) => (
-                <article
+                <div
                   key={title}
-                  className="rounded-2xl border border-border/70 bg-background/50 p-4 backdrop-blur-sm transition-all duration-300 hover:-translate-y-0.5 hover:border-primary/35 hover:bg-background/70"
+                  className="flex items-start gap-3 rounded-xl border border-border/60 bg-background/55 p-4"
                 >
-                  <div className="mb-3 inline-flex h-9 w-9 items-center justify-center rounded-lg bg-primary/12">
+                  <div className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/12">
                     <Icon className="h-4 w-4 text-primary" />
                   </div>
-                  <h3 className="text-sm font-semibold text-foreground">{title}</h3>
-                  <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
-                    {description}
-                  </p>
-                </article>
+                  <div>
+                    <h3 className="text-sm font-semibold text-foreground">{title}</h3>
+                    <p className="mt-1 text-sm leading-relaxed text-muted-foreground">
+                      {description}
+                    </p>
+                  </div>
+                </div>
               ))}
             </div>
           </div>
@@ -198,7 +196,7 @@ export default function LoginPage() {
 
           <form
             onSubmit={handleLogin}
-            className="form-shell relative z-10 w-full max-w-md space-y-7 rounded-3xl border border-border/70 bg-background/80 p-7 backdrop-blur-xl sm:p-8"
+            className="form-shell relative z-10 w-full max-w-md space-y-7 rounded-2xl border border-border/70 bg-background/90 p-7 sm:p-8"
           >
             <div className="space-y-4">
               <div className="inline-flex items-center gap-2 rounded-full border border-border bg-secondary px-3 py-1 text-xs font-medium text-secondary-foreground">
@@ -279,128 +277,47 @@ export default function LoginPage() {
       <style jsx>{`
         .login-frame {
           box-shadow:
-            0 35px 90px -55px hsl(var(--ring) / 0.55),
-            0 10px 30px -20px hsl(var(--foreground) / 0.2);
+            0 20px 55px -40px hsl(var(--ring) / 0.4),
+            0 8px 18px -16px hsl(var(--foreground) / 0.18);
         }
 
         .form-shell {
-          box-shadow: 0 30px 80px -50px hsl(var(--ring) / 0.5);
+          box-shadow: 0 18px 40px -28px hsl(var(--ring) / 0.35);
         }
 
         .login-ambient {
           background:
-            radial-gradient(circle at 12% 8%, hsl(var(--chart-2) / 0.22), transparent 36%),
-            radial-gradient(circle at 88% 85%, hsl(var(--chart-1) / 0.2), transparent 34%),
+            radial-gradient(circle at 12% 8%, hsl(var(--chart-2) / 0.16), transparent 34%),
+            radial-gradient(circle at 88% 85%, hsl(var(--chart-1) / 0.12), transparent 32%),
             linear-gradient(
               145deg,
               hsl(var(--background)),
-              hsl(var(--muted) / 0.45) 55%,
+              hsl(var(--muted) / 0.35) 55%,
               hsl(var(--background))
             );
         }
 
-        .mesh-grid {
+        .soft-grid {
           background-image:
-            linear-gradient(hsl(var(--border) / 0.45) 1px, transparent 1px),
-            linear-gradient(90deg, hsl(var(--border) / 0.45) 1px, transparent 1px);
-          background-size: 52px 52px;
-          mask-image: radial-gradient(circle at center, black 14%, transparent 78%);
+            linear-gradient(hsl(var(--border) / 0.28) 1px, transparent 1px),
+            linear-gradient(90deg, hsl(var(--border) / 0.28) 1px, transparent 1px);
+          background-size: 58px 58px;
+          mask-image: radial-gradient(circle at center, black 18%, transparent 78%);
         }
 
         .left-panel-gradient {
           background: linear-gradient(
             165deg,
-            hsl(var(--primary) / 0.14),
-            hsl(var(--chart-2) / 0.12) 45%,
-            hsl(var(--background) / 0.08)
+            hsl(var(--primary) / 0.08),
+            hsl(var(--chart-2) / 0.08) 45%,
+            hsl(var(--background) / 0.06)
           );
         }
 
         .right-panel-gradient {
           background:
-            radial-gradient(circle at 15% 10%, hsl(var(--primary) / 0.14), transparent 40%),
-            radial-gradient(circle at 95% 90%, hsl(var(--chart-2) / 0.12), transparent 32%);
-        }
-
-        .scan-line {
-          background: linear-gradient(
-            120deg,
-            transparent 0%,
-            hsl(var(--foreground) / 0.12) 50%,
-            transparent 100%
-          );
-        }
-
-        .orb-a {
-          background: hsl(var(--chart-2) / 0.24);
-        }
-
-        .orb-b {
-          background: hsl(var(--primary) / 0.2);
-        }
-
-        .orb-c {
-          background: hsl(var(--chart-1) / 0.2);
-        }
-
-        .animate-scan {
-          animation: scan 10s linear infinite;
-        }
-
-        .orb-float {
-          animation: float 9s ease-in-out infinite;
-        }
-
-        .orb-float-slow {
-          animation: float 13s ease-in-out infinite;
-        }
-
-        .orb-float-reverse {
-          animation: floatReverse 11s ease-in-out infinite;
-        }
-
-        .animate-in-up {
-          animation: fadeInUp 0.7s ease-out both;
-        }
-
-        @keyframes scan {
-          0% {
-            transform: translateX(-20%);
-          }
-          100% {
-            transform: translateX(20%);
-          }
-        }
-
-        @keyframes float {
-          0%,
-          100% {
-            transform: translateY(0px) translateX(0px);
-          }
-          50% {
-            transform: translateY(-14px) translateX(10px);
-          }
-        }
-
-        @keyframes floatReverse {
-          0%,
-          100% {
-            transform: translateY(0px) translateX(0px);
-          }
-          50% {
-            transform: translateY(16px) translateX(-10px);
-          }
-        }
-
-        @keyframes fadeInUp {
-          0% {
-            opacity: 0;
-            transform: translateY(14px);
-          }
-          100% {
-            opacity: 1;
-            transform: translateY(0);
-          }
+            radial-gradient(circle at 15% 10%, hsl(var(--primary) / 0.08), transparent 40%),
+            radial-gradient(circle at 95% 90%, hsl(var(--chart-2) / 0.08), transparent 32%);
         }
       `}</style>
     </div>

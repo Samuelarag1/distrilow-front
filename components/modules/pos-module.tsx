@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -37,7 +37,6 @@ import { Product, productsApi } from "@/lib/products";
 import { useProducts } from "@/hooks/useProducts";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { backendApi } from "@/lib/backend-api";
-import { canSwitchBranches } from "@/lib/permissions";
 
 interface CartItem extends Product {
   quantity: number;
@@ -45,10 +44,9 @@ interface CartItem extends Product {
 
 export function POSModule() {
   const { addSale } = useTransactions();
-  const { currentUser, branchId, branches, switchBranch } = useUser();
+  const { currentUser, branchId, branches } = useUser();
   const { businessType } = useBusiness();
   const { toast } = useToast();
-  const canChangeBranch = canSwitchBranches(currentUser?.role, branches.length);
 
   const canManageCash =
     currentUser?.role === "admin" ||
@@ -59,35 +57,44 @@ export function POSModule() {
   const [searchQuery, setSearchQuery] = useState("");
   const [scanQuery, setScanQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [selectedBranch, setSelectedBranch] = useState("");
   const [pendingPaymentMethod, setPendingPaymentMethod] = useState<string | null>(
     null
   );
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
+  const previousBranchRef = useRef<string | null>(null);
 
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
 
-  const { products, isLoading } = useProducts({
+  const { products, isLoading, mutateProducts } = useProducts({
     take: 30,
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
-    branchId: selectedBranch || branchId || null,
+    branchId: branchId ?? null,
   });
 
   useEffect(() => {
-    if (branchId) {
-      setSelectedBranch(branchId);
+    if (!branchId) {
+      previousBranchRef.current = null;
       return;
     }
 
-    if (branches.length > 0) {
-      setSelectedBranch(branches[0].id);
-      void switchBranch(branches[0].id).catch(() => {
-        // Keep local fallback value even if switch endpoint fails.
+    if (previousBranchRef.current === null) {
+      previousBranchRef.current = branchId;
+      return;
+    }
+
+    if (previousBranchRef.current !== branchId && cart.length > 0) {
+      setCart([]);
+      toast({
+        title: "Sucursal cambiada",
+        description:
+          "Se limpio el carrito para evitar mezclar productos entre sucursales.",
       });
     }
-  }, [branchId, branches, switchBranch]);
+
+    previousBranchRef.current = branchId;
+  }, [branchId, cart.length, toast]);
 
   const filteredProducts = useMemo(() => {
     return products.filter((product) => {
@@ -96,10 +103,9 @@ export function POSModule() {
         .includes(searchQuery.toLowerCase());
       const matchesCategory =
         selectedCategory === "all" || product.categoryId === selectedCategory;
-      const matchesBranch = !selectedBranch || product.branchId === selectedBranch;
-      return matchesSearch && matchesCategory && matchesBranch;
+      return matchesSearch && matchesCategory;
     });
-  }, [products, searchQuery, selectedCategory, selectedBranch]);
+  }, [products, searchQuery, selectedCategory]);
 
   const categories = useMemo(
     () =>
@@ -108,12 +114,7 @@ export function POSModule() {
   ) as string[];
 
   const addToCart = (product: Product) => {
-    const activeSaleBranch = branchId ?? selectedBranch;
-    if (
-      activeSaleBranch &&
-      product.branchId &&
-      product.branchId !== activeSaleBranch
-    ) {
+    if (branchId && product.branchId && product.branchId !== branchId) {
       toast({
         variant: "destructive",
         title: "Producto de otra sucursal",
@@ -280,7 +281,7 @@ export function POSModule() {
 
   const processPayment = async () => {
     const method = pendingPaymentMethod || "Efectivo";
-    const saleBranchId = branchId ?? selectedBranch;
+    const saleBranchId = branchId;
 
     try {
       if (!saleBranchId) {
@@ -325,6 +326,7 @@ export function POSModule() {
         title: "Venta exitosa",
         description: `Venta por $${total.toLocaleString()} registrada con ${method}`,
       });
+      await mutateProducts();
       setCart([]);
       setIsPaymentConfirmOpen(false);
       setPendingPaymentMethod(null);
@@ -405,45 +407,14 @@ export function POSModule() {
                       </option>
                     ))}
                   </select>
-
-                  <select
-                    value={selectedBranch}
-                    onChange={(event) => {
-                      const value = event.target.value;
-                      if (!value) return;
-                      if (value === selectedBranch) return;
-                      const previousBranch = selectedBranch;
-
-                      if (cart.length > 0) {
-                        setCart([]);
-                        toast({
-                          title: "Sucursal cambiada",
-                          description:
-                            "Se limpio el carrito para evitar mezclar productos entre sucursales.",
-                        });
-                      }
-
-                      setSelectedBranch(value);
-                      void switchBranch(value).catch((error: any) => {
-                        setSelectedBranch(previousBranch);
-                        toast({
-                          variant: "destructive",
-                          title: "No se pudo cambiar sucursal",
-                          description: error?.message ?? "Intenta nuevamente.",
-                        });
-                      });
-                    }}
-                    disabled={!canChangeBranch}
-                    className="rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:opacity-70"
-                  >
-                    {!selectedBranch && <option value="">Seleccionar sucursal...</option>}
-                    {branches.map((branch) => (
-                      <option key={branch.id} value={branch.id}>
-                        {branch.name || branch.id}
-                      </option>
-                    ))}
-                  </select>
                 </div>
+                <p className="text-xs text-muted-foreground">
+                  Sucursal activa:{" "}
+                  <span className="font-semibold text-foreground">
+                    {branches.find((branch) => branch.id === branchId)?.name ??
+                      "Sin sucursal"}
+                  </span>
+                </p>
               </div>
             </CardHeader>
             <CardContent>

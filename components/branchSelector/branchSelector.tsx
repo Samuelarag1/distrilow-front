@@ -12,11 +12,10 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useSidebar } from "@/components/ui/sidebar";
 import { useUser } from "@/components/providers/user-provider";
-import { canSwitchBranches } from "@/lib/permissions";
 import { useToast } from "@/hooks/use-toast";
 
 export function BranchSelector() {
-  const { branchId, branches, currentUser, switchBranch } = useUser();
+  const { branchId, branches, switchBranch } = useUser();
   const { state, isMobile, toggleSidebar } = useSidebar();
   const { toast } = useToast();
 
@@ -36,8 +35,6 @@ export function BranchSelector() {
 
   const selectedBranchName =
     branches.find((branch) => branch.id === branchId)?.name ?? "Sucursal";
-  const canChangeBranch = canSwitchBranches(currentUser?.role, branches.length);
-
   const isCollapsedDesktop = !isMobile && state === "collapsed";
 
   if (isCollapsedDesktop) {
@@ -69,22 +66,18 @@ export function BranchSelector() {
       </div>
 
       <div className="min-w-0 flex-1">
-        {canChangeBranch ? (
-          <Select value={branchId ?? ""} onValueChange={onChange}>
-            <SelectTrigger className="h-auto border-0 p-0 text-left font-semibold shadow-none">
-              <SelectValue placeholder="Seleccionar sucursal" />
-            </SelectTrigger>
-            <SelectContent>
-              {branches.map((branch) => (
-                <SelectItem key={branch.id} value={branch.id}>
-                  {branch.name || branch.id}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-        ) : (
-          <div className="truncate text-sm font-semibold">{selectedBranchName}</div>
-        )}
+        <Select value={branchId ?? ""} onValueChange={onChange}>
+          <SelectTrigger className="h-auto border-0 p-0 text-left font-semibold shadow-none">
+            <SelectValue placeholder="Seleccionar sucursal" />
+          </SelectTrigger>
+          <SelectContent>
+            {branches.map((branch) => (
+              <SelectItem key={branch.id} value={branch.id}>
+                {branch.name || branch.id}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
       </div>
     </div>
   );
