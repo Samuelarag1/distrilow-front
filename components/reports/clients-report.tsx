@@ -8,6 +8,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
     Bar,
     BarChart,
@@ -19,6 +20,8 @@ import {
 } from "recharts";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useBusiness } from "@/components/providers/business-provider";
+import { Download } from "lucide-react";
+import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 
 export function ClientsReport({ dateRange }: { dateRange: any }) {
     const { sales } = useTransactions();
@@ -47,8 +50,49 @@ export function ClientsReport({ dateRange }: { dateRange: any }) {
             .slice(0, 10);
     }, [sales, dateRange, businessType]);
 
+    const exportRows = clientData.map((client, index) => ({
+        posicion: index + 1,
+        cliente: client.name,
+        totalFacturado: Number(client.total).toLocaleString("es-AR", {
+            style: "currency",
+            currency: "ARS",
+        }),
+    }));
+
+    const exportColumns = [
+        { key: "posicion", label: "#" },
+        { key: "cliente", label: "Cliente" },
+        { key: "totalFacturado", label: "Total Facturado" },
+    ];
+
+    const handleExport = (formatType: "csv" | "pdf") => {
+        const payload = {
+            filename: "reporte-clientes",
+            title: "Reporte de Clientes",
+            subtitle: "Ranking de clientes por facturacion.",
+            columns: exportColumns,
+            rows: exportRows,
+        };
+
+        if (formatType === "csv") {
+            exportRowsToCsv(payload);
+            return;
+        }
+        exportRowsToPdf(payload);
+    };
+
     return (
         <div className="space-y-4">
+            <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => handleExport("csv")}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Exportar CSV
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => handleExport("pdf")}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Exportar PDF
+                </Button>
+            </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <Card>
                     <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

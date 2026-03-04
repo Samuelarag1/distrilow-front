@@ -7,6 +7,7 @@ import {
     CardHeader,
     CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
     Bar,
     BarChart,
@@ -20,8 +21,10 @@ import {
     XAxis,
     YAxis,
 } from "recharts";
+import { Download } from "lucide-react";
 
 import { useProducts } from "@/components/providers/product-provider";
+import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8", "#82ca9d"];
 
@@ -47,8 +50,58 @@ export function StockReport() {
         min: p.minStock || 0
     }));
 
+    const exportRows = products.map((item) => ({
+        producto: item.name,
+        categoria: item.category,
+        stock: item.stock,
+        stockMinimo: item.minStock || 0,
+        precio: Number(item.price || 0).toLocaleString("es-AR", {
+            style: "currency",
+            currency: "ARS",
+        }),
+        valorTotal: Number(item.stock * item.price).toLocaleString("es-AR", {
+            style: "currency",
+            currency: "ARS",
+        }),
+    }));
+
+    const exportColumns = [
+        { key: "producto", label: "Producto" },
+        { key: "categoria", label: "Categoria" },
+        { key: "stock", label: "Stock" },
+        { key: "stockMinimo", label: "Stock Minimo" },
+        { key: "precio", label: "Precio" },
+        { key: "valorTotal", label: "Valor Total" },
+    ];
+
+    const handleExport = (formatType: "csv" | "pdf") => {
+        const payload = {
+            filename: "reporte-inventario",
+            title: "Reporte de Inventario",
+            subtitle: "Estado actual de stock por producto.",
+            columns: exportColumns,
+            rows: exportRows,
+        };
+
+        if (formatType === "csv") {
+            exportRowsToCsv(payload);
+            return;
+        }
+        exportRowsToPdf(payload);
+    };
+
     return (
         <div className="space-y-4">
+            <div className="flex justify-end gap-2">
+                <Button variant="outline" size="sm" onClick={() => handleExport("csv")}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Exportar CSV
+                </Button>
+                <Button variant="outline" size="sm" onClick={() => handleExport("pdf")}>
+                    <Download className="mr-2 h-4 w-4" />
+                    Exportar PDF
+                </Button>
+            </div>
             <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
                 <Card>
                     <CardHeader className="pb-2">

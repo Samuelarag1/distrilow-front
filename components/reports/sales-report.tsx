@@ -7,6 +7,7 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import {
   Bar,
   BarChart,
@@ -21,9 +22,11 @@ import {
 } from "recharts";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
+import { Download } from "lucide-react";
 
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useBusiness } from "@/components/providers/business-provider";
+import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 
 const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8"];
 
@@ -78,9 +81,56 @@ export function SalesReport({ dateRange }: { dateRange: any }) {
 
   const totalRevenue = filteredSales.reduce((acc, sale) => acc + sale.amount, 0);
   const totalTransactions = filteredSales.length;
+  const tableRows = filteredSales
+    .slice()
+    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+    .map((sale) => ({
+      fecha: format(new Date(sale.date), "dd/MM/yyyy HH:mm", { locale: es }),
+      cliente: sale.customerName,
+      vendedor: sale.userName,
+      items: sale.items,
+      total: Number(sale.amount).toLocaleString("es-AR", {
+        style: "currency",
+        currency: "ARS",
+      }),
+    }));
+
+  const exportColumns = [
+    { key: "fecha", label: "Fecha" },
+    { key: "cliente", label: "Cliente" },
+    { key: "vendedor", label: "Vendedor" },
+    { key: "items", label: "Items" },
+    { key: "total", label: "Total" },
+  ];
+
+  const handleExport = (formatType: "csv" | "pdf") => {
+    const payload = {
+      filename: "reporte-ventas",
+      title: "Reporte de Ventas",
+      subtitle: "Ventas filtradas por periodo y tipo de negocio.",
+      columns: exportColumns,
+      rows: tableRows,
+    };
+
+    if (formatType === "csv") {
+      exportRowsToCsv(payload);
+      return;
+    }
+    exportRowsToPdf(payload);
+  };
 
   return (
     <div className="space-y-4">
+      <div className="flex justify-end gap-2">
+        <Button variant="outline" size="sm" onClick={() => handleExport("csv")}>
+          <Download className="mr-2 h-4 w-4" />
+          Exportar CSV
+        </Button>
+        <Button variant="outline" size="sm" onClick={() => handleExport("pdf")}>
+          <Download className="mr-2 h-4 w-4" />
+          Exportar PDF
+        </Button>
+      </div>
       <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

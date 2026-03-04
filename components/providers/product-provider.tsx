@@ -41,8 +41,11 @@ interface ProductContextType {
     fromBranchId?: string,
     reason?: string
   ) => Promise<void>;
-  addProduct: (product: Partial<Product>) => Promise<void>;
-  updateProduct: (id: string, productData: Partial<Product>) => Promise<void>;
+  addProduct: (product: Partial<Product>) => Promise<Product>;
+  updateProduct: (
+    id: string,
+    productData: Partial<Product>
+  ) => Promise<Product | null>;
   removeProduct: (id: string) => Promise<void>;
 }
 
@@ -299,19 +302,25 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     logEvent("create", "product", "Agrego nuevo producto", created.id);
 
     await invalidateProducts();
+
+    return created;
   };
 
   const updateProduct = async (id: string, productData: Partial<Product>) => {
-    await productsApi.update(id, productData);
+    const updated = await productsApi.update(id, productData);
 
-    logEvent("update", "product", "Modifico producto", id, {
-      productData,
-    });
+    if (updated) {
+      logEvent("update", "product", "Modifico producto", id, {
+        productData,
+      });
+    }
 
     await Promise.all([
       invalidateProducts(),
       mutate(["product", id], undefined, { revalidate: true }),
     ]);
+
+    return updated;
   };
 
   const removeProduct = async (id: string) => {

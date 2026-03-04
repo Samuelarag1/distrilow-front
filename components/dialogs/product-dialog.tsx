@@ -27,9 +27,8 @@ import { Switch } from "@/components/ui/switch";
 
 import { useBranch } from "@/components/providers/business-provider";
 import { Product } from "@/lib/products";
-import { backendApi } from "@/lib/backend-api";
-import { useToast } from "@/hooks/use-toast";
 import { resolveProductImageUrl } from "@/lib/media-utils";
+import type { ProductSaveInput } from "@/components/products/hooks/useProductSave";
 
 // IMPORTANTE: usÃ¡ el enum que ya tenÃ©s (ajustÃ¡ el path a tu estructura real)
 import { MeasurementType } from "@/lib/measurement-type";
@@ -41,7 +40,7 @@ type ProductDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   product: Product | null;
-  onSave: (product: Partial<Product>) => Promise<void> | void;
+  onSave: (product: ProductSaveInput) => Promise<void> | void;
   isSaving?: boolean;
 };
 
@@ -67,7 +66,6 @@ export function ProductDialog({
   isSaving = false,
 }: ProductDialogProps) {
   const { activeBranchId } = useBranch();
-  const { toast } = useToast();
   const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
 
   const categoryOptions = useMemo(() => {
@@ -98,7 +96,6 @@ export function ProductDialog({
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [localImagePreview, setLocalImagePreview] = useState<string | null>(null);
-  const [isUploadingImage, setIsUploadingImage] = useState(false);
 
   // Si tu Product del front NO tiene algunos campos (sku, etc), ajustÃ¡ el mapeo.
   useEffect(() => {
@@ -200,32 +197,6 @@ export function ProductDialog({
       formData.retailPrice
     );
 
-    let imageUrl = formData.imageUrl?.trim() || undefined;
-    if (imageFile) {
-      try {
-        setIsUploadingImage(true);
-        const uploadFormData = new FormData();
-        uploadFormData.append("file", imageFile);
-
-        const uploaded = await backendApi.files.uploadProductImage(uploadFormData);
-        imageUrl =
-          uploaded?.imageUrl || (uploaded as any)?.product?.imageUrl || undefined;
-
-        if (!imageUrl) {
-          throw new Error("No se recibio URL de imagen desde el backend.");
-        }
-      } catch (error: any) {
-        toast({
-          variant: "destructive",
-          title: "Error al subir imagen",
-          description: error?.message || "No se pudo subir la imagen del producto.",
-        });
-        return;
-      } finally {
-        setIsUploadingImage(false);
-      }
-    }
-
     await onSave({
       sku: formData.sku.trim(),
       barcode: formData.barcode?.trim() || undefined,
@@ -242,11 +213,12 @@ export function ProductDialog({
       measurementType: formData.measurementType,
 
       isActive: formData.isActive,
-      imageUrl,
-    } as any);
+      imageUrl: formData.imageUrl?.trim() || undefined,
+      imageFile,
+    });
   };
 
-  const disableForm = isSaving || isUploadingImage;
+  const disableForm = isSaving;
   const previewSrc =
     localImagePreview || formData.imageUrl || resolveProductImageUrl(product);
 
@@ -558,8 +530,6 @@ export function ProductDialog({
             >
               {isSaving
                 ? "Guardando..."
-                : isUploadingImage
-                ? "Subiendo imagen..."
                 : product
                 ? "Guardar Cambios"
                 : "Crear Producto"}
