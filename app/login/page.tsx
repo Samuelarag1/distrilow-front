@@ -102,7 +102,6 @@ export default function LoginPage() {
       });
 
       setClientCookie("accessToken", data.accessToken);
-      setClientCookie("user", JSON.stringify(currentUser));
       setClientCookie("branches", JSON.stringify(availableBranches));
       setClientCookie("activeBranchId", activeBranchId ?? "");
       setClientCookie("needsOnboarding", needsOnboarding);

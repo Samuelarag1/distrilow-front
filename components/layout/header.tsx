@@ -31,7 +31,7 @@ export function Header() {
     toast({
       title: "Filtros activados",
       description: `Filtros aplicados correctamente`,
-      duration: 1000
+      duration: 1000,
     });
   };
 

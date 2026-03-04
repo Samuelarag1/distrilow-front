@@ -42,7 +42,7 @@ export default async function HomePage() {
       <div className="flex h-screen w-full">
         <AppSidebar />
         <SidebarInset className="flex-1 flex flex-col min-w-0">
-          <Header />
+          {/* <Header /> */}
           <main className="flex-1 overflow-auto">
             <div className="container mx-auto p-4 space-y-6 max-w-7xl">
               <Dashboard retailData={metrics} wholesaleData={metrics} />

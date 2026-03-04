@@ -5,7 +5,6 @@ import Link from "next/link";
 import {
   BarChart3,
   Package,
-  Settings,
   FileText,
   TrendingUp,
   UserCheck,
@@ -140,26 +139,6 @@ export function AppSidebar() {
                       </div>
                       <span className="truncate group-data-[collapsible=icon]:hidden">
                         Usuarios
-                      </span>
-                    </Link>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={pathname === "/settings"}
-                    tooltip="Configuracion"
-                    className="group w-full justify-start rounded-lg px-3 py-2.5 text-sm font-medium transition-all duration-200 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground"
-                  >
-                    <Link
-                      href="/settings"
-                      className="flex w-full items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
-                    >
-                      <div className="flex h-5 w-5 items-center justify-center">
-                        <Settings className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
-                      </div>
-                      <span className="truncate group-data-[collapsible=icon]:hidden">
-                        Configuracion
                       </span>
                     </Link>
                   </SidebarMenuButton>

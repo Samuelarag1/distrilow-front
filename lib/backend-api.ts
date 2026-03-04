@@ -331,7 +331,7 @@ export const backendApi = {
     metrics: (period: "monthly" | "quarterly" | "semiannual" | "annual" = "monthly") =>
       apiClientFetch.get<SnapshotMetricsResponse>(
         `/snapshots/metrics${buildQuery({ period })}`,
-        { branchScoped: false }
+        { branchScoped: true }
       ),
   },
   expenses: {

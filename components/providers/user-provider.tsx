@@ -34,6 +34,7 @@ interface UserContextType {
 
   setToken: (t: string | null) => void;
   setCurrentUser: (u: User | null) => void;
+  setAvatar: (avatar: string | null) => void;
 
   setBranchId: (id: string | null) => void;
   setBranches: (b: Branch[]) => void;
@@ -44,6 +45,7 @@ interface UserContextType {
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
+const USER_AVATAR_STORE_KEY = "user-avatar-by-id";
 
 function normalizeSessionBranches(input: unknown): Branch[] {
   if (!Array.isArray(input)) return [];
@@ -97,6 +99,34 @@ function getCookie(name: string): string | null {
   }
 }
 
+function readAvatarStore(): Record<string, string> {
+  if (typeof window === "undefined") return {};
+  const raw = window.localStorage.getItem(USER_AVATAR_STORE_KEY);
+  if (!raw) return {};
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+
+    return Object.entries(parsed as Record<string, unknown>).reduce(
+      (acc, [key, value]) => {
+        if (typeof value === "string" && value.trim()) {
+          acc[key] = value.trim();
+        }
+        return acc;
+      },
+      {} as Record<string, string>
+    );
+  } catch {
+    return {};
+  }
+}
+
+function writeAvatarStore(store: Record<string, string>) {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(USER_AVATAR_STORE_KEY, JSON.stringify(store));
+}
+
 function writeSessionCookies(payload: {
   accessToken?: string | null;
   branches?: Branch[];
@@ -121,11 +151,62 @@ function writeSessionCookies(payload: {
 }
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
-  const [currentUser, setCurrentUser] = useState<User | null>(null);
+  const [currentUser, setCurrentUserState] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [branchId, setBranchId] = useState<string | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean>(false);
+
+  const hydrateUserAvatar = useCallback((input: User): User => {
+    const normalized: User = {
+      ...input,
+      name: input.name ?? input.email,
+    };
+    if (!normalized.id) return normalized;
+
+    const stored = readAvatarStore()[normalized.id];
+    if (!normalized.avatar && stored) {
+      return {
+        ...normalized,
+        avatar: stored,
+      };
+    }
+
+    return normalized;
+  }, []);
+
+  const setCurrentUser = useCallback((user: User | null) => {
+    if (!user) {
+      setCurrentUserState(null);
+      return;
+    }
+
+    const hydrated = hydrateUserAvatar(user);
+    setCurrentUserState(hydrated);
+    setClientCookie("user", JSON.stringify(hydrated));
+  }, [hydrateUserAvatar]);
+
+  const setAvatar = useCallback((avatar: string | null) => {
+    setCurrentUserState((prev) => {
+      if (!prev) return prev;
+
+      const normalizedAvatar = avatar?.trim() || undefined;
+      const next = {
+        ...prev,
+        avatar: normalizedAvatar,
+      };
+
+      const store = readAvatarStore();
+      if (normalizedAvatar) {
+        store[prev.id] = normalizedAvatar;
+      } else {
+        delete store[prev.id];
+      }
+      writeAvatarStore(store);
+      setClientCookie("user", JSON.stringify(next));
+      return next;
+    });
+  }, []);
 
   useEffect(() => {
     const tokenCookie =
@@ -140,10 +221,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     if (userCookie) {
       try {
         const parsed = JSON.parse(userCookie);
-        setCurrentUser({
+        setCurrentUserState(hydrateUserAvatar({
           ...parsed,
           name: parsed.name ?? parsed.email,
-        });
+        }));
       } catch (err) {
         console.error("Error parsing user cookie:", err);
       }
@@ -173,7 +254,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     if (!activeBranchCookie && resolvedBranchId) {
       setClientCookie("activeBranchId", resolvedBranchId);
     }
-  }, []);
+  }, [hydrateUserAvatar]);
 
   useEffect(() => {
     setApiSession({ accessToken: token, branchId: branchId ?? undefined });
@@ -267,6 +348,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       branches,
       needsOnboarding,
       setCurrentUser,
+      setAvatar,
       setToken,
       setBranchId,
       setBranches,
@@ -274,7 +356,16 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       switchBranch,
       logout,
     }),
-    [currentUser, token, branchId, branches, needsOnboarding, switchBranch]
+    [
+      currentUser,
+      token,
+      branchId,
+      branches,
+      needsOnboarding,
+      setCurrentUser,
+      setAvatar,
+      switchBranch,
+    ]
   );
 
   return <UserContext.Provider value={value}>{children}</UserContext.Provider>;

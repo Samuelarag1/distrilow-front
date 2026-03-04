@@ -133,6 +133,8 @@ export function TransactionsProvider({
       }
 
       setIsLoading(true);
+      setSales([]);
+      setExpenses([]);
       try {
         const [apiSales, apiExpenses] = await Promise.all([
           backendApi.sales.list(),
@@ -163,7 +165,7 @@ export function TransactionsProvider({
     };
 
     loadData();
-  }, [token, branchId]);
+  }, [token, branchId, businessType]);
 
   const addExpense = async (
     newExpense: Omit<Expense, "id" | "date" | "branchId"> & { branchId?: string }
