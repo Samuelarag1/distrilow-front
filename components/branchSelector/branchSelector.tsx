@@ -1,6 +1,5 @@
 "use client";
 
-import { Store } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Select,
@@ -13,6 +12,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useSidebar } from "@/components/ui/sidebar";
 import { useUser } from "@/components/providers/user-provider";
 import { useToast } from "@/hooks/use-toast";
+import { BrandMark } from "@/components/common/brand-mark";
 
 export function BranchSelector() {
   const { branchId, branches, switchBranch } = useUser();
@@ -48,7 +48,7 @@ export function BranchSelector() {
             className="mx-auto h-9 w-9 rounded-lg bg-primary/10 text-primary hover:bg-primary/20"
             onClick={toggleSidebar}
           >
-            <Store className="h-4 w-4" />
+            <BrandMark className="h-5 w-5 rounded-md border-0 shadow-none" />
             <span className="sr-only">Expandir sidebar</span>
           </Button>
         </TooltipTrigger>
@@ -61,8 +61,8 @@ export function BranchSelector() {
 
   return (
     <div className="flex items-center gap-3">
-      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-        <Store size={15} />
+      <div className="flex h-8 w-8 items-center justify-center rounded-lg">
+        <BrandMark className="h-8 w-8 rounded-lg" />
       </div>
 
       <div className="min-w-0 flex-1">

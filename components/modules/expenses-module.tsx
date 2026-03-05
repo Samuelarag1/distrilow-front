@@ -40,6 +40,8 @@ import {
   EXPENSE_CATEGORY_OPTIONS,
   getExpenseCategoryLabel,
 } from "@/lib/expense-categories";
+import { BrandMark } from "@/components/common/brand-mark";
+import { BrandSpinner } from "@/components/common/brand-spinner";
 
 export function ExpensesModule() {
   const { expenses, addExpense, isLoading } = useTransactions();
@@ -111,9 +113,10 @@ export function ExpensesModule() {
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-            Gastos
-          </h1>
+          <div className="flex items-center gap-3">
+            <BrandMark className="h-8 w-8 rounded-lg" />
+            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Gastos</h1>
+          </div>
           <p className="text-muted-foreground">
             Gestiona los egresos de tu negocio
           </p>
@@ -300,8 +303,8 @@ export function ExpensesModule() {
         <CardContent>
           <div className="space-y-3 md:hidden">
             {isLoading ? (
-              <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">
-                Cargando gastos...
+              <div className="rounded-md border p-4 text-center">
+                <BrandSpinner size="sm" label="Cargando gastos..." layout="inline" />
               </div>
             ) : filteredExpenses.length === 0 ? (
               <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">
@@ -346,7 +349,9 @@ export function ExpensesModule() {
                 {isLoading ? (
                   <TableRow>
                     <TableCell colSpan={4} className="h-24 text-center">
-                      Cargando gastos...
+                      <div className="flex items-center justify-center">
+                        <BrandSpinner size="sm" label="Cargando gastos..." layout="inline" />
+                      </div>
                     </TableCell>
                   </TableRow>
                 ) : filteredExpenses.length === 0 ? (

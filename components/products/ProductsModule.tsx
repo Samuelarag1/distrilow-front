@@ -1,13 +1,12 @@
-// components/products/ProductsModule.tsx
-// "use client";
-
 import { useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Product } from "@/lib/products";
+import { useProducts } from "@/hooks/useProducts";
 
 import { useProductActions } from "@/components/providers/product-provider";
 import { useBranch } from "@/components/providers/business-provider";
@@ -16,8 +15,6 @@ import { useUser } from "../providers/user-provider";
 import { mapSort } from "./utils/sort";
 
 import { useDebouncedValue } from "./hooks/useDebouncedValue";
-import { useProductsInfinite } from "./hooks/useProductsInfinite";
-import { useInfiniteScroll } from "./hooks/useInfiniteScroll";
 import { useProductSave } from "./hooks/useProductSave";
 
 import { ProductsHeader } from "./components/ProductsHeader";
@@ -35,6 +32,8 @@ type Category = {
   isActive?: boolean;
 };
 
+const PAGE_SIZE = 20;
+
 export function ProductsModule() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -44,13 +43,13 @@ export function ProductsModule() {
   const { token, branchId } = useUser();
   const { toast } = useToast();
 
-  // mantiene tu sesión API sincronizada
   useApiSessionSync(token, branchId);
 
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 350);
 
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
 
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
@@ -70,39 +69,50 @@ export function ProductsModule() {
     products,
     total,
     hasMore,
-    isLoadingInitial,
-    isLoadingMore,
-    loadMore,
-    mutate,
-    error,
-  } = useProductsInfinite({
-    activeBranchId,
-    take: 30,
+    isLoading,
+    isError,
+    mutateProducts,
+  } = useProducts({
+    skip: (currentPage - 1) * PAGE_SIZE,
+    take: PAGE_SIZE,
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
+    branchId: activeBranchId ?? null,
     sortBy,
     sortOrder: mappedSortOrder,
   });
 
   const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
 
-  const categories = useMemo(() => {
-    const categoryNameById = new Map<string, string>();
-    (categoriesData ?? []).forEach((category) => {
-      if (category?.id && category?.name) {
-        categoryNameById.set(category.id, category.name);
-      }
-    });
+  const categories = useMemo(
+    () =>
+      (categoriesData ?? [])
+        .filter((category) => Boolean(category?.id) && Boolean(category?.name))
+        .map((category) => ({
+          value: category.id,
+          label: category.name,
+        }))
+        .sort((a, b) => a.label.localeCompare(b.label)),
+    [categoriesData]
+  );
 
-    return Array.from(new Set(products.map((p) => p.categoryId).filter(Boolean)))
-      .map((id) => ({
-        value: id as string,
-        label: categoryNameById.get(id as string) ?? (id as string),
-      }))
-      .sort((a, b) => a.label.localeCompare(b.label));
-  }, [products, categoriesData]);
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPageSafe = Math.min(currentPage, totalPages);
+  const showingFrom = total === 0 ? 0 : (currentPageSafe - 1) * PAGE_SIZE + 1;
+  const showingTo = total === 0 ? 0 : Math.min(currentPageSafe * PAGE_SIZE, total);
+
+  useEffect(() => {
+    if (currentPage > totalPages) {
+      setCurrentPage(totalPages);
+    }
+  }, [currentPage, totalPages]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [debouncedSearch, selectedCategory, sortBy, mappedSortOrder, activeBranchId]);
 
   const handleSort = (key: SortKey) => {
+    setCurrentPage(1);
     if (sortKey === key) {
       setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
     } else {
@@ -131,7 +141,7 @@ export function ProductsModule() {
 
     try {
       await removeProduct(productToDelete);
-      await mutate();
+      await mutateProducts();
       toast({
         title: "Producto eliminado",
         description: "El producto ha sido eliminado correctamente.",
@@ -140,7 +150,7 @@ export function ProductsModule() {
       toast({
         variant: "destructive",
         title: "Error al eliminar",
-        description: e?.message || "Ocurrió un error inesperado.",
+        description: e?.message || "Ocurrio un error inesperado.",
       });
     } finally {
       setIsDeleteDialogOpen(false);
@@ -153,14 +163,9 @@ export function ProductsModule() {
     activeBranchId,
     addProduct,
     updateProduct,
-    mutate,
+    mutate: mutateProducts,
     onCloseDialog: () => setIsDialogOpen(false),
     onClearEditing: () => setEditingProduct(null),
-  });
-
-  const sentinelRef = useInfiniteScroll({
-    enabled: !!activeBranchId && hasMore && !isLoadingMore,
-    onLoadMore: loadMore,
   });
 
   useEffect(() => {
@@ -173,8 +178,8 @@ export function ProductsModule() {
     router.replace("/products");
   }, [searchParams, activeBranchId, router]);
 
-  const isLoading = isLoadingInitial;
   const isEmpty = !isLoading && products.length === 0;
+
   return (
     <div className="space-y-6">
       <ProductsHeader activeBranchId={activeBranchId} onCreate={handleCreate} />
@@ -185,10 +190,16 @@ export function ProductsModule() {
             <ProductsToolbar
               activeBranchId={activeBranchId}
               searchQuery={searchQuery}
-              onSearchChange={setSearchQuery}
+              onSearchChange={(value) => {
+                setSearchQuery(value);
+                setCurrentPage(1);
+              }}
               selectedCategory={selectedCategory}
               categories={categories}
-              onCategoryChange={setSelectedCategory}
+              onCategoryChange={(value) => {
+                setSelectedCategory(value);
+                setCurrentPage(1);
+              }}
             />
 
             <ProductsSortBar
@@ -198,19 +209,19 @@ export function ProductsModule() {
               onSort={handleSort}
               productsCount={products.length}
               total={total}
-              isLoadingMore={isLoadingMore}
+              isLoadingMore={isLoading}
             />
 
             {!activeBranchId && (
               <div className="text-sm text-muted-foreground">
-                Seleccioná una sucursal para cargar el catálogo.
+                Selecciona una sucursal para cargar el catalogo.
               </div>
             )}
 
-            {error && (
+            {isError && (
               <div className="text-sm text-destructive">
                 Error al cargar productos:{" "}
-                {String((error as any)?.message ?? error)}
+                {String((isError as any)?.message ?? isError)}
               </div>
             )}
           </div>
@@ -225,20 +236,35 @@ export function ProductsModule() {
             onDelete={handleDeleteTrigger}
           />
 
-          {!!activeBranchId && (
-            <>
-              <div ref={sentinelRef} className="h-10" />
-              {isLoadingMore && (
-                <div className="py-6 text-center text-sm text-muted-foreground">
-                  Cargando más productos...
-                </div>
-              )}
-              {!hasMore && products.length > 0 && (
-                <div className="py-6 text-center text-xs text-muted-foreground">
-                  No hay mas productos para cargar.
-                </div>
-              )}
-            </>
+          {!!activeBranchId && !isLoading && total > 0 && (
+            <div className="mt-6 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-muted-foreground">
+                Mostrando {showingFrom}-{showingTo} de {total} productos
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPageSafe <= 1}
+                >
+                  Anterior
+                </Button>
+                <span className="text-xs text-muted-foreground">
+                  Pagina {currentPageSafe} de {totalPages}
+                </span>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() =>
+                    setCurrentPage((prev) => Math.min(totalPages, prev + 1))
+                  }
+                  disabled={!hasMore || currentPageSafe >= totalPages}
+                >
+                  Siguiente
+                </Button>
+              </div>
+            </div>
           )}
         </CardContent>
       </Card>
@@ -259,4 +285,3 @@ export function ProductsModule() {
     </div>
   );
 }
-

@@ -54,7 +54,7 @@ export const productsApi = {
       name: q,
       q,
       search: q,
-      take: 30,
+      take: 20,
       skip: 0,
     });
     return page.items.map(normalizeProduct);

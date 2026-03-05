@@ -37,6 +37,9 @@
     --sidebar-accent-foreground: 240 5.9% 10%;
     --sidebar-border: 220 13% 91%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+    --brand-pink: 334 58% 57%;
+    --brand-cyan: 185 66% 63%;
+    --brand-ink: 232 22% 24%;
 
     --shadow-sm: 0 1px 2px 0 rgb(0 0 0 / 0.05);
     --shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
@@ -58,38 +61,41 @@
   }
 
   .dark {
-    --background: 240 10% 3.9%;
-    --foreground: 0 0% 98%;
-    --card: 240 10% 3.9%;
-    --card-foreground: 0 0% 98%;
-    --popover: 240 10% 3.9%;
-    --popover-foreground: 0 0% 98%;
-    --primary: 0 0% 98%;
-    --primary-foreground: 240 5.9% 10%;
-    --secondary: 240 3.7% 15.9%;
-    --secondary-foreground: 0 0% 98%;
-    --muted: 240 3.7% 15.9%;
-    --muted-foreground: 240 5% 64.9%;
-    --accent: 240 3.7% 15.9%;
-    --accent-foreground: 0 0% 98%;
+    --background: 234 28% 10%;
+    --foreground: 210 33% 96%;
+    --card: 234 24% 14%;
+    --card-foreground: 210 33% 96%;
+    --popover: 234 24% 14%;
+    --popover-foreground: 210 33% 96%;
+    --primary: 210 28% 92%;
+    --primary-foreground: 233 29% 12%;
+    --secondary: 233 19% 20%;
+    --secondary-foreground: 210 33% 96%;
+    --muted: 233 19% 20%;
+    --muted-foreground: 228 14% 72%;
+    --accent: 188 34% 24%;
+    --accent-foreground: 188 44% 88%;
     --destructive: 0 62.8% 30.6%;
     --destructive-foreground: 0 0% 98%;
-    --border: 240 3.7% 15.9%;
-    --input: 240 3.7% 15.9%;
-    --ring: 240 4.9% 83.9%;
-    --chart-1: 220 70% 50%;
-    --chart-2: 160 60% 45%;
-    --chart-3: 30 80% 55%;
-    --chart-4: 280 65% 60%;
-    --chart-5: 340 75% 55%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 0 0% 98%;
-    --sidebar-primary-foreground: 240 5.9% 10%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --border: 234 19% 24%;
+    --input: 234 19% 24%;
+    --ring: 186 56% 56%;
+    --chart-1: 206 66% 60%;
+    --chart-2: 186 54% 50%;
+    --chart-3: 224 44% 68%;
+    --chart-4: 28 80% 58%;
+    --chart-5: 145 52% 52%;
+    --sidebar-background: 234 24% 12%;
+    --sidebar-foreground: 210 32% 95%;
+    --sidebar-primary: 210 28% 92%;
+    --sidebar-primary-foreground: 232 28% 12%;
+    --sidebar-accent: 234 19% 21%;
+    --sidebar-accent-foreground: 210 32% 95%;
+    --sidebar-border: 234 20% 22%;
+    --sidebar-ring: 186 56% 56%;
+    --brand-pink: 334 52% 60%;
+    --brand-cyan: 186 68% 65%;
+    --brand-ink: 233 27% 14%;
   }
 }
 
@@ -158,6 +164,26 @@
   to {
     transform: scale(1);
     opacity: 1;
+  }
+}
+
+@keyframes brandSpin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes spinnerReveal {
+  from {
+    opacity: 0;
+    transform: translateY(2px) scale(0.97);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
   }
 }
 
@@ -249,6 +275,14 @@
 
   .page-enter {
     animation: pageEnter 180ms ease-out;
+  }
+
+  .animate-brand-spin {
+    animation: brandSpin 1.8s linear infinite;
+  }
+
+  .spinner-reveal {
+    animation: spinnerReveal 220ms ease-out;
   }
 }
 

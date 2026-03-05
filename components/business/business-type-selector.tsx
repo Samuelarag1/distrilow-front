@@ -1,6 +1,5 @@
 ﻿"use client";
 
-import { Store } from "lucide-react";
 import {
   Select,
   SelectContent,
@@ -9,6 +8,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useUser } from "@/components/providers/user-provider";
+import { BrandMark } from "@/components/common/brand-mark";
 
 export function BranchSelector() {
   const { branchId, branches, switchBranch } = useUser();
@@ -21,8 +21,8 @@ export function BranchSelector() {
 
   return (
     <div className="flex items-center gap-3">
-      <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-        <Store size={15} />
+      <div className="flex h-8 w-8 items-center justify-center rounded-lg">
+        <BrandMark className="h-8 w-8" />
       </div>
 
       <div className="min-w-0 flex-1">

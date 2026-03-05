@@ -104,7 +104,7 @@ export function POSModule() {
   const [scanQuery, setScanQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 30;
+  const pageSize = 20;
   const [pendingPaymentMethod, setPendingPaymentMethod] = useState<
     string | null
   >(null);
