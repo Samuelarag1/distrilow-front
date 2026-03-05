@@ -43,6 +43,8 @@ import { swrFetcher } from "@/lib/swr-fetcher";
 
 interface CartItem extends Product {
   quantity: number;
+  unitPrice: number;
+  customLineTotal: number | null;
 }
 
 type Category = {
@@ -80,6 +82,11 @@ function getLooseCategoryLabel(category: unknown): string {
   return "Sin categoria";
 }
 
+function roundTo(value: number, decimals: number) {
+  const factor = 10 ** decimals;
+  return Math.round(value * factor) / factor;
+}
+
 export function POSModule() {
   const { addSale } = useTransactions();
   const { currentUser, branchId, branches } = useUser();
@@ -96,6 +103,8 @@ export function POSModule() {
   const [searchQuery, setSearchQuery] = useState("");
   const [scanQuery, setScanQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 30;
   const [pendingPaymentMethod, setPendingPaymentMethod] = useState<
     string | null
   >(null);
@@ -105,8 +114,18 @@ export function POSModule() {
 
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
 
-  const { products, isLoading, mutateProducts } = useProducts({
-    take: 30,
+  const {
+    products,
+    total: productsTotal,
+    hasMore,
+    skip,
+    take,
+    isLoading,
+    mutateProducts,
+  } =
+    useProducts({
+    skip: (currentPage - 1) * pageSize,
+    take: pageSize,
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     branchId: branchId ?? null,
@@ -127,6 +146,18 @@ export function POSModule() {
   );
 
   const formatMoney = (value: unknown) => moneyFormatter.format(toSafeNumber(value, 0));
+
+  const isWeighableProduct = (product: Product) =>
+    product.measurementType === "kg" || product.measurementType === "gram";
+
+  const getQuantityStep = (product: Product) => {
+    if (product.measurementType === "kg") return 0.001;
+    if (product.measurementType === "gram") return 1;
+    return 1;
+  };
+
+  const getQuantityInputStep = (product: Product) =>
+    product.measurementType === "kg" ? "0.001" : "1";
 
   const getActivePrice = (product: Product) => {
     if (businessType === "wholesale") {
@@ -160,6 +191,10 @@ export function POSModule() {
         description:
           "Se limpio el carrito para evitar mezclar productos entre sucursales.",
       });
+    }
+
+    if (previousBranchRef.current !== branchId) {
+      setCurrentPage(1);
     }
 
     previousBranchRef.current = branchId;
@@ -202,13 +237,14 @@ export function POSModule() {
 
   const categories = useMemo(
     () =>
-      Array.from(new Set(products.map((product) => product.categoryId).filter(Boolean)))
-        .map((id) => ({
-          value: id as string,
-          label: categoryNameById.get(id as string) ?? (id as string),
+      (categoriesData ?? [])
+        .filter((category) => Boolean(category?.id) && Boolean(category?.name))
+        .map((category) => ({
+          value: category.id,
+          label: category.name,
         }))
         .sort((a, b) => a.label.localeCompare(b.label)),
-    [products, categoryNameById]
+    [categoriesData]
   );
 
   const addToCart = (product: Product) => {
@@ -231,13 +267,17 @@ export function POSModule() {
       return;
     }
 
+    const step = getQuantityStep(product);
+    const initialQuantity = isWeighableProduct(product) ? step : 1;
+
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
-        if (existing.quantity >= stock) {
+        const nextQuantity = roundTo(existing.quantity + step, 3);
+        if (nextQuantity > stock) {
           toast({
             title: "Stock limitado",
-            description: `Solo hay ${stock} unidades de ${product.name}`,
+            description: `Solo hay ${stock} disponibles de ${product.name}`,
             variant: "destructive",
           });
           return prev;
@@ -245,20 +285,29 @@ export function POSModule() {
 
         return prev.map((item) =>
           item.id === product.id
-            ? { ...item, quantity: item.quantity + 1 }
+            ? { ...item, quantity: nextQuantity }
             : item
         );
       }
 
-      return [...prev, { ...product, quantity: 1 }];
+      return [
+        ...prev,
+        {
+          ...product,
+          quantity: initialQuantity,
+          unitPrice: getActivePrice(product),
+          customLineTotal: null,
+        },
+      ];
     });
   };
 
   const updateQuantity = (id: string, quantity: number) => {
     const inCart = cart.find((product) => product.id === id);
     const maxStock = Number(inCart?.stock ?? 0);
+    const normalizedQuantity = roundTo(quantity, 3);
 
-    if (inCart && quantity > maxStock) {
+    if (inCart && normalizedQuantity > maxStock) {
       toast({
         title: "Stock insuficiente",
         description: `No puedes agregar mas de ${maxStock} unidades`,
@@ -267,13 +316,34 @@ export function POSModule() {
       return;
     }
 
-    if (quantity <= 0) {
+    if (normalizedQuantity <= 0) {
       setCart((prev) => prev.filter((item) => item.id !== id));
       return;
     }
 
     setCart((prev) =>
-      prev.map((item) => (item.id === id ? { ...item, quantity } : item))
+      prev.map((item) =>
+        item.id === id
+          ? {
+              ...item,
+              quantity: normalizedQuantity,
+              customLineTotal: null,
+            }
+          : item
+      )
+    );
+  };
+
+  const updateManualLineTotal = (id: string, value: string) => {
+    const parsed = Number(value);
+    setCart((prev) =>
+      prev.map((item) => {
+        if (item.id !== id) return item;
+        if (!Number.isFinite(parsed) || parsed <= 0) {
+          return { ...item, customLineTotal: null };
+        }
+        return { ...item, customLineTotal: roundTo(parsed, 2) };
+      })
     );
   };
 
@@ -304,9 +374,7 @@ export function POSModule() {
         return;
       }
 
-      const activePrice = getActivePrice(scanned);
-
-      addToCart({ ...scanned, costPrice: activePrice });
+      addToCart(scanned);
       setSearchQuery(scanned.name);
       setScanQuery("");
     } catch (error: any) {
@@ -319,11 +387,18 @@ export function POSModule() {
     }
   };
 
-  const total = cart.reduce((sum, item) => {
-    const price = toSafeNumber(item.costPrice, 0);
-    return sum + price * item.quantity;
-  }, 0);
-  const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
+  const getCartLineTotal = (item: CartItem) => {
+    if (item.customLineTotal !== null && item.customLineTotal > 0) {
+      return item.customLineTotal;
+    }
+    return toSafeNumber(item.unitPrice, 0) * toSafeNumber(item.quantity, 0);
+  };
+
+  const total = cart.reduce((sum, item) => sum + getCartLineTotal(item), 0);
+  const itemCount = cart.length;
+  const totalPages = Math.max(1, Math.ceil((productsTotal || 0) / Math.max(take, 1)));
+  const showingFrom = productsTotal === 0 ? 0 : skip + 1;
+  const showingTo = productsTotal === 0 ? 0 : skip + filteredProducts.length;
 
   const ensureOpenCashSession = async () => {
     if (!canManageCash) return true;
@@ -407,11 +482,19 @@ export function POSModule() {
         amount: total,
         customerName: "Consumidor Final",
         items: itemCount,
-        lineItems: cart.map((item) => ({
-          productId: item.id,
-          quantity: item.quantity,
-          price: toSafeNumber(item.costPrice, 0),
-        })),
+        lineItems: cart.map((item) => {
+          const quantity = toSafeNumber(item.quantity, 0);
+          const computedUnitPrice =
+            item.customLineTotal !== null && item.customLineTotal > 0 && quantity > 0
+              ? item.customLineTotal / quantity
+              : toSafeNumber(item.unitPrice, 0);
+
+          return {
+            productId: item.id,
+            quantity,
+            price: roundTo(computedUnitPrice, 6),
+          };
+        }),
         userId: currentUser?.id || "unknown",
         userName: currentUser?.name || "Anonimo",
         branchId: saleBranchId,
@@ -489,15 +572,19 @@ export function POSModule() {
                     <Input
                       placeholder="Buscar productos..."
                       value={searchQuery}
-                      onChange={(event) => setSearchQuery(event.target.value)}
+                      onChange={(event) => {
+                        setSearchQuery(event.target.value)
+                        setCurrentPage(1)
+                      }}
                       className="pl-8"
                     />
                   </div>
                   <select
                     value={selectedCategory}
-                    onChange={(event) =>
+                    onChange={(event) => {
                       setSelectedCategory(event.target.value)
-                    }
+                      setCurrentPage(1)
+                    }}
                     className="rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   >
                     <option value="all">Todas las categorias</option>
@@ -541,9 +628,7 @@ export function POSModule() {
                       <Card
                         key={product.id}
                         className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-md"
-                        onClick={() =>
-                          addToCart({ ...product, costPrice: activePrice })
-                        }
+                        onClick={() => addToCart(product)}
                       >
                         <CardContent className="p-3">
                           <div className="flex items-center space-x-3">
@@ -595,9 +680,31 @@ export function POSModule() {
                   </div>
                 )}
               </div>
-              <div className="pt-4 text-xs text-muted-foreground">
-                Mostrando hasta 30 productos por busqueda para mantener la
-                velocidad.
+              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+                <div className="text-xs text-muted-foreground">
+                  Mostrando {showingFrom}-{showingTo} de {productsTotal} productos.
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    disabled={currentPage <= 1}
+                  >
+                    Anterior
+                  </Button>
+                  <span className="text-xs text-muted-foreground">
+                    Pagina {currentPage} de {totalPages}
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPage((prev) => prev + 1)}
+                    disabled={!hasMore}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -622,7 +729,7 @@ export function POSModule() {
                     {cart.map((item) => (
                       <div
                         key={item.id}
-                        className="flex items-center space-x-2"
+                        className="flex items-start space-x-2"
                       >
                         <img
                           src={resolveProductImageUrl(item)}
@@ -634,27 +741,84 @@ export function POSModule() {
                             {item.name}
                           </h4>
                           <p className="text-xs text-muted-foreground">
-                            ${toSafeNumber(item.costPrice, 0).toFixed(2)}
+                            ${toSafeNumber(item.unitPrice, 0).toFixed(2)} /{" "}
+                            {item.measurementType === "kg"
+                              ? "kg"
+                              : item.measurementType === "gram"
+                              ? "gr"
+                              : "unidad"}
+                          </p>
+                          {isWeighableProduct(item) && (
+                            <div className="mt-2 grid grid-cols-2 gap-2">
+                              <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">
+                                  Cantidad
+                                </label>
+                                <Input
+                                  type="number"
+                                  step={getQuantityInputStep(item)}
+                                  min={getQuantityInputStep(item)}
+                                  max={String(item.stock ?? "")}
+                                  value={item.quantity}
+                                  onChange={(event) =>
+                                    updateQuantity(
+                                      item.id,
+                                      Number(event.target.value || 0)
+                                    )
+                                  }
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                              <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">
+                                  Total manual
+                                </label>
+                                <Input
+                                  type="number"
+                                  step="0.01"
+                                  min="0.01"
+                                  placeholder={String(
+                                    roundTo(item.quantity * item.unitPrice, 2)
+                                  )}
+                                  value={item.customLineTotal ?? ""}
+                                  onChange={(event) =>
+                                    updateManualLineTotal(item.id, event.target.value)
+                                  }
+                                  className="h-8 text-xs"
+                                />
+                              </div>
+                            </div>
+                          )}
+                          <p className="mt-1 text-xs font-semibold">
+                            Subtotal: ${roundTo(getCartLineTotal(item), 2).toFixed(2)}
                           </p>
                         </div>
-                        <div className="flex items-center space-x-1">
+                        <div className="flex items-center space-x-1 pt-0.5">
                           <Button
                             size="sm"
                             variant="outline"
                             onClick={() =>
-                              updateQuantity(item.id, item.quantity - 1)
+                              updateQuantity(
+                                item.id,
+                                roundTo(item.quantity - getQuantityStep(item), 3)
+                              )
                             }
                           >
                             <Minus className="h-3 w-3" />
                           </Button>
                           <span className="w-8 text-center text-sm">
-                            {item.quantity}
+                            {isWeighableProduct(item)
+                              ? String(item.quantity)
+                              : Math.trunc(item.quantity)}
                           </span>
                           <Button
                             size="sm"
                             variant="outline"
                             onClick={() =>
-                              updateQuantity(item.id, item.quantity + 1)
+                              updateQuantity(
+                                item.id,
+                                roundTo(item.quantity + getQuantityStep(item), 3)
+                              )
                             }
                           >
                             <Plus className="h-3 w-3" />
@@ -674,12 +838,12 @@ export function POSModule() {
                   <div className="space-y-2">
                     <div className="flex justify-between text-sm">
                       <span>Subtotal:</span>
-                      <span>${Number(total).toFixed(2)}</span>
+                      <span>${roundTo(total, 2).toFixed(2)}</span>
                     </div>
                     <Separator />
                     <div className="flex justify-between font-bold">
                       <span>Total:</span>
-                      <span>${Number(total).toFixed(2)}</span>
+                      <span>${roundTo(total, 2).toFixed(2)}</span>
                     </div>
                   </div>
                   <div className="space-y-2">

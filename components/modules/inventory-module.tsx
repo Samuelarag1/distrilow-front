@@ -338,19 +338,39 @@ function SortButton({
 }
 
 export function InventoryModule() {
-  const {
-    products: inventory,
-    isLoading,
-    registerStockMovement,
-    mutateProducts,
-  } = useProducts();
   const { branches, branchId } = useUser();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 20;
   const { toast } = useToast();
   const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
+
+  const {
+    products: inventory,
+    total: inventoryTotal,
+    hasMore,
+    skip,
+    take,
+    isLoading,
+    registerStockMovement,
+    mutateProducts,
+  } = useProducts({
+    skip: (currentPage - 1) * pageSize,
+    take: pageSize,
+    search: searchQuery.trim() || undefined,
+    categoryId: selectedCategory === "all" ? null : selectedCategory,
+    branchId: branchId ?? null,
+    sortBy:
+      sortKey === "name"
+        ? "name"
+        : sortKey === "price"
+        ? "price"
+        : undefined,
+    sortOrder,
+  });
 
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -382,19 +402,10 @@ export function InventoryModule() {
       setSortKey(key);
       setSortOrder("asc");
     }
+    setCurrentPage(1);
   };
 
-  const filteredInventory = inventory
-    .filter((item: Product) => {
-      const matchesSearch = item.name
-        .toLowerCase()
-        .includes(searchQuery.toLowerCase());
-      const matchesCategory =
-        selectedCategory === "all" ||
-        getProductCategoryLabel(item) === selectedCategory;
-      return matchesSearch && matchesCategory;
-    })
-    .sort((a: Product, b: Product) => {
+  const filteredInventory = inventory.slice().sort((a: Product, b: Product) => {
       const factor = sortOrder === "asc" ? 1 : -1;
       if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
       if (sortKey === "category") {
@@ -408,20 +419,16 @@ export function InventoryModule() {
     });
 
   const categories = useMemo(() => {
-    const map = new Map<string, { value: string; label: string }>();
-    inventory.forEach((item: Product) => {
-      const label = getProductCategoryLabel(item);
-      if (!map.has(label)) {
-        map.set(label, {
-          value: label,
-          label,
-        });
-      }
-    });
-    return Array.from(map.values()).sort((a, b) =>
+    return (categoriesData ?? [])
+      .filter((category) => Boolean(category?.id) && Boolean(category?.name))
+      .map((category) => ({
+        value: category.id,
+        label: category.name,
+      }))
+      .sort((a, b) =>
       a.label.localeCompare(b.label)
     );
-  }, [inventory, categoriesData]);
+  }, [categoriesData]);
 
   const lowStockItems = inventory.filter(
     (item: Product) => item.stock <= (item.minStock || 0)
@@ -431,6 +438,9 @@ export function InventoryModule() {
     (sum: number, item: Product) => sum + item.stock * item.price,
     0
   );
+  const totalPages = Math.max(1, Math.ceil((inventoryTotal || 0) / Math.max(take, 1)));
+  const showingFrom = inventoryTotal === 0 ? 0 : skip + 1;
+  const showingTo = inventoryTotal === 0 ? 0 : skip + filteredInventory.length;
 
   const getStockStatus = (item: Product) => {
     if (item.stock <= (item.minStock || 0)) return "low";
@@ -727,13 +737,19 @@ export function InventoryModule() {
                 <Input
                   placeholder="Buscar productos por nombre..."
                   value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
+                  onChange={(e) => {
+                    setSearchQuery(e.target.value);
+                    setCurrentPage(1);
+                  }}
                   className="pl-8"
                 />
               </div>
               <select
                 value={selectedCategory}
-                onChange={(e) => setSelectedCategory(e.target.value)}
+                onChange={(e) => {
+                  setSelectedCategory(e.target.value);
+                  setCurrentPage(1);
+                }}
                 className="w-full sm:w-[240px] px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="all">Todas las categorías</option>
@@ -813,6 +829,32 @@ export function InventoryModule() {
               </div>
             )}
           </div>
+          {!isLoading && inventoryTotal > 0 && (
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-muted-foreground">
+                Mostrando {showingFrom}-{showingTo} de {inventoryTotal} productos.
+                Pagina {currentPage} de {totalPages}.
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  disabled={currentPage <= 1}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentPage((prev) => prev + 1)}
+                  disabled={!hasMore}
+                >
+                  Siguiente
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>

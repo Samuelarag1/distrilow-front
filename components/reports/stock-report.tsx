@@ -38,7 +38,7 @@ type Category = {
 };
 
 export function StockReport() {
-  const { products } = useProducts();
+  const { products } = useProducts({ take: 500, skip: 0 });
   const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
 
   const categoryNameById = useMemo(() => {

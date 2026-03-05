@@ -25,6 +25,9 @@ const SIDEBAR_WIDTH = "16rem"
 const SIDEBAR_WIDTH_MOBILE = "18rem"
 const SIDEBAR_WIDTH_ICON = "4rem"
 const SIDEBAR_KEYBOARD_SHORTCUT = "b"
+const SIDEBAR_SWIPE_EDGE_PX = 24
+const SIDEBAR_SWIPE_TRIGGER_PX = 64
+const SIDEBAR_SWIPE_MAX_VERTICAL_PX = 32
 
 type SidebarContext = {
   state: "expanded" | "collapsed"
@@ -69,6 +72,11 @@ const SidebarProvider = React.forwardRef<
   ) => {
     const isMobile = useIsMobile()
     const [openMobile, setOpenMobile] = React.useState(false)
+    const touchGestureRef = React.useRef({
+      startX: 0,
+      startY: 0,
+      tracking: false,
+    })
 
     // This is the internal state of the sidebar.
     // We use openProp and setOpenProp for control from outside the component.
@@ -111,6 +119,69 @@ const SidebarProvider = React.forwardRef<
       window.addEventListener("keydown", handleKeyDown)
       return () => window.removeEventListener("keydown", handleKeyDown)
     }, [toggleSidebar])
+
+    React.useEffect(() => {
+      if (!isMobile) return
+
+      const handleTouchStart = (event: TouchEvent) => {
+        if (openMobile || event.touches.length !== 1) {
+          touchGestureRef.current.tracking = false
+          return
+        }
+
+        const touch = event.touches[0]
+        if (touch.clientX > SIDEBAR_SWIPE_EDGE_PX) {
+          touchGestureRef.current.tracking = false
+          return
+        }
+
+        touchGestureRef.current = {
+          startX: touch.clientX,
+          startY: touch.clientY,
+          tracking: true,
+        }
+      }
+
+      const handleTouchMove = (event: TouchEvent) => {
+        if (!touchGestureRef.current.tracking || event.touches.length !== 1) return
+
+        const touch = event.touches[0]
+        const deltaX = touch.clientX - touchGestureRef.current.startX
+        const deltaY = touch.clientY - touchGestureRef.current.startY
+
+        if (
+          Math.abs(deltaY) > SIDEBAR_SWIPE_MAX_VERTICAL_PX ||
+          deltaX < -12
+        ) {
+          touchGestureRef.current.tracking = false
+          return
+        }
+
+        if (
+          deltaX >= SIDEBAR_SWIPE_TRIGGER_PX &&
+          Math.abs(deltaX) > Math.abs(deltaY) * 1.4
+        ) {
+          setOpenMobile(true)
+          touchGestureRef.current.tracking = false
+        }
+      }
+
+      const stopTracking = () => {
+        touchGestureRef.current.tracking = false
+      }
+
+      window.addEventListener("touchstart", handleTouchStart, { passive: true })
+      window.addEventListener("touchmove", handleTouchMove, { passive: true })
+      window.addEventListener("touchend", stopTracking, { passive: true })
+      window.addEventListener("touchcancel", stopTracking, { passive: true })
+
+      return () => {
+        window.removeEventListener("touchstart", handleTouchStart)
+        window.removeEventListener("touchmove", handleTouchMove)
+        window.removeEventListener("touchend", stopTracking)
+        window.removeEventListener("touchcancel", stopTracking)
+      }
+    }, [isMobile, openMobile, setOpenMobile])
 
     // We add a state so that we can do data-state="expanded" or "collapsed".
     // This makes it easier to style the sidebar with Tailwind classes.

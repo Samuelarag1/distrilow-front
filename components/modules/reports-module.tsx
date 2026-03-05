@@ -129,7 +129,7 @@ export function ReportsModule() {
   const { events, isLoading, error } = useAudit();
   const { sales } = useTransactions();
   const { businessType } = useBusiness();
-  const { products } = useProducts();
+  const { products } = useProducts({ take: 500, skip: 0 });
   const { branchId } = useUser();
 
   const [activeTab, setActiveTab] = useState("audit");

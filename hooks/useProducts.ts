@@ -2,8 +2,9 @@ import useSWR from "swr";
 import { Product } from "@/lib/products";
 import { backendApi } from "@/lib/backend-api";
 import { getApiSession } from "@/lib/api-client";
+import type { NormalizedProductsPage } from "@/lib/backend-api";
 
-type UseProductsArgs = {
+export type UseProductsArgs = {
   skip?: number;
   take?: number;
   search?: string;
@@ -15,11 +16,13 @@ type UseProductsArgs = {
 
 export function useProducts(args: UseProductsArgs = {}) {
   const effectiveBranchId = args.branchId ?? getApiSession().branchId ?? null;
+  const requestedSkip = args.skip ?? 0;
+  const requestedTake = args.take ?? 20;
   const key = effectiveBranchId
     ? ([
         "products",
-        args.skip ?? 0,
-        args.take ?? 20,
+        requestedSkip,
+        requestedTake,
         args.search ?? "",
         args.categoryId ?? "",
         effectiveBranchId,
@@ -28,13 +31,13 @@ export function useProducts(args: UseProductsArgs = {}) {
       ] as const)
     : null;
 
-  const { data, error, isLoading, mutate } = useSWR<Product[]>(
+  const { data, error, isLoading, mutate } = useSWR<NormalizedProductsPage>(
     key,
     async () => {
       const page = await backendApi.productsWithStock(
         {
-          skip: args.skip,
-          take: args.take,
+          skip: requestedSkip,
+          take: requestedTake,
           name: args.search ?? undefined,
           q: args.search ?? undefined,
           search: args.search ?? undefined,
@@ -45,12 +48,15 @@ export function useProducts(args: UseProductsArgs = {}) {
         effectiveBranchId
       );
 
-      return page.items.map((item) => ({
-        ...item,
-        price: Number(item.retailPrice ?? item.costPrice ?? 0),
-        category: item.categoryId ?? "Sin categoria",
-        unit: item.measurementType,
-      })) as Product[];
+      return {
+        ...page,
+        items: page.items.map((item) => ({
+          ...item,
+          price: Number(item.retailPrice ?? item.costPrice ?? 0),
+          category: item.categoryId ?? "Sin categoria",
+          unit: item.measurementType,
+        })) as Product[],
+      };
     },
     {
       revalidateOnFocus: false,
@@ -60,10 +66,25 @@ export function useProducts(args: UseProductsArgs = {}) {
     }
   );
 
-  const products = effectiveBranchId ? data ?? [] : [];
+  const fallbackPage: NormalizedProductsPage = {
+    items: [],
+    total: 0,
+    skip: requestedSkip,
+    take: requestedTake,
+    nextSkip: null,
+    hasMore: false,
+  };
+
+  const pageData = effectiveBranchId ? data ?? fallbackPage : fallbackPage;
+  const products = pageData.items as Product[];
 
   return {
     products,
+    total: pageData.total,
+    skip: pageData.skip,
+    take: pageData.take,
+    nextSkip: pageData.nextSkip,
+    hasMore: pageData.hasMore,
     isLoading: !!effectiveBranchId && isLoading,
     isError: error,
     mutateProducts: mutate,

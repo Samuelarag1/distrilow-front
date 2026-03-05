@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useMemo, useState } from "react"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -16,20 +16,33 @@ export function SalesTable() {
   const { businessType } = useBusiness()
   const [searchQuery, setSearchQuery] = useState("")
   const [selectedStatus, setSelectedStatus] = useState("all")
+  const [currentPage, setCurrentPage] = useState(1)
+  const pageSize = 10
 
-  const filteredSales = sales.filter((sale) => {
-    if (sale.businessType !== businessType) return false
+  const filteredSales = useMemo(
+    () =>
+      sales.filter((sale) => {
+        if (sale.businessType !== businessType) return false
 
-    const matchesSearch =
-      sale.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      sale.id.toLowerCase().includes(searchQuery.toLowerCase())
+        const matchesSearch =
+          sale.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
+          sale.id.toLowerCase().includes(searchQuery.toLowerCase())
 
-    const normalizedStatus = sale.status === "PENDING" ? "pending" : "completed"
-    const matchesStatus =
-      selectedStatus === "all" || selectedStatus === normalizedStatus
+        const normalizedStatus = sale.status === "PENDING" ? "pending" : "completed"
+        const matchesStatus =
+          selectedStatus === "all" || selectedStatus === normalizedStatus
 
-    return matchesSearch && matchesStatus
-  })
+        return matchesSearch && matchesStatus
+      }),
+    [sales, businessType, searchQuery, selectedStatus]
+  )
+
+  const totalPages = Math.max(1, Math.ceil(filteredSales.length / pageSize))
+  const currentPageSafe = Math.min(currentPage, totalPages)
+  const paginatedSales = useMemo(() => {
+    const start = (currentPageSafe - 1) * pageSize
+    return filteredSales.slice(start, start + pageSize)
+  }, [filteredSales, currentPageSafe])
 
   const getStatusColor = (status?: string) => {
     if (status === 'PENDING') return "bg-yellow-100 text-yellow-800"
@@ -68,13 +81,19 @@ export function SalesTable() {
               <Input
                 placeholder="Buscar por cliente, ID o producto..."
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value)
+                  setCurrentPage(1)
+                }}
                 className="pl-8"
               />
             </div>
             <select
               value={selectedStatus}
-              onChange={(e) => setSelectedStatus(e.target.value)}
+              onChange={(e) => {
+                setSelectedStatus(e.target.value)
+                setCurrentPage(1)
+              }}
               className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="all">Todos los estados</option>
@@ -113,7 +132,7 @@ export function SalesTable() {
                         <td className="p-3"><Skeleton className="h-8 w-8" /></td>
                       </tr>
                     ))
-                  ) : filteredSales.map((sale) => (
+                  ) : paginatedSales.map((sale) => (
                     <tr key={sale.id} className="border-t hover:bg-muted/25 transition-colors">
                       <td className="p-3 font-mono text-sm">{sale.id}</td>
                       <td className="p-3 text-sm">{new Date(sale.date).toLocaleString()}</td>
@@ -146,6 +165,32 @@ export function SalesTable() {
           {filteredSales.length === 0 && (
             <div className="text-center py-12">
               <p className="text-muted-foreground">No se encontraron ventas</p>
+            </div>
+          )}
+
+          {!isLoading && filteredSales.length > 0 && (
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-muted-foreground">
+                Pagina {currentPageSafe} de {totalPages} ({filteredSales.length} registros)
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentPage(Math.max(1, currentPageSafe - 1))}
+                  disabled={currentPageSafe <= 1}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentPage(Math.min(totalPages, currentPageSafe + 1))}
+                  disabled={currentPageSafe >= totalPages}
+                >
+                  Siguiente
+                </Button>
+              </div>
             </div>
           )}
         </div>

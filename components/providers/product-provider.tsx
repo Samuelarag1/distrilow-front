@@ -7,7 +7,10 @@ import { useUser } from "./user-provider";
 import { apiClientFetch } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
 import { productsApi, Product } from "@/lib/products";
-import { useProducts as useProductsHook } from "@/hooks/useProducts";
+import {
+  useProducts as useProductsHook,
+  type UseProductsArgs,
+} from "@/hooks/useProducts";
 import type { CreateMovementRequest, MovementType } from "@/lib/api-types";
 
 interface StockMovementInput {
@@ -357,9 +360,12 @@ export function useProductActions() {
 }
 
 // Backward-compatible API for modules that still import `useProducts` from this provider.
-export function useProducts() {
+export function useProducts(options: UseProductsArgs = {}) {
   const { branchId } = useUser();
-  const swr = useProductsHook({ branchId });
+  const swr = useProductsHook({
+    ...options,
+    branchId: options.branchId ?? branchId,
+  });
   const { updateStock, adjustStock, registerStockMovement, transferStock } =
     useProductActions();
 

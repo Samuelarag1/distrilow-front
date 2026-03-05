@@ -55,16 +55,25 @@ const TransactionsContext = createContext<TransactionsContextType | undefined>(
 
 const MAX_NUMERIC_10_2 = 99_999_999.99;
 const MAX_QUANTITY = 99_999_999;
+const MAX_UNIT_PRICE = 9_999_999.999999;
 
 function toFiniteNumber(value: unknown) {
   const parsed = typeof value === "number" ? value : Number(value);
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function normalizeMoney(value: unknown) {
+function normalizeUnitPrice(value: unknown) {
   const parsed = toFiniteNumber(value);
   if (parsed === null) return null;
-  const rounded = Math.round(parsed * 100) / 100;
+  const rounded = Math.round(parsed * 1_000_000) / 1_000_000;
+  if (rounded < 0) return null;
+  return rounded;
+}
+
+function normalizeQuantity(value: unknown) {
+  const parsed = toFiniteNumber(value);
+  if (parsed === null) return null;
+  const rounded = Math.round(parsed * 1_000) / 1_000;
   if (rounded < 0) return null;
   return rounded;
 }
@@ -203,18 +212,18 @@ export function TransactionsProvider({
     }
 
     const saleItems = (newSale.lineItems ?? []).map((item, index) => {
-      const quantity = Math.trunc(Number(item.quantity));
-      const unitPrice = normalizeMoney(item.price);
+      const quantity = normalizeQuantity(item.quantity);
+      const unitPrice = normalizeUnitPrice(item.price);
 
-      if (!Number.isFinite(quantity) || quantity < 1 || quantity > MAX_QUANTITY) {
+      if (quantity === null || quantity <= 0 || quantity > MAX_QUANTITY) {
         throw new Error(
-          `Cantidad invalida en item ${index + 1}. Debe ser un entero entre 1 y ${MAX_QUANTITY}.`
+          `Cantidad invalida en item ${index + 1}. Debe ser mayor a 0 y menor o igual a ${MAX_QUANTITY}.`
         );
       }
 
-      if (unitPrice === null || unitPrice <= 0 || unitPrice > MAX_NUMERIC_10_2) {
+      if (unitPrice === null || unitPrice <= 0 || unitPrice > MAX_UNIT_PRICE) {
         throw new Error(
-          `Precio invalido en item ${index + 1}. Debe ser mayor a 0 y menor o igual a ${MAX_NUMERIC_10_2}.`
+          `Precio invalido en item ${index + 1}. Debe ser mayor a 0 y menor o igual a ${MAX_UNIT_PRICE}.`
         );
       }
 

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,8 @@ export function ExpensesModule() {
   const { branchId, branches } = useUser();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [currentPage, setCurrentPage] = useState(1);
+  const pageSize = 10;
 
   const [newExpense, setNewExpense] = useState({
     amount: "",
@@ -68,6 +70,13 @@ export function ExpensesModule() {
     (acc, curr) => acc + curr.amount,
     0
   );
+
+  const totalPages = Math.max(1, Math.ceil(filteredExpenses.length / pageSize));
+  const currentPageSafe = Math.min(currentPage, totalPages);
+  const paginatedExpenses = useMemo(() => {
+    const start = (currentPageSafe - 1) * pageSize;
+    return filteredExpenses.slice(start, start + pageSize);
+  }, [filteredExpenses, currentPageSafe]);
 
   const expensesByCategory = filteredExpenses.reduce((acc, curr) => {
     acc[curr.category] = (acc[curr.category] || 0) + curr.amount;
@@ -280,7 +289,10 @@ export function ExpensesModule() {
                 placeholder="Buscar gastos..."
                 className="pl-8"
                 value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
+                onChange={(e) => {
+                  setSearchQuery(e.target.value);
+                  setCurrentPage(1);
+                }}
               />
             </div>
           </div>
@@ -296,7 +308,7 @@ export function ExpensesModule() {
                 No se encontraron gastos registrados.
               </div>
             ) : (
-              filteredExpenses.map((expense) => (
+              paginatedExpenses.map((expense) => (
                 <div key={expense.id} className="rounded-md border p-3 space-y-2">
                   <div className="flex items-start justify-between gap-2">
                     <span className="font-medium break-words">{expense.description}</span>
@@ -344,7 +356,7 @@ export function ExpensesModule() {
                     </TableCell>
                   </TableRow>
                 ) : (
-                  filteredExpenses.map((expense) => (
+                  paginatedExpenses.map((expense) => (
                     <TableRow key={expense.id}>
                       <TableCell className="whitespace-nowrap">
                         <div className="flex items-center gap-2">
@@ -379,6 +391,31 @@ export function ExpensesModule() {
               </TableBody>
             </Table>
           </div>
+          {!isLoading && filteredExpenses.length > 0 && (
+            <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-muted-foreground">
+                Pagina {currentPageSafe} de {totalPages} ({filteredExpenses.length} registros)
+              </p>
+              <div className="flex items-center gap-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentPage(Math.max(1, currentPageSafe - 1))}
+                  disabled={currentPageSafe <= 1}
+                >
+                  Anterior
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => setCurrentPage(Math.min(totalPages, currentPageSafe + 1))}
+                  disabled={currentPageSafe >= totalPages}
+                >
+                  Siguiente
+                </Button>
+              </div>
+            </div>
+          )}
         </CardContent>
       </Card>
     </div>
