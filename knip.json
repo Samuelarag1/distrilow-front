@@ -1,8 +1,18 @@
 {
-  "entry": ["src/pages/**/*.{ts,tsx}", "src/app/**/*.{ts,tsx}"],
-  "project": ["src/**/*.{ts,tsx}"],
+  "entry": [
+    "app/**/*.{ts,tsx}",
+    "components/**/*.{ts,tsx}",
+    "hooks/**/*.{ts,tsx}",
+    "lib/**/*.{ts,tsx}",
+    "middleware.ts",
+    "next.config.mjs",
+    "postcss.config.mjs",
+    "tailwind.config.ts"
+  ],
+  "project": ["**/*.{ts,tsx,mjs}"],
   "ignore": [
-    "src/styles/**",
-    "src/types/**"
+    ".next/**",
+    "node_modules/**",
+    "public/**"
   ]
 }

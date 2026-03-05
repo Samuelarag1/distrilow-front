@@ -1,5 +1,5 @@
-const STATIC_CACHE = "distrilow-static-v1";
-const RUNTIME_CACHE = "distrilow-runtime-v1";
+const STATIC_CACHE = "distrilow-static-v2";
+const RUNTIME_CACHE = "distrilow-runtime-v2";
 
 const PRECACHE_URLS = [
   "/",
@@ -56,13 +56,29 @@ self.addEventListener("fetch", (event) => {
   }
 
   const destination = request.destination;
-  const shouldCacheAsset =
-    destination === "style" ||
-    destination === "script" ||
-    destination === "image" ||
-    destination === "font";
+  const isNetworkFirstAsset =
+    destination === "style" || destination === "script";
+  const isCacheFirstAsset = destination === "image" || destination === "font";
 
-  if (!shouldCacheAsset) return;
+  if (!isNetworkFirstAsset && !isCacheFirstAsset) return;
+
+  if (isNetworkFirstAsset) {
+    event.respondWith(
+      fetch(request)
+        .then((response) => {
+          if (response && response.status === 200 && response.type === "basic") {
+            const copy = response.clone();
+            caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
+          }
+          return response;
+        })
+        .catch(async () => {
+          const cached = await caches.match(request);
+          return cached ?? Response.error();
+        })
+    );
+    return;
+  }
 
   event.respondWith(
     caches.match(request).then((cached) => {

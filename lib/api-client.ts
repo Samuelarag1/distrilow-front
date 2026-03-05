@@ -312,9 +312,3 @@ export const apiClientFetch = {
   delete: <T = unknown>(url: string, options?: RequestOptions) =>
     request<T>(url, { ...options, method: "DELETE" }),
 };
-
-export const api = apiClientFetch;
-
-export async function apiGet<T>(url: string): Promise<T> {
-  return apiClientFetch.get<T>(url);
-}

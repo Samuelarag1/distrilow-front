@@ -312,6 +312,42 @@ function AdjustStockDialog({
   );
 }
 
+function SortButton({
+  label,
+  sortKey,
+  activeSortKey,
+  sortOrder,
+  onSort,
+}: {
+  label: string;
+  sortKey: SortKey;
+  activeSortKey: SortKey;
+  sortOrder: SortOrder;
+  onSort: (key: SortKey) => void;
+}) {
+  const isActive = activeSortKey === sortKey;
+
+  return (
+    <Button
+      variant={isActive ? "secondary" : "ghost"}
+      size="sm"
+      className="h-8 text-xs font-medium"
+      onClick={() => onSort(sortKey)}
+    >
+      {label}
+      {isActive ? (
+        sortOrder === "asc" ? (
+          <ArrowUp className="ml-1 h-3 w-3" />
+        ) : (
+          <ArrowDown className="ml-1 h-3 w-3" />
+        )
+      ) : (
+        <ArrowUpDown className="ml-1 h-3 w-3 opacity-50" />
+      )}
+    </Button>
+  );
+}
+
 export function InventoryModule() {
   const {
     products: inventory,
@@ -563,35 +599,6 @@ export function InventoryModule() {
     );
   }
 
-  function SortButton({
-    label,
-    sortKey: key,
-  }: {
-    label: string;
-    sortKey: SortKey;
-  }) {
-    const isActive = sortKey === key;
-    return (
-      <Button
-        variant={isActive ? "secondary" : "ghost"}
-        size="sm"
-        className="h-8 text-xs font-medium"
-        onClick={() => handleSort(key)}
-      >
-        {label}
-        {isActive ? (
-          sortOrder === "asc" ? (
-            <ArrowUp className="ml-1 h-3 w-3" />
-          ) : (
-            <ArrowDown className="ml-1 h-3 w-3" />
-          )
-        ) : (
-          <ArrowUpDown className="ml-1 h-3 w-3 opacity-50" />
-        )}
-      </Button>
-    );
-  }
-
   return (
     <div className="space-y-6">
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
@@ -745,10 +752,34 @@ export function InventoryModule() {
               <span className="text-sm text-muted-foreground font-medium mr-2">
                 Ordenar por:
               </span>
-              <SortButton label="Nombre" sortKey="name" />
-              <SortButton label="Stock" sortKey="stock" />
-              <SortButton label="Categoría" sortKey="category" />
-              <SortButton label="Precio" sortKey="price" />
+              <SortButton
+                label="Nombre"
+                sortKey="name"
+                activeSortKey={sortKey}
+                sortOrder={sortOrder}
+                onSort={handleSort}
+              />
+              <SortButton
+                label="Stock"
+                sortKey="stock"
+                activeSortKey={sortKey}
+                sortOrder={sortOrder}
+                onSort={handleSort}
+              />
+              <SortButton
+                label="Categoría"
+                sortKey="category"
+                activeSortKey={sortKey}
+                sortOrder={sortOrder}
+                onSort={handleSort}
+              />
+              <SortButton
+                label="Precio"
+                sortKey="price"
+                activeSortKey={sortKey}
+                sortOrder={sortOrder}
+                onSort={handleSort}
+              />
             </div>
           </div>
         </CardHeader>
