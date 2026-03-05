@@ -19,6 +19,7 @@ import { useUser } from "@/components/providers/user-provider";
 import { useBranches } from "@/components/providers/branch-provider";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useBusiness } from "@/components/providers/business-provider";
+import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
 import type { CashMovementType, CashSession } from "@/lib/api-types";
 
@@ -27,12 +28,14 @@ export function CashModule() {
   const { branches } = useBranches();
   const { addExpense } = useTransactions();
   const { businessType } = useBusiness();
+  const { logEvent } = useAudit();
   const { toast } = useToast();
 
   const canManageCash =
     currentUser?.role === "admin" ||
     currentUser?.role === "manager" ||
-    currentUser?.role === "cashier";
+    currentUser?.role === "cashier" ||
+    currentUser?.role === "seller";
 
   const [cashSession, setCashSession] = useState<CashSession | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -82,7 +85,22 @@ export function CashModule() {
 
   const handleOpenCash = async () => {
     const opening = Number(openingFloat);
-    if (!Number.isFinite(opening) || opening < 0) return;
+    if (!Number.isFinite(opening)) {
+      toast({
+        variant: "destructive",
+        title: "Monto invalido",
+        description: "Ingresa un fondo inicial numerico valido.",
+      });
+      return;
+    }
+    if (opening < 0) {
+      toast({
+        variant: "destructive",
+        title: "Monto invalido",
+        description: "No se puede abrir caja con un monto negativo.",
+      });
+      return;
+    }
 
     try {
       setIsSaving(true);
@@ -107,7 +125,22 @@ export function CashModule() {
 
     const amount = Number(movementAmount);
     const reason = movementReason.trim();
-    if (!Number.isFinite(amount) || amount < 0.01 || !reason) return;
+    if (!Number.isFinite(amount) || amount < 0.01) {
+      toast({
+        variant: "destructive",
+        title: "Monto invalido",
+        description: "El movimiento debe ser mayor a 0.",
+      });
+      return;
+    }
+    if (!reason) {
+      toast({
+        variant: "destructive",
+        title: "Motivo requerido",
+        description: "Ingresa un motivo para registrar el movimiento.",
+      });
+      return;
+    }
 
     try {
       setIsSaving(true);
@@ -156,14 +189,49 @@ export function CashModule() {
     if (!cashSession) return;
 
     const counted = Number(countedCash);
-    if (!Number.isFinite(counted) || counted < 0) return;
+    if (!Number.isFinite(counted)) {
+      toast({
+        variant: "destructive",
+        title: "Monto invalido",
+        description: "Ingresa un efectivo contado numerico valido.",
+      });
+      return;
+    }
+    if (counted < 0) {
+      toast({
+        variant: "destructive",
+        title: "Cierre no permitido",
+        description: "No se puede cerrar caja con un monto negativo.",
+      });
+      return;
+    }
 
     try {
       setIsSaving(true);
-      await backendApi.cash.closeSession(cashSession.id, {
+      const closedSession = await backendApi.cash.closeSession(cashSession.id, {
         countedCash: counted,
         notes: closeNotes.trim() || undefined,
       });
+      const expected = Number(
+        closedSession.expectedCash ?? cashSession.expectedCash ?? 0
+      );
+      const difference = Number(
+        closedSession.difference ?? counted - expected
+      );
+
+      logEvent(
+        "close_cashbox",
+        "cash_session",
+        `Cierre de caja en ${activeBranchName}`,
+        closedSession.id,
+        {
+          branchId: closedSession.branchId ?? branchId ?? null,
+          countedCash: counted,
+          expectedCash: expected,
+          difference,
+          notes: closeNotes.trim() || null,
+        }
+      );
 
       setCashSession(null);
       setCountedCash("");
@@ -187,7 +255,7 @@ export function CashModule() {
           <ShieldAlert className="h-10 w-10 text-destructive" />
           <h2 className="text-xl font-semibold">Acceso denegado</h2>
           <p className="max-w-md text-sm text-muted-foreground">
-            Solo administradores, managers y cajeros pueden gestionar caja.
+            Solo administradores, managers, cajeros y sellers pueden gestionar caja.
           </p>
         </CardContent>
       </Card>

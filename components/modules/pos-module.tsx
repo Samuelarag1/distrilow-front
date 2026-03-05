@@ -50,6 +50,26 @@ type Category = {
   name: string;
 };
 
+function toSafeNumber(value: unknown, fallback = 0): number {
+  const parsed =
+    typeof value === "number"
+      ? value
+      : typeof value === "string"
+      ? Number(value)
+      : NaN;
+
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function pickFirstFinite(values: unknown[], fallback = 0): number {
+  for (const value of values) {
+    const parsed = toSafeNumber(value, NaN);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return fallback;
+}
+
 function getLooseCategoryLabel(category: unknown): string {
   if (typeof category === "string" && category.trim()) return category;
   if (category && typeof category === "object") {
@@ -69,7 +89,8 @@ export function POSModule() {
   const canManageCash =
     currentUser?.role === "admin" ||
     currentUser?.role === "manager" ||
-    currentUser?.role === "cashier";
+    currentUser?.role === "cashier" ||
+    currentUser?.role === "seller";
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -99,6 +120,27 @@ export function POSModule() {
     });
     return map;
   }, [categoriesData]);
+
+  const moneyFormatter = useMemo(
+    () => new Intl.NumberFormat("es-AR"),
+    []
+  );
+
+  const formatMoney = (value: unknown) => moneyFormatter.format(toSafeNumber(value, 0));
+
+  const getActivePrice = (product: Product) => {
+    if (businessType === "wholesale") {
+      return pickFirstFinite(
+        [product.wholesalePrice, product.retailPrice, product.costPrice],
+        0
+      );
+    }
+
+    return pickFirstFinite(
+      [product.retailPrice, product.costPrice, product.wholesalePrice],
+      0
+    );
+  };
 
   useEffect(() => {
     if (!branchId) {
@@ -262,10 +304,7 @@ export function POSModule() {
         return;
       }
 
-      const activePrice =
-        businessType === "wholesale"
-          ? scanned.wholesalePrice
-          : scanned.retailPrice || scanned.costPrice;
+      const activePrice = getActivePrice(scanned);
 
       addToCart({ ...scanned, costPrice: activePrice });
       setSearchQuery(scanned.name);
@@ -281,7 +320,7 @@ export function POSModule() {
   };
 
   const total = cart.reduce((sum, item) => {
-    const price = item.costPrice || 0;
+    const price = toSafeNumber(item.costPrice, 0);
     return sum + price * item.quantity;
   }, 0);
   const itemCount = cart.reduce((sum, item) => sum + item.quantity, 0);
@@ -371,7 +410,7 @@ export function POSModule() {
         lineItems: cart.map((item) => ({
           productId: item.id,
           quantity: item.quantity,
-          price: item.costPrice,
+          price: toSafeNumber(item.costPrice, 0),
         })),
         userId: currentUser?.id || "unknown",
         userName: currentUser?.name || "Anonimo",
@@ -381,7 +420,7 @@ export function POSModule() {
 
       toast({
         title: "Venta exitosa",
-        description: `Venta por $${total.toLocaleString()} registrada con ${method}`,
+        description: `Venta por $${formatMoney(total)} registrada con ${method}`,
       });
       await mutateProducts();
       setCart([]);
@@ -497,10 +536,7 @@ export function POSModule() {
                   ))
                 ) : filteredProducts.length > 0 ? (
                   filteredProducts.map((product) => {
-                    const activePrice =
-                      businessType === "wholesale"
-                        ? product.wholesalePrice
-                        : product.retailPrice || product.costPrice;
+                    const activePrice = getActivePrice(product);
                     return (
                       <Card
                         key={product.id}
@@ -536,7 +572,7 @@ export function POSModule() {
                                 </p>
                               </div>
                               <p className="text-sm font-black text-primary">
-                                ${activePrice.toLocaleString()}
+                                ${formatMoney(activePrice)}
                               </p>
                             </div>
                             <Button
@@ -598,7 +634,7 @@ export function POSModule() {
                             {item.name}
                           </h4>
                           <p className="text-xs text-muted-foreground">
-                            ${Number(item.costPrice).toFixed(2)}
+                            ${toSafeNumber(item.costPrice, 0).toFixed(2)}
                           </p>
                         </div>
                         <div className="flex items-center space-x-1">
@@ -707,7 +743,7 @@ export function POSModule() {
             <AlertDialogTitle>Confirmar Pago</AlertDialogTitle>
             <AlertDialogDescription>
               Deseas procesar el pago de{" "}
-              <strong>${Number(total).toLocaleString()}</strong> usando{" "}
+              <strong>${formatMoney(total)}</strong> usando{" "}
               <strong>
                 {pendingPaymentMethod === "Efectivo" ? "Efectivo" : "Tarjeta"}
               </strong>

@@ -14,7 +14,7 @@ export function ReportsView() {
   });
 
   return (
-    <div className="flex-1 space-y-4 p-8 pt-6">
+    <div className="flex-1 space-y-4 p-4 pt-4 sm:p-6 sm:pt-6 lg:p-8">
       <div className="flex items-center justify-between space-y-2">
         <h2 className="bg-gradient-to-r from-primary to-blue-600 bg-clip-text text-3xl font-bold tracking-tight text-transparent">
           Reportes
@@ -22,11 +22,11 @@ export function ReportsView() {
       </div>
 
       <Tabs defaultValue="sales" className="space-y-4">
-        <TabsList className="bg-muted p-1">
-          <TabsTrigger value="sales">Ventas</TabsTrigger>
-          <TabsTrigger value="stock">Inventario</TabsTrigger>
-          <TabsTrigger value="clients">Clientes</TabsTrigger>
-          <TabsTrigger value="audit">Auditoria</TabsTrigger>
+        <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto bg-muted p-1">
+          <TabsTrigger className="shrink-0" value="sales">Ventas</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="stock">Inventario</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="clients">Clientes</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="audit">Auditoria</TabsTrigger>
         </TabsList>
 
         <TabsContent value="sales" className="space-y-4">

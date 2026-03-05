@@ -47,13 +47,6 @@ export function QuickActions() {
       action: () => router.push("/reports"),
     },
     {
-      title: "Gestionar Clientes",
-      description: "Ver y editar clientes",
-      icon: Users,
-      color: "bg-purple-500 hover:bg-purple-600",
-      action: () => router.push("/customers"),
-    },
-    {
       title: "Control de Stock",
       description: "Revisar inventario",
       icon: Package,

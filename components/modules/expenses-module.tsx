@@ -36,16 +36,10 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../ui/select";
-const EXPENSE_CATEGORIES = [
-  "RENT",
-  "SERVICES",
-  "SALARIES",
-  "SUPPLIES",
-  "MARKETING",
-  "MAINTENANCE",
-  "TAXES",
-  "OTHER",
-];
+import {
+  EXPENSE_CATEGORY_OPTIONS,
+  getExpenseCategoryLabel,
+} from "@/lib/expense-categories";
 
 export function ExpensesModule() {
   const { expenses, addExpense, isLoading } = useTransactions();
@@ -62,9 +56,11 @@ export function ExpensesModule() {
 
   const filteredExpenses = expenses.filter((expense) => {
     const matchesType = expense.businessType === businessType;
+    const normalizedQuery = searchQuery.toLowerCase();
     const matchesSearch =
-      expense.description.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      expense.category.toLowerCase().includes(searchQuery.toLowerCase());
+      expense.description.toLowerCase().includes(normalizedQuery) ||
+      expense.category.toLowerCase().includes(normalizedQuery) ||
+      getExpenseCategoryLabel(expense.category).toLowerCase().includes(normalizedQuery);
     return matchesType && matchesSearch;
   });
 
@@ -121,7 +117,7 @@ export function ExpensesModule() {
               Nuevo Gasto
             </Button>
           </DialogTrigger>
-          <DialogContent className="sm:max-w-[425px]">
+          <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-[425px]">
             <form onSubmit={handleAddExpense}>
               <DialogHeader>
                 <DialogTitle>Registrar Gasto</DialogTitle>
@@ -164,9 +160,9 @@ export function ExpensesModule() {
                         <SelectValue placeholder="Selecciona una categoria" />
                       </SelectTrigger>
                       <SelectContent>
-                        {EXPENSE_CATEGORIES.map((category) => (
-                          <SelectItem key={category} value={category}>
-                            {category}
+                        {EXPENSE_CATEGORY_OPTIONS.map((category) => (
+                          <SelectItem key={category.value} value={category.value}>
+                            {category.label}
                           </SelectItem>
                         ))}
                       </SelectContent>
@@ -250,7 +246,9 @@ export function ExpensesModule() {
               {topCategories.length > 0 ? (
                 topCategories.map(([cat, amount]) => (
                   <div key={cat} className="flex-1">
-                    <div className="text-xs font-bold truncate">{cat}</div>
+                    <div className="text-xs font-bold truncate">
+                      {getExpenseCategoryLabel(cat)}
+                    </div>
                     <div className="text-sm font-black text-primary">
                       ${amount.toLocaleString()}
                     </div>
@@ -288,7 +286,41 @@ export function ExpensesModule() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="rounded-md border overflow-x-auto">
+          <div className="space-y-3 md:hidden">
+            {isLoading ? (
+              <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">
+                Cargando gastos...
+              </div>
+            ) : filteredExpenses.length === 0 ? (
+              <div className="rounded-md border p-4 text-center text-sm text-muted-foreground">
+                No se encontraron gastos registrados.
+              </div>
+            ) : (
+              filteredExpenses.map((expense) => (
+                <div key={expense.id} className="rounded-md border p-3 space-y-2">
+                  <div className="flex items-start justify-between gap-2">
+                    <span className="font-medium break-words">{expense.description}</span>
+                    <span className="font-bold whitespace-nowrap">
+                      ${expense.amount.toLocaleString()}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-muted-foreground">
+                    <span>
+                      {format(new Date(expense.date), "dd/MM/yyyy HH:mm", {
+                        locale: es,
+                      })}
+                    </span>
+                    <Badge variant="secondary" className="font-normal">
+                      <Tag className="mr-1 h-3 w-3" />
+                      {getExpenseCategoryLabel(expense.category)}
+                    </Badge>
+                  </div>
+                  <p className="text-xs text-muted-foreground">Ref: {expense.id}</p>
+                </div>
+              ))
+            )}
+          </div>
+          <div className="hidden md:block rounded-md border overflow-x-auto">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -335,7 +367,7 @@ export function ExpensesModule() {
                       <TableCell>
                         <Badge variant="secondary" className="font-normal">
                           <Tag className="mr-1 h-3 w-3" />
-                          {expense.category}
+                          {getExpenseCategoryLabel(expense.category)}
                         </Badge>
                       </TableCell>
                       <TableCell className="text-right font-bold">

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -22,6 +22,7 @@ import {
   ShieldCheck,
   Download,
   CalendarDays,
+  RefreshCcw,
 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -237,27 +238,41 @@ export function ReportsModule() {
     [cashSessions]
   );
 
-  useEffect(() => {
+  const lastClosedSession = useMemo(() => {
+    return cashSessions
+      .filter((session) => !!session.closedAt)
+      .sort(
+        (a, b) =>
+          new Date(b.closedAt ?? 0).getTime() - new Date(a.closedAt ?? 0).getTime()
+      )[0] ?? null;
+  }, [cashSessions]);
+
+  const loadCashSessions = useCallback(async () => {
     if (!branchId) {
       setCashSessions([]);
       return;
     }
 
-    const loadCashSessions = async () => {
-      setCashLoading(true);
-      setCashError(null);
-      try {
-        const sessions = await backendApi.cash.listSessions();
-        setCashSessions(sessions);
-      } catch (err: any) {
-        setCashError(err?.message || "No se pudieron cargar sesiones de caja.");
-      } finally {
-        setCashLoading(false);
-      }
-    };
-
-    loadCashSessions();
+    setCashLoading(true);
+    setCashError(null);
+    try {
+      const sessions = await backendApi.cash.listSessions();
+      setCashSessions(sessions);
+    } catch (err: any) {
+      setCashError(err?.message || "No se pudieron cargar sesiones de caja.");
+    } finally {
+      setCashLoading(false);
+    }
   }, [branchId]);
+
+  useEffect(() => {
+    if (activeTab !== "cashDaily") return;
+    loadCashSessions();
+  }, [activeTab, loadCashSessions]);
+
+  useEffect(() => {
+    loadCashSessions();
+  }, [loadCashSessions]);
 
   const getMovementText = (event: AuditEvent) => {
     const summary = extractMovementSummary(event);
@@ -583,6 +598,10 @@ export function ReportsModule() {
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
+                  <Button variant="outline" size="sm" onClick={loadCashSessions}>
+                    <RefreshCcw className="mr-2 h-4 w-4" />
+                    Actualizar
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => exportCashDaily("csv")}>
                     <Download className="mr-2 h-4 w-4" />
                     CSV
@@ -608,38 +627,73 @@ export function ReportsModule() {
               )}
 
               {!cashLoading && !cashError && cashDailyRows.length > 0 && (
-                <div className="space-y-2">
-                  {cashDailyRows.map((row, index) => (
-                    <div
-                      key={`${row.fecha}-${row.apertura}-${index}`}
-                      className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-8"
-                    >
-                      <div>
-                        <span className="font-semibold">Fecha:</span> {row.fecha}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Apertura:</span> {row.apertura}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Cierre:</span> {row.cierre}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Inicial:</span> {row.fondoInicial}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Esperado:</span> {row.esperado}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Contado:</span> {row.contado}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Diferencia:</span> {row.diferencia}
-                      </div>
-                      <div>
-                        <span className="font-semibold">Estado:</span> {row.estado}
+                <div className="space-y-3">
+                  {lastClosedSession && (
+                    <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs">
+                      <div className="font-semibold text-emerald-800">Ultimo cierre registrado</div>
+                      <div className="mt-1 grid gap-1 sm:grid-cols-4">
+                        <span>
+                          <span className="font-semibold">Cierre:</span>{" "}
+                          {new Date(lastClosedSession.closedAt ?? "").toLocaleString()}
+                        </span>
+                        <span>
+                          <span className="font-semibold">Esperado:</span>{" "}
+                          {Number(lastClosedSession.expectedCash ?? 0).toLocaleString("es-AR", {
+                            style: "currency",
+                            currency: "ARS",
+                          })}
+                        </span>
+                        <span>
+                          <span className="font-semibold">Contado:</span>{" "}
+                          {Number(lastClosedSession.countedCash ?? 0).toLocaleString("es-AR", {
+                            style: "currency",
+                            currency: "ARS",
+                          })}
+                        </span>
+                        <span>
+                          <span className="font-semibold">Diferencia:</span>{" "}
+                          {Number(lastClosedSession.difference ?? 0).toLocaleString("es-AR", {
+                            style: "currency",
+                            currency: "ARS",
+                          })}
+                        </span>
                       </div>
                     </div>
-                  ))}
+                  )}
+
+                  <div className="space-y-2">
+                    {cashDailyRows.map((row, index) => (
+                      <div
+                        key={`${row.fecha}-${row.apertura}-${index}`}
+                        className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-8"
+                      >
+                        <div>
+                          <span className="font-semibold">Fecha:</span> {row.fecha}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Apertura:</span> {row.apertura}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Cierre:</span> {row.cierre}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Inicial:</span> {row.fondoInicial}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Esperado:</span> {row.esperado}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Contado:</span> {row.contado}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Diferencia:</span> {row.diferencia}
+                        </div>
+                        <div>
+                          <span className="font-semibold">Estado:</span> {row.estado}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </CardContent>

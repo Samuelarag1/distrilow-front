@@ -353,14 +353,16 @@ export function UsersModule() {
             className="overflow-hidden group hover:shadow-lg transition-all border-l-4 border-l-primary"
           >
             <CardContent className="p-6">
-              <div className="flex items-start justify-between">
-                <div className="flex items-center gap-4">
+              <div className="flex items-start justify-between gap-2">
+                <div className="flex min-w-0 items-center gap-4">
                   <div className="h-12 w-12 rounded-full bg-primary/10 flex items-center justify-center">
                     <UserIcon className="h-6 w-6 text-primary" />
                   </div>
-                  <div>
-                    <h3 className="font-bold text-lg">{user.email}</h3>
-                    <div className="flex items-center gap-2 mt-1">
+                  <div className="min-w-0">
+                    <h3 className="truncate font-bold text-lg" title={user.email}>
+                      {user.email}
+                    </h3>
+                    <div className="mt-1 flex flex-wrap items-center gap-2">
                       <Badge
                         variant="secondary"
                         className="capitalize text-[10px] font-black tracking-widest"
@@ -378,7 +380,11 @@ export function UsersModule() {
                 </div>
                 <DropdownMenu>
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="icon" className="h-8 w-8">
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8 shrink-0"
+                    >
                       <MoreHorizontal className="h-4 w-4" />
                     </Button>
                   </DropdownMenuTrigger>

@@ -16,6 +16,7 @@ function parseCookieJson<T>(value?: string): T | null {
 
 function isRestrictedUser(role?: string, branchesCount = 0) {
   if (!role) return false;
+  if (role === "seller") return true;
   const isManagement = role === "admin" || role === "manager";
   return !isManagement && branchesCount <= 1;
 }
@@ -67,5 +68,5 @@ export function middleware(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/((?!api|_next/static|_next/image|favicon.ico).*)"],
+  matcher: ["/((?!api|_next/static|_next/image|favicon.ico|manifest.json|sw.js|.*\\..*).*)"],
 };

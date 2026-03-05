@@ -16,6 +16,7 @@ export function canSwitchBranches(role?: UserRole | null, branchesCount = 0) {
 }
 
 export function isPosCashOnlyUser(role?: UserRole | null, branchesCount = 0) {
+  if (role === "seller") return true;
   return isBranchLockedUser(role, branchesCount);
 }
 

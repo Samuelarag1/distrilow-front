@@ -64,23 +64,12 @@ type Category = {
 };
 
 function getLooseCategoryLabel(category: unknown): string {
-  if (typeof category === "string" && category.trim()) return category;
+  if (typeof category === "string" && category.trim()) return category.trim();
   if (category && typeof category === "object") {
-    const value = category as { name?: unknown; id?: unknown };
+    const value = category as { name?: unknown };
     if (typeof value.name === "string" && value.name.trim()) return value.name;
-    if (typeof value.id === "string" && value.id.trim()) return value.id;
   }
   return "Sin categoria";
-}
-
-function getLooseCategoryValue(category: unknown): string {
-  if (typeof category === "string" && category.trim()) return category;
-  if (category && typeof category === "object") {
-    const value = category as { id?: unknown; name?: unknown };
-    if (typeof value.id === "string" && value.id.trim()) return value.id;
-    if (typeof value.name === "string" && value.name.trim()) return value.name;
-  }
-  return "uncategorized";
 }
 
 function AdjustStockDialog({
@@ -371,14 +360,17 @@ export function InventoryModule() {
     return map;
   }, [categoriesData]);
 
-  const getProductCategoryValue = (item: Product) => {
-    if (item.categoryId) return item.categoryId;
-    return getLooseCategoryValue((item as Product & { category?: unknown }).category);
-  };
-
   const getProductCategoryLabel = (item: Product) => {
     if (item.categoryId) {
-      return categoryNameById.get(item.categoryId) ?? item.categoryId;
+      const mapped = categoryNameById.get(item.categoryId);
+      if (mapped) return mapped;
+
+      const loose = getLooseCategoryLabel(
+        (item as Product & { category?: unknown }).category
+      );
+      if (loose && loose !== item.categoryId) return loose;
+
+      return "Sin categoria";
     }
     return getLooseCategoryLabel((item as Product & { category?: unknown }).category);
   };
@@ -399,7 +391,7 @@ export function InventoryModule() {
         .includes(searchQuery.toLowerCase());
       const matchesCategory =
         selectedCategory === "all" ||
-        getProductCategoryValue(item) === selectedCategory;
+        getProductCategoryLabel(item) === selectedCategory;
       return matchesSearch && matchesCategory;
     })
     .sort((a: Product, b: Product) => {
@@ -416,13 +408,19 @@ export function InventoryModule() {
     });
 
   const categories = useMemo(() => {
-    const map = new Map<string, string>();
+    const map = new Map<string, { value: string; label: string }>();
     inventory.forEach((item: Product) => {
-      const value = getProductCategoryValue(item);
       const label = getProductCategoryLabel(item);
-      if (!map.has(value)) map.set(value, label);
+      if (!map.has(label)) {
+        map.set(label, {
+          value: label,
+          label,
+        });
+      }
     });
-    return Array.from(map.entries()).map(([value, label]) => ({ value, label }));
+    return Array.from(map.values()).sort((a, b) =>
+      a.label.localeCompare(b.label)
+    );
   }, [inventory, categoriesData]);
 
   const lowStockItems = inventory.filter(
@@ -736,7 +734,7 @@ export function InventoryModule() {
               <select
                 value={selectedCategory}
                 onChange={(e) => setSelectedCategory(e.target.value)}
-                className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                className="w-full sm:w-[240px] px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
               >
                 <option value="all">Todas las categorías</option>
                 {categories.map((category) => (

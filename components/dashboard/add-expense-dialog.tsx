@@ -23,22 +23,12 @@ import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { EXPENSE_CATEGORY_OPTIONS } from "@/lib/expense-categories";
 
 interface AddExpenseDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }
-
-const categories = [
-  "RENT",
-  "SERVICES",
-  "SALARIES",
-  "SUPPLIES",
-  "MARKETING",
-  "MAINTENANCE",
-  "TAXES",
-  "OTHER",
-];
 
 export function AddExpenseDialog({
   open,
@@ -111,7 +101,7 @@ export function AddExpenseDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-[425px]">
+      <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle>Registrar Nuevo Gasto</DialogTitle>
           <DialogDescription>
@@ -151,9 +141,9 @@ export function AddExpenseDialog({
                 <SelectValue placeholder="Selecciona una categoria" />
               </SelectTrigger>
               <SelectContent>
-                {categories.map((category) => (
-                  <SelectItem key={category} value={category}>
-                    {category}
+                {EXPENSE_CATEGORY_OPTIONS.map((category) => (
+                  <SelectItem key={category.value} value={category.value}>
+                    {category.label}
                   </SelectItem>
                 ))}
               </SelectContent>
