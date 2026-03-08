@@ -2,33 +2,44 @@
 import { Product } from "@/lib/products";
 
 export function normalizeProductPayload(productData: Partial<Product>) {
-  const payload: any = {
-    ...productData,
+  const rawPlu = (productData as any).pluCode?.trim() || "";
+  const normalizedPlu = /^\d{5}$/.test(rawPlu) ? rawPlu : undefined;
+  const barcode = (productData as any).barcode?.trim() || undefined;
+  const categoryId = (productData as any).categoryId?.trim() || undefined;
+  const description = (productData as any).description?.trim() || undefined;
+  const brand = (productData as any).brand?.trim() || undefined;
 
-    measurementType: (productData as any).measurementType ?? "unit",
-
-    barcode: (productData as any).barcode?.trim() || null,
-    categoryId: (productData as any).categoryId?.trim() || null,
-
+  return {
+    sku: productData.sku,
+    name: productData.name,
+    barcode,
+    pluCode: normalizedPlu,
+    isWeighable:
+      (productData as any).isWeighable === undefined
+        ? undefined
+        : Boolean((productData as any).isWeighable),
+    description,
     costPrice:
-      productData.costPrice !== undefined
-        ? Number(productData.costPrice)
-        : undefined,
+      productData.costPrice !== undefined ? Number(productData.costPrice) : undefined,
     wholesalePrice:
       productData.wholesalePrice !== undefined
         ? Number(productData.wholesalePrice)
         : undefined,
     retailPrice:
-      productData.retailPrice !== undefined
-        ? Number(productData.retailPrice)
-        : undefined,
+      productData.retailPrice !== undefined ? Number(productData.retailPrice) : undefined,
     marginPercent:
       (productData as any).marginPercent !== undefined &&
       (productData as any).marginPercent !== null &&
       (productData as any).marginPercent !== ""
         ? Number((productData as any).marginPercent)
         : undefined,
+    isActive: productData.isActive,
+    categoryId,
+    branchId: (productData as any).branchId ?? undefined,
+    brand,
+    trackStock: (productData as any).trackStock,
+    allowNegativeStock: (productData as any).allowNegativeStock,
+    imageUrl: (productData as any).imageUrl ?? undefined,
+    measurementType: (productData as any).measurementType ?? "unit",
   };
-
-  return payload;
 }

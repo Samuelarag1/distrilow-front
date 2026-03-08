@@ -79,12 +79,16 @@ export function ProductDialog({
     // Backend entity / dto
     sku: "",
     barcode: "",
+    pluCode: "",
+    isWeighable: false,
     name: "",
     description: "",
     costPrice: 0,
     wholesalePrice: 0,
     retailPrice: 0,
     marginPercent: 0,
+    priceReviewPending: false,
+    costReviewPending: false,
     categoryId: "",
     brand: "",
     trackStock: false,
@@ -108,12 +112,16 @@ export function ProductDialog({
       setFormData({
         sku: (product as any).sku ?? "",
         barcode: (product as any).barcode ?? "",
+        pluCode: (product as any).pluCode ?? "",
+        isWeighable: Boolean((product as any).isWeighable ?? false),
         name: product.name ?? "",
         description: product.description ?? "",
         costPrice: Number((product as any).costPrice ?? 0),
         wholesalePrice: Number(product.wholesalePrice ?? 0),
         retailPrice: Number((product as any).retailPrice ?? 0),
         marginPercent: Number((product as any).marginPercent ?? 0),
+        priceReviewPending: Boolean((product as any).priceReviewPending ?? false),
+        costReviewPending: Boolean((product as any).costReviewPending ?? false),
         categoryId: productCategoryId,
         brand: (product as any).brand ?? "",
         trackStock: Boolean((product as any).trackStock ?? false),
@@ -131,12 +139,16 @@ export function ProductDialog({
       setFormData({
         sku: "",
         barcode: "",
+        pluCode: "",
+        isWeighable: false,
         name: "",
         description: "",
         costPrice: 0,
         wholesalePrice: 0,
         retailPrice: 0,
         marginPercent: 0,
+        priceReviewPending: false,
+        costReviewPending: false,
         categoryId: "",
         brand: "",
         trackStock: false,
@@ -200,12 +212,16 @@ export function ProductDialog({
     await onSave({
       sku: formData.sku.trim(),
       barcode: formData.barcode?.trim() || undefined,
+      pluCode: formData.pluCode?.trim() || undefined,
+      isWeighable: formData.isWeighable,
       name: formData.name.trim(),
       description: formData.description?.trim() || undefined,
       costPrice: formData.costPrice,
       wholesalePrice: formData.wholesalePrice,
       retailPrice: formData.retailPrice,
       marginPercent: marginPercent || undefined,
+      priceReviewPending: formData.priceReviewPending,
+      costReviewPending: formData.costReviewPending,
       categoryId: formData.categoryId?.trim() || undefined,
       brand: formData.brand?.trim() || undefined,
       trackStock: formData.trackStock,
@@ -291,8 +307,8 @@ export function ProductDialog({
               </div>
             </div>
 
-            {/* SKU + Barcode */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            {/* SKU + Barcode + PLU */}
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>SKU *</Label>
                 <Input
@@ -314,6 +330,21 @@ export function ProductDialog({
                     setFormData((p) => ({ ...p, barcode: e.target.value }))
                   }
                   placeholder="Opcional"
+                  disabled={disableForm}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <Label>Codigo PLU</Label>
+                <Input
+                  value={formData.pluCode}
+                  onChange={(e) =>
+                    setFormData((p) => ({ ...p, pluCode: e.target.value }))
+                  }
+                  placeholder="Opcional"
+                  maxLength={5}
+                  pattern="\d{5}"
+                  title="El PLU debe tener exactamente 5 digitos"
                   disabled={disableForm}
                 />
               </div>
@@ -493,6 +524,56 @@ export function ProductDialog({
                     setFormData((p) => ({ ...p, allowNegativeStock: checked }))
                   }
                   disabled={disableForm || !formData.trackStock}
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
+                <div className="flex flex-col gap-1">
+                  <Label className="font-bold">Producto pesable</Label>
+                  <span className="text-xs text-muted-foreground">
+                    Habilita PLU/peso para balanza
+                  </span>
+                </div>
+                <Switch
+                  checked={formData.isWeighable}
+                  onCheckedChange={(checked) =>
+                    setFormData((p) => ({ ...p, isWeighable: checked }))
+                  }
+                  disabled={disableForm}
+                />
+              </div>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
+                <div className="flex flex-col gap-1">
+                  <Label className="font-bold">Revision de precio pendiente</Label>
+                  <span className="text-xs text-muted-foreground">
+                    Marca el producto para revisar precio
+                  </span>
+                </div>
+                <Switch
+                  checked={formData.priceReviewPending}
+                  onCheckedChange={(checked) =>
+                    setFormData((p) => ({ ...p, priceReviewPending: checked }))
+                  }
+                  disabled={disableForm}
+                />
+              </div>
+
+              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
+                <div className="flex flex-col gap-1">
+                  <Label className="font-bold">Revision de costo pendiente</Label>
+                  <span className="text-xs text-muted-foreground">
+                    Marca el producto para revisar costo
+                  </span>
+                </div>
+                <Switch
+                  checked={formData.costReviewPending}
+                  onCheckedChange={(checked) =>
+                    setFormData((p) => ({ ...p, costReviewPending: checked }))
+                  }
+                  disabled={disableForm}
                 />
               </div>
             </div>

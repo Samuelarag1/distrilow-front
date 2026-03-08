@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Wallet, Loader2, ShieldAlert } from "lucide-react";
+import { Wallet, Loader2, ShieldAlert, RefreshCcw, BookOpen } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -21,7 +21,11 @@ import { useTransactions } from "@/components/providers/transactions-provider";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
-import type { CashMovementType, CashSession } from "@/lib/api-types";
+import type {
+  CashBookDailyResponse,
+  CashMovementType,
+  CashSession,
+} from "@/lib/api-types";
 
 export function CashModule() {
   const { currentUser, branchId } = useUser();
@@ -47,10 +51,26 @@ export function CashModule() {
   const [movementAmount, setMovementAmount] = useState("");
   const [countedCash, setCountedCash] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
+  const [dailyBookDate, setDailyBookDate] = useState(
+    new Date().toISOString().slice(0, 10)
+  );
+  const [dailyBookPage, setDailyBookPage] = useState(1);
+  const dailyBookPageSize = 20;
+  const [dailyBook, setDailyBook] = useState<CashBookDailyResponse | null>(null);
+  const [isLoadingDailyBook, setIsLoadingDailyBook] = useState(false);
 
   const activeBranchName = useMemo(
     () => branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal",
     [branches, branchId]
+  );
+  const allDailyEntries = dailyBook?.entries.items ?? [];
+  const paginatedDailyEntries = useMemo(() => {
+    const start = (dailyBookPage - 1) * dailyBookPageSize;
+    return allDailyEntries.slice(start, start + dailyBookPageSize);
+  }, [allDailyEntries, dailyBookPage, dailyBookPageSize]);
+  const totalDailyPages = Math.max(
+    1,
+    Math.ceil(allDailyEntries.length / dailyBookPageSize)
   );
 
   const loadCurrentCashSession = useCallback(async () => {
@@ -79,9 +99,43 @@ export function CashModule() {
     }
   }, [canManageCash, branchId, toast]);
 
+  const loadDailyBook = useCallback(async () => {
+    if (!canManageCash || !branchId) {
+      setDailyBook(null);
+      return;
+    }
+
+    try {
+      setIsLoadingDailyBook(true);
+      const response = await backendApi.cash.dailyBook({
+        date: dailyBookDate,
+      }, branchId);
+      setDailyBook(response);
+    } catch (error: any) {
+      setDailyBook(null);
+      toast({
+        variant: "destructive",
+        title: "Error en libro diario",
+        description: error?.message || "No se pudo obtener el libro diario de caja.",
+      });
+    } finally {
+      setIsLoadingDailyBook(false);
+    }
+  }, [canManageCash, branchId, dailyBookDate, toast]);
+
   useEffect(() => {
     loadCurrentCashSession();
   }, [loadCurrentCashSession]);
+
+  useEffect(() => {
+    void loadDailyBook();
+  }, [loadDailyBook]);
+
+  useEffect(() => {
+    if (dailyBookPage > totalDailyPages) {
+      setDailyBookPage(totalDailyPages);
+    }
+  }, [dailyBookPage, totalDailyPages]);
 
   const handleOpenCash = async () => {
     const opening = Number(openingFloat);
@@ -108,12 +162,20 @@ export function CashModule() {
       setCashSession(session);
       setOpeningFloat("");
       setCountedCash(String(session.expectedCash ?? ""));
+      void loadDailyBook();
       toast({ title: "Caja abierta", description: "Sesion abierta correctamente." });
     } catch (error: any) {
+      const message = String(error?.message ?? "");
+      if (message.toLowerCase().includes("already an open cash session")) {
+        await loadCurrentCashSession();
+      }
       toast({
         variant: "destructive",
         title: "Error al abrir caja",
-        description: error?.message || "No se pudo abrir caja.",
+        description:
+          message.toLowerCase().includes("already an open cash session")
+            ? "Ya existe una sesion de caja abierta para esta sucursal."
+            : error?.message || "No se pudo abrir caja.",
       });
     } finally {
       setIsSaving(false);
@@ -173,6 +235,7 @@ export function CashModule() {
       setCashSession(updated);
       setMovementAmount("");
       setMovementReason("");
+      void loadDailyBook();
       toast({ title: "Movimiento registrado" });
     } catch (error: any) {
       toast({
@@ -236,6 +299,7 @@ export function CashModule() {
       setCashSession(null);
       setCountedCash("");
       setCloseNotes("");
+      void loadDailyBook();
       toast({ title: "Caja cerrada", description: "Sesion cerrada correctamente." });
     } catch (error: any) {
       toast({
@@ -389,6 +453,167 @@ export function CashModule() {
                 </Button>
               </div>
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="space-y-4">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <CardTitle className="flex items-center gap-2">
+              <BookOpen className="h-4 w-4" />
+              Libro de Caja Diario
+            </CardTitle>
+            <Button variant="outline" size="sm" onClick={() => void loadDailyBook()}>
+              <RefreshCcw className="mr-2 h-4 w-4" />
+              Actualizar
+            </Button>
+          </div>
+          <div className="max-w-xs space-y-2">
+            <Label htmlFor="daily-book-date">Fecha</Label>
+            <Input
+              id="daily-book-date"
+              type="date"
+              value={dailyBookDate}
+              onChange={(event) => {
+                setDailyBookDate(event.target.value);
+                setDailyBookPage(1);
+              }}
+            />
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {isLoadingDailyBook && (
+            <div className="text-sm text-muted-foreground">Cargando libro diario...</div>
+          )}
+
+          {!isLoadingDailyBook && !dailyBook && (
+            <div className="text-sm text-muted-foreground">
+              No hay datos de libro diario para la fecha seleccionada.
+            </div>
+          )}
+
+          {dailyBook && (
+            <>
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Apertura</p>
+                  <p className="text-lg font-semibold">
+                    ${Number(dailyBook.summary.opening ?? 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Esperado</p>
+                  <p className="text-lg font-semibold">
+                    ${Number(dailyBook.summary.expected ?? 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Contado</p>
+                  <p className="text-lg font-semibold">
+                    ${Number(dailyBook.summary.counted ?? 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Diferencia</p>
+                  <p
+                    className={`text-lg font-semibold ${
+                      Number(dailyBook.summary.difference ?? 0) < 0
+                        ? "text-red-600"
+                        : "text-emerald-600"
+                    }`}
+                  >
+                    ${Number(dailyBook.summary.difference ?? 0).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-2">
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Pagos en efectivo</p>
+                  <p className="text-base font-semibold">
+                    ${Number(dailyBook.breakdown.cash ?? 0).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Pagos transferencia</p>
+                  <p className="text-base font-semibold">
+                    ${Number(dailyBook.breakdown.transfer ?? 0).toLocaleString()}
+                  </p>
+                </div>
+              </div>
+
+              <div className="rounded-md border overflow-x-auto">
+                <table className="w-full min-w-[640px]">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="p-3 text-left text-xs font-semibold">Hora</th>
+                      <th className="p-3 text-left text-xs font-semibold">Tipo</th>
+                      <th className="p-3 text-left text-xs font-semibold">Metodo</th>
+                      <th className="p-3 text-left text-xs font-semibold">Descripcion</th>
+                      <th className="p-3 text-right text-xs font-semibold">Monto</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {allDailyEntries.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-4 text-center text-sm text-muted-foreground">
+                          Sin movimientos para esta fecha.
+                        </td>
+                      </tr>
+                    ) : (
+                      paginatedDailyEntries.map((entry) => (
+                        <tr key={entry.id} className="border-t">
+                          <td className="p-3 text-xs">
+                            {entry.createdAt
+                              ? new Date(entry.createdAt).toLocaleTimeString()
+                              : "-"}
+                          </td>
+                          <td className="p-3 text-xs">{entry.type}</td>
+                          <td className="p-3 text-xs">{entry.method ?? "-"}</td>
+                          <td className="p-3 text-xs">{entry.description ?? "-"}</td>
+                          <td className="p-3 text-right text-xs font-semibold">
+                            ${Number(entry.amount ?? 0).toLocaleString()}
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {allDailyEntries.length > 0 && (
+                <div className="flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Mostrando{" "}
+                    {allDailyEntries.length === 0
+                      ? 0
+                      : (dailyBookPage - 1) * dailyBookPageSize + 1}
+                    -
+                    {Math.min(dailyBookPage * dailyBookPageSize, allDailyEntries.length)}{" "}
+                    de {allDailyEntries.length}
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setDailyBookPage((prev) => Math.max(1, prev - 1))}
+                      disabled={dailyBookPage <= 1}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setDailyBookPage((prev) => prev + 1)}
+                      disabled={dailyBookPage >= totalDailyPages}
+                    >
+                      Siguiente
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>

@@ -76,10 +76,10 @@ export function AddExpenseDialog({
     try {
       await addExpense({
         amount: Number(formData.amount),
-        category: formData.category,
+        category: formData.category as any,
         description: formData.description,
         branchId,
-        businessType: "retail",
+        context: "GENERAL",
       });
 
       toast({

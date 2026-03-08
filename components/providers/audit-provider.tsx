@@ -75,8 +75,8 @@ export function AuditProvider({ children }: { children: React.ReactNode }) {
       setIsLoading(true);
       setError(null);
       try {
-        const rows = await backendApi.audit.list();
-        setEvents(rows.map(normalizeAudit));
+        const rows = await backendApi.audit.list({ skip: 0, take: 100 });
+        setEvents(rows.items.map(normalizeAudit));
       } catch (err: any) {
         setError(err?.message || "No se pudo cargar auditoria.");
       } finally {

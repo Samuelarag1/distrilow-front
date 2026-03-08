@@ -81,7 +81,41 @@ function getSessionToken() {
 }
 
 function getSessionBranchId() {
-  return activeBranchId ?? getCookie("activeBranchId") ?? getCookie("branchId");
+  const explicitBranchId =
+    activeBranchId ?? getCookie("activeBranchId") ?? getCookie("branchId");
+  if (explicitBranchId) return explicitBranchId;
+
+  const branchesRaw = getCookie("branches");
+  if (!branchesRaw) return null;
+
+  try {
+    const parsed = JSON.parse(branchesRaw);
+    if (!Array.isArray(parsed)) return null;
+    const first = parsed.find((branch) => {
+      if (typeof branch === "string") return branch.trim().length > 0;
+      if (!branch || typeof branch !== "object") return false;
+      const obj = branch as { id?: unknown; branchId?: unknown };
+      return (
+        (typeof obj.id === "string" && obj.id.trim().length > 0) ||
+        (typeof obj.branchId === "string" && obj.branchId.trim().length > 0)
+      );
+    });
+
+    if (typeof first === "string") {
+      return first.trim() || null;
+    }
+    if (first && typeof first === "object") {
+      const obj = first as { id?: unknown; branchId?: unknown };
+      if (typeof obj.id === "string" && obj.id.trim()) return obj.id.trim();
+      if (typeof obj.branchId === "string" && obj.branchId.trim()) {
+        return obj.branchId.trim();
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 function isBranchScopedPath(path: string) {

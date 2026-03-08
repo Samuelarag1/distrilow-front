@@ -20,11 +20,26 @@ function normalizeProduct(item: ApiProduct): Product {
   const measurement = item.measurementType as MeasurementType;
   return {
     ...item,
+    isWeighable:
+      item.isWeighable ??
+      (item.measurementType === "kg" || item.measurementType === "gram"),
     stock: Number(item.stock ?? 0),
     price: Number(item.retailPrice ?? item.costPrice ?? 0),
     category: item.categoryId ?? "Sin categoria",
     unit: measurement,
   };
+}
+
+function normalizeOptionalString(value: unknown) {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function normalizePluCode(value: unknown) {
+  const normalized = normalizeOptionalString(value);
+  if (!normalized) return undefined;
+  return /^\d{5}$/.test(normalized) ? normalized : undefined;
 }
 
 async function attachStock(item: ApiProduct): Promise<Product> {
@@ -79,16 +94,18 @@ export const productsApi = {
       wholesalePrice: Number(data.wholesalePrice ?? 0),
       retailPrice: Number(data.retailPrice ?? 0),
       measurementType: (data.measurementType ?? "unit") as MeasurementType,
-      barcode: data.barcode ?? undefined,
-      description: data.description ?? undefined,
+      barcode: normalizeOptionalString(data.barcode),
+      pluCode: normalizePluCode(data.pluCode),
+      isWeighable: data.isWeighable ?? undefined,
+      description: normalizeOptionalString(data.description),
       marginPercent: data.marginPercent ?? undefined,
       isActive: data.isActive ?? true,
-      categoryId: data.categoryId ?? undefined,
+      categoryId: normalizeOptionalString(data.categoryId),
       branchId: (data.branchId ?? branchId ?? undefined) as string | undefined,
-      brand: data.brand ?? undefined,
+      brand: normalizeOptionalString(data.brand),
       trackStock: data.trackStock ?? true,
       allowNegativeStock: data.allowNegativeStock ?? false,
-      imageUrl: data.imageUrl ?? undefined,
+      imageUrl: normalizeOptionalString(data.imageUrl),
     });
 
     return normalizeProduct(created);
@@ -101,16 +118,18 @@ export const productsApi = {
       costPrice: data.costPrice,
       wholesalePrice: data.wholesalePrice,
       retailPrice: data.retailPrice,
-      barcode: data.barcode ?? undefined,
-      description: data.description ?? undefined,
+      barcode: normalizeOptionalString(data.barcode),
+      pluCode: normalizePluCode(data.pluCode),
+      isWeighable: data.isWeighable,
+      description: normalizeOptionalString(data.description),
       marginPercent: data.marginPercent ?? undefined,
       isActive: data.isActive,
-      categoryId: data.categoryId ?? undefined,
+      categoryId: normalizeOptionalString(data.categoryId),
       branchId: data.branchId ?? undefined,
-      brand: data.brand ?? undefined,
+      brand: normalizeOptionalString(data.brand),
       trackStock: data.trackStock,
       allowNegativeStock: data.allowNegativeStock,
-      imageUrl: data.imageUrl ?? undefined,
+      imageUrl: normalizeOptionalString(data.imageUrl),
       measurementType: data.measurementType as MeasurementType | undefined,
     };
     const updated = await backendApi.products.update(id, payload);

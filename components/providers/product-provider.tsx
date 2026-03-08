@@ -106,9 +106,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   };
 
   const getBranchProductStock = async (branchId: string, productId: string) => {
-    const stockRows = await apiClientFetch.get<StockState[]>(
-      `/stocks/branch/${branchId}`
-    );
+    const stockRows = (await backendApi.stocks.listByBranch(branchId)) as StockState[];
 
     const stockRow = stockRows.find((row) => row.productId === productId);
     const quantity = Number(stockRow?.quantity ?? 0);

@@ -33,13 +33,14 @@ import {
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { useBusiness } from "@/components/providers/business-provider";
-import { Product, productsApi } from "@/lib/products";
+import { Product } from "@/lib/products";
 import { useProducts } from "@/hooks/useProducts";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { backendApi } from "@/lib/backend-api";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
+import type { PaymentMethod } from "@/lib/api-types";
 
 interface CartItem extends Product {
   quantity: number;
@@ -105,9 +106,9 @@ export function POSModule() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
-  const [pendingPaymentMethod, setPendingPaymentMethod] = useState<
-    string | null
-  >(null);
+  const [cashPaymentAmount, setCashPaymentAmount] = useState("");
+  const [transferPaymentAmount, setTransferPaymentAmount] = useState("");
+  const [transferReference, setTransferReference] = useState("");
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const previousBranchRef = useRef<string | null>(null);
@@ -148,7 +149,9 @@ export function POSModule() {
   const formatMoney = (value: unknown) => moneyFormatter.format(toSafeNumber(value, 0));
 
   const isWeighableProduct = (product: Product) =>
-    product.measurementType === "kg" || product.measurementType === "gram";
+    Boolean(product.isWeighable) ||
+    product.measurementType === "kg" ||
+    product.measurementType === "gram";
 
   const getQuantityStep = (product: Product) => {
     if (product.measurementType === "kg") return 0.001;
@@ -247,7 +250,10 @@ export function POSModule() {
     [categoriesData]
   );
 
-  const addToCart = (product: Product) => {
+  const addToCart = (
+    product: Product,
+    options?: { quantity?: number; unitPrice?: number; subtotal?: number }
+  ) => {
     if (branchId && product.branchId && product.branchId !== branchId) {
       toast({
         variant: "destructive",
@@ -268,12 +274,25 @@ export function POSModule() {
     }
 
     const step = getQuantityStep(product);
-    const initialQuantity = isWeighableProduct(product) ? step : 1;
+    const requestedQuantity =
+      options?.quantity && options.quantity > 0
+        ? roundTo(options.quantity, 3)
+        : isWeighableProduct(product)
+        ? step
+        : 1;
+    const requestedUnitPrice =
+      options?.unitPrice && options.unitPrice > 0
+        ? roundTo(options.unitPrice, 6)
+        : getActivePrice(product);
+    const requestedSubtotal =
+      options?.subtotal && options.subtotal > 0
+        ? roundTo(options.subtotal, 2)
+        : null;
 
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
-        const nextQuantity = roundTo(existing.quantity + step, 3);
+        const nextQuantity = roundTo(existing.quantity + requestedQuantity, 3);
         if (nextQuantity > stock) {
           toast({
             title: "Stock limitado",
@@ -290,13 +309,22 @@ export function POSModule() {
         );
       }
 
+      if (requestedQuantity > stock) {
+        toast({
+          title: "Stock limitado",
+          description: `Solo hay ${stock} disponibles de ${product.name}`,
+          variant: "destructive",
+        });
+        return prev;
+      }
+
       return [
         ...prev,
         {
           ...product,
-          quantity: initialQuantity,
-          unitPrice: getActivePrice(product),
-          customLineTotal: null,
+          quantity: requestedQuantity,
+          unitPrice: requestedUnitPrice,
+          customLineTotal: requestedSubtotal,
         },
       ];
     });
@@ -356,16 +384,20 @@ export function POSModule() {
     if (!code) return;
 
     try {
-      let scanned =
+      const localMatch =
         products.find(
-          (product) => product.barcode === code || product.sku === code
-        ) || null;
+          (product) =>
+            product.barcode === code ||
+            product.sku === code ||
+            product.pluCode === code
+        ) ?? null;
 
-      if (!scanned) {
-        scanned = await productsApi.getByBarcode(code);
-      }
+      const resolved = localMatch
+        ? { product: localMatch, quantity: undefined, unitPrice: undefined, subtotal: undefined, barcodeType: "STANDARD" }
+        : await backendApi.products.resolveBarcode(code);
+      const scanned = resolved?.product ?? null;
 
-      if (!scanned) {
+      if (!scanned || !scanned.id) {
         toast({
           variant: "destructive",
           title: "Producto no encontrado",
@@ -374,15 +406,39 @@ export function POSModule() {
         return;
       }
 
-      addToCart(scanned);
+      addToCart(scanned as Product, {
+        quantity: Number.isFinite(resolved.quantity ?? NaN)
+          ? resolved.quantity
+          : undefined,
+        unitPrice: Number.isFinite(resolved.unitPrice ?? NaN)
+          ? resolved.unitPrice
+          : undefined,
+        subtotal: Number.isFinite(resolved.subtotal ?? NaN)
+          ? resolved.subtotal
+          : undefined,
+      });
       setSearchQuery(scanned.name);
       setScanQuery("");
     } catch (error: any) {
+      const message = String(error?.message ?? "");
+      const normalizedMessage = message.toLowerCase();
+      const isInvalidBarcode =
+        normalizedMessage.includes("barcode invalido") ||
+        normalizedMessage.includes("invalid barcode") ||
+        normalizedMessage.includes("ean");
+      const isMissingPlu =
+        normalizedMessage.includes("plu") &&
+        (normalizedMessage.includes("inexistente") ||
+          normalizedMessage.includes("not found"));
+
       toast({
         variant: "destructive",
         title: "Error al escanear",
-        description:
-          error?.message || "No se pudo procesar el codigo escaneado.",
+        description: isInvalidBarcode
+          ? "El codigo escaneado no es valido."
+          : isMissingPlu
+          ? "El PLU del codigo interno no existe en el catalogo."
+          : error?.message || "No se pudo procesar el codigo escaneado.",
       });
     }
   };
@@ -396,6 +452,10 @@ export function POSModule() {
 
   const total = cart.reduce((sum, item) => sum + getCartLineTotal(item), 0);
   const itemCount = cart.length;
+  const cashPaymentPreview = Math.max(0, Number(cashPaymentAmount || 0));
+  const transferPaymentPreview = Math.max(0, Number(transferPaymentAmount || 0));
+  const totalInitialPayments = cashPaymentPreview + transferPaymentPreview;
+  const pendingAfterInitialPayments = Math.max(0, total - totalInitialPayments);
   const totalPages = Math.max(1, Math.ceil((productsTotal || 0) / Math.max(take, 1)));
   const showingFrom = productsTotal === 0 ? 0 : skip + 1;
   const showingTo = productsTotal === 0 ? 0 : skip + filteredProducts.length;
@@ -433,7 +493,7 @@ export function POSModule() {
     return false;
   };
 
-  const handlePayment = async (method: string) => {
+  const handlePayment = async () => {
     if (cart.length === 0) {
       toast({
         title: "Carrito vacio",
@@ -446,12 +506,10 @@ export function POSModule() {
     const canProceed = await ensureOpenCashSession();
     if (!canProceed) return;
 
-    setPendingPaymentMethod(method);
     setIsPaymentConfirmOpen(true);
   };
 
   const processPayment = async () => {
-    const method = pendingPaymentMethod || "Efectivo";
     const saleBranchId = branchId;
 
     try {
@@ -478,10 +536,26 @@ export function POSModule() {
       }
 
       setIsProcessingPayment(true);
-      await addSale({
-        amount: total,
+      const payments: Array<{
+        amount: number;
+        method: PaymentMethod;
+        reference?: string;
+      }> = [];
+      const cashAmount = Number(cashPaymentAmount || 0);
+      const transferAmount = Number(transferPaymentAmount || 0);
+      if (Number.isFinite(cashAmount) && cashAmount > 0) {
+        payments.push({ amount: cashAmount, method: "CASH" });
+      }
+      if (Number.isFinite(transferAmount) && transferAmount > 0) {
+        payments.push({
+          amount: transferAmount,
+          method: "TRANSFER",
+          reference: transferReference.trim() || undefined,
+        });
+      }
+
+      const createdSale = await addSale({
         customerName: "Consumidor Final",
-        items: itemCount,
         lineItems: cart.map((item) => {
           const quantity = toSafeNumber(item.quantity, 0);
           const computedUnitPrice =
@@ -495,20 +569,27 @@ export function POSModule() {
             price: roundTo(computedUnitPrice, 6),
           };
         }),
-        userId: currentUser?.id || "unknown",
-        userName: currentUser?.name || "Anonimo",
+        payments,
         branchId: saleBranchId,
-        businessType,
       });
+      const paidAmount = Number(createdSale.paidAmount ?? 0);
+      const outstandingAmount = Number(createdSale.outstandingAmount ?? 0);
 
       toast({
         title: "Venta exitosa",
-        description: `Venta por $${formatMoney(total)} registrada con ${method}`,
+        description:
+          outstandingAmount > 0
+            ? `Venta por $${formatMoney(total)} registrada. Pagado: $${formatMoney(
+                paidAmount
+              )}. Saldo pendiente: $${formatMoney(outstandingAmount)}.`
+            : `Venta por $${formatMoney(total)} registrada y pagada.`,
       });
       await mutateProducts();
       setCart([]);
+      setCashPaymentAmount("");
+      setTransferPaymentAmount("");
+      setTransferReference("");
       setIsPaymentConfirmOpen(false);
-      setPendingPaymentMethod(null);
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -847,22 +928,63 @@ export function POSModule() {
                     </div>
                   </div>
                   <div className="space-y-2">
+                    <div className="rounded-md border p-3 space-y-2">
+                      <p className="text-xs font-semibold uppercase text-muted-foreground">
+                        Pagos iniciales (opcional)
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div className="space-y-1">
+                          <label className="text-[11px] text-muted-foreground">
+                            Efectivo
+                          </label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={cashPaymentAmount}
+                            onChange={(event) => setCashPaymentAmount(event.target.value)}
+                            className="h-8"
+                          />
+                        </div>
+                        <div className="space-y-1">
+                          <label className="text-[11px] text-muted-foreground">
+                            Transferencia
+                          </label>
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="0.00"
+                            value={transferPaymentAmount}
+                            onChange={(event) => setTransferPaymentAmount(event.target.value)}
+                            className="h-8"
+                          />
+                        </div>
+                      </div>
+                      <div className="space-y-1">
+                        <label className="text-[11px] text-muted-foreground">
+                          Referencia transferencia
+                        </label>
+                        <Input
+                          placeholder="Alias, CBU, comprobante"
+                          value={transferReference}
+                          onChange={(event) => setTransferReference(event.target.value)}
+                          className="h-8"
+                        />
+                      </div>
+                    </div>
                     <Button
                       className="w-full"
-                      onClick={() => handlePayment("Efectivo")}
+                      onClick={() => handlePayment()}
                       disabled={isProcessingPayment}
                     >
                       <Banknote className="mr-2 h-4 w-4" />
-                      Pagar en Efectivo
+                      Registrar Venta
                     </Button>
-                    <Button
-                      className="w-full"
-                      variant="outline"
-                      onClick={() => handlePayment("Tarjeta")}
-                      disabled={isProcessingPayment}
-                    >
+                    <Button className="w-full" variant="outline" disabled>
                       <CreditCard className="mr-2 h-4 w-4" />
-                      Pagar con Tarjeta
+                      Soporta pagos mixtos
                     </Button>
                     <AlertDialog>
                       <AlertDialogTrigger asChild>
@@ -906,18 +1028,13 @@ export function POSModule() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar Pago</AlertDialogTitle>
             <AlertDialogDescription>
-              Deseas procesar el pago de{" "}
-              <strong>${formatMoney(total)}</strong> usando{" "}
-              <strong>
-                {pendingPaymentMethod === "Efectivo" ? "Efectivo" : "Tarjeta"}
-              </strong>
-              ?
+              Total venta: <strong>${formatMoney(total)}</strong>. Pagos iniciales:{" "}
+              <strong>${formatMoney(totalInitialPayments)}</strong>. Saldo pendiente:{" "}
+              <strong>${formatMoney(pendingAfterInitialPayments)}</strong>.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => setPendingPaymentMethod(null)}>
-              Cancelar
-            </AlertDialogCancel>
+            <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction
               onClick={processPayment}
               className="bg-primary hover:bg-primary/90"

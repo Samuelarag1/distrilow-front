@@ -8,8 +8,10 @@ import { useTransactions } from "@/components/providers/transactions-provider";
 
 const getStatusColor = (status: string) => {
   switch (status) {
-    case "completed":
+    case "paid":
       return "bg-green-100 text-green-800";
+    case "partial":
+      return "bg-orange-100 text-orange-800";
     case "pending":
       return "bg-yellow-100 text-yellow-800";
     case "cancelled":
@@ -41,9 +43,19 @@ export function DailySales() {
         }),
         customer: sale.customerName || "Consumidor Final",
         items: sale.items,
-        total: sale.amount,
-        method: "N/A",
-        status: sale.status === "PENDING" ? "pending" : "completed",
+        total: sale.totalAmount ?? sale.amount,
+        method:
+          sale.payments.length > 0
+            ? sale.payments.map((payment) => payment.method).join(" + ")
+            : "Sin pago",
+        status:
+          sale.lifecycleStatus === "CANCELLED"
+            ? "cancelled"
+            : sale.chargeStatus === "PAID"
+            ? "paid"
+            : sale.chargeStatus === "PARTIALLY_PAID"
+            ? "partial"
+            : "pending",
       }))
       .sort((a, b) => (a.time < b.time ? 1 : -1));
   }, [sales]);
@@ -88,11 +100,13 @@ export function DailySales() {
                       <p className="text-xs text-muted-foreground">{sale.method}</p>
                     </div>
                     <Badge className={getStatusColor(sale.status)}>
-                      {sale.status === "completed"
-                        ? "Completado"
+                      {sale.status === "paid"
+                        ? "Pagada"
+                        : sale.status === "partial"
+                        ? "Parcial"
                         : sale.status === "pending"
                         ? "Pendiente"
-                        : "Cancelado"}
+                        : "Cancelada"}
                     </Badge>
                   </div>
                 </div>

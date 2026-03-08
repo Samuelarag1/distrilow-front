@@ -48,9 +48,44 @@ async function serverRequest<T = any>(
     cookieStore.get("accessToken")?.value ??
     cookieStore.get("token")?.value ??
     cookieStore.get("access_token")?.value;
-  const branchId =
+  const explicitBranchId =
     cookieStore.get("activeBranchId")?.value ||
     cookieStore.get("branchId")?.value;
+  let branchId = explicitBranchId;
+
+  if (!branchId) {
+    const branchesRaw = cookieStore.get("branches")?.value;
+    if (branchesRaw) {
+      try {
+        const decoded = decodeURIComponent(branchesRaw);
+        const parsed = JSON.parse(decoded);
+        if (Array.isArray(parsed)) {
+          const first = parsed.find((branch) => {
+            if (typeof branch === "string") return branch.trim().length > 0;
+            if (!branch || typeof branch !== "object") return false;
+            const obj = branch as { id?: unknown; branchId?: unknown };
+            return (
+              (typeof obj.id === "string" && obj.id.trim().length > 0) ||
+              (typeof obj.branchId === "string" && obj.branchId.trim().length > 0)
+            );
+          });
+
+          if (typeof first === "string") {
+            branchId = first.trim() || undefined;
+          } else if (first && typeof first === "object") {
+            const obj = first as { id?: unknown; branchId?: unknown };
+            if (typeof obj.id === "string" && obj.id.trim()) {
+              branchId = obj.id.trim();
+            } else if (typeof obj.branchId === "string" && obj.branchId.trim()) {
+              branchId = obj.branchId.trim();
+            }
+          }
+        }
+      } catch {
+        // Ignore invalid branches cookie payload and continue without branch header.
+      }
+    }
+  }
 
   const headers = new Headers(options.headers);
 

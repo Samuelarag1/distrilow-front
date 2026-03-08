@@ -28,8 +28,23 @@ export function useProductSave(opts: {
       try {
         const imageFile = productData.imageFile ?? null;
         const { imageFile: _imageFile, ...rawProductData } = productData;
+        const reviewFlags = {
+          priceReviewPending:
+            typeof (rawProductData as any).priceReviewPending === "boolean"
+              ? Boolean((rawProductData as any).priceReviewPending)
+              : undefined,
+          costReviewPending:
+            typeof (rawProductData as any).costReviewPending === "boolean"
+              ? Boolean((rawProductData as any).costReviewPending)
+              : undefined,
+        };
+        const {
+          priceReviewPending: _priceReviewPending,
+          costReviewPending: _costReviewPending,
+          ...baseProductData
+        } = rawProductData as any;
         const resolvedBranchId =
-          (rawProductData as any).branchId ??
+          (baseProductData as any).branchId ??
           opts.activeBranchId ??
           opts.editingProduct?.branchId ??
           null;
@@ -38,9 +53,7 @@ export function useProductSave(opts: {
           throw new Error("Selecciona una sucursal antes de guardar.");
         }
 
-        const payload = normalizeProductPayload({
-          ...rawProductData,
-        });
+        const payload = normalizeProductPayload(baseProductData);
 
         let productId = opts.editingProduct?.id ?? null;
 
@@ -54,6 +67,13 @@ export function useProductSave(opts: {
 
         if (!productId) {
           throw new Error("No se pudo resolver el producto para subir la imagen.");
+        }
+
+        if (
+          reviewFlags.priceReviewPending !== undefined ||
+          reviewFlags.costReviewPending !== undefined
+        ) {
+          await backendApi.products.updateReviewFlags(productId, reviewFlags);
         }
 
         if (imageFile) {

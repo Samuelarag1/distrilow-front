@@ -28,6 +28,7 @@ import useSWR from "swr";
 
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useBusiness } from "@/components/providers/business-provider";
+import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
 
@@ -36,10 +37,11 @@ const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8"];
 export function SalesReport({ dateRange }: { dateRange: any }) {
   const { sales, isLoading } = useTransactions();
   const { businessType } = useBusiness();
+  const { branchId } = useUser();
 
   const { data: productsPayload } = useSWR(
-    "sales-report-products",
-    () => backendApi.products.list({ skip: 0, take: 500 }),
+    branchId ? ["sales-report-products", branchId] : null,
+    () => backendApi.products.list({ skip: 0, take: 100 }, branchId),
     { revalidateOnFocus: false }
   );
 

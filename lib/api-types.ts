@@ -17,7 +17,7 @@ export type MovementType =
   | "RETURN"
   | "LOSS"
   | "EXPIRED";
-export type ExpenseCategory =
+export type ExpenseCategoryKnown =
   | "RENT"
   | "SERVICES"
   | "SALARIES"
@@ -25,11 +25,31 @@ export type ExpenseCategory =
   | "MARKETING"
   | "MAINTENANCE"
   | "TAXES"
+  | "LUZ"
+  | "DESCARTABLES"
+  | "LIMPIEZA"
+  | "BOLSAS"
+  | "DESINFECCION"
+  | "NAFTA"
+  | "MONOTRIBUTO"
+  | "VEHICULO_PARTICULAR"
   | "OTHER";
+export type ExpenseCategory = ExpenseCategoryKnown;
+export type ExpenseContext = "GENERAL" | "RETAIL" | "WHOLESALE";
 export type CashMovementType = "IN" | "OUT";
 export type AnalyticsGroupBy = "day" | "month" | "quarter" | "year";
 export type AnalyticsMetric = "revenue" | "count" | "avgTicket" | "profit";
 export type SnapshotPeriod = "monthly" | "quarterly" | "semiannual" | "annual";
+export type SaleChargeStatus = "PENDING" | "PARTIALLY_PAID" | "PAID";
+export type SaleLifecycleStatus = "ACTIVE" | "CANCELLED";
+export type PaymentMethod =
+  | "CASH"
+  | "TRANSFER"
+  | "DEBIT_CARD"
+  | "CREDIT_CARD"
+  | "MERCADO_PAGO"
+  | "OTHER"
+  | (string & {});
 
 export interface SessionBranch {
   id: string;
@@ -184,16 +204,42 @@ export interface DeleteResult {
   affected?: number;
 }
 
+export interface OffsetPaginationMeta {
+  total: number;
+  offset: number;
+  limit: number;
+  hasMore: boolean;
+  page?: number;
+  hasNextPage?: boolean;
+  hasPreviousPage?: boolean;
+}
+
+export interface PaginatedResponse<T> {
+  items: T[];
+  meta: OffsetPaginationMeta;
+}
+
+export interface CursorPageInfo {
+  nextCursor?: string | null;
+  prevCursor?: string | null;
+  hasNextPage: boolean;
+  hasPreviousPage: boolean;
+}
+
 export interface Product {
   id: string;
   sku: string;
   barcode?: string | null;
+  pluCode?: string | null;
+  isWeighable?: boolean;
   name: string;
   description?: string | null;
   costPrice: number;
   wholesalePrice: number;
   retailPrice: number;
   marginPercent?: number | null;
+  priceReviewPending?: boolean;
+  costReviewPending?: boolean;
   isActive?: boolean;
   categoryId?: string | null;
   branchId?: string | null;
@@ -212,6 +258,8 @@ export type ProductListItem = Product;
 export interface CreateProductRequest {
   sku: string;
   barcode?: string;
+  pluCode?: string;
+  isWeighable?: boolean;
   name: string;
   description?: string;
   costPrice: number;
@@ -228,39 +276,27 @@ export interface CreateProductRequest {
   measurementType: MeasurementType;
 }
 
+export interface UpdateProductReviewFlagsRequest {
+  priceReviewPending?: boolean;
+  costReviewPending?: boolean;
+}
+
 export type UpdateProductRequest = Partial<CreateProductRequest>;
-
-export interface OffsetPaginationMeta {
-  total: number;
-  page: number;
-  limit: number;
-  hasNextPage: boolean;
-  hasPreviousPage: boolean;
-}
-
-export interface CursorPageInfo {
-  nextCursor?: string | null;
-  prevCursor?: string | null;
-  hasNextPage: boolean;
-  hasPreviousPage: boolean;
-}
 
 export type ProductsListResponse =
   | {
       items: ProductListItem[];
       pageInfo: CursorPageInfo;
     }
-  | {
-      items: ProductListItem[];
-      meta: OffsetPaginationMeta;
-    };
+  | PaginatedResponse<ProductListItem>;
 
 export interface ProductsQuery {
-  page?: number;
-  limit?: number;
-  cursor?: string;
   skip?: number;
   take?: number;
+  page?: number;
+  limit?: number;
+  offset?: number;
+  cursor?: string;
   name?: string;
   q?: string;
   search?: string;
@@ -274,6 +310,50 @@ export interface UploadImageResponse {
   path: string;
   product: Product;
 }
+
+export interface ProductReviewPendingQuery {
+  skip?: number;
+  take?: number;
+  offset?: number;
+  limit?: number;
+  search?: string;
+}
+
+export interface ProductPriceCostHistoryRow {
+  id: string;
+  productId: string;
+  changedByUserId?: string | null;
+  oldCostPrice?: number | null;
+  newCostPrice?: number | null;
+  oldRetailPrice?: number | null;
+  newRetailPrice?: number | null;
+  oldWholesalePrice?: number | null;
+  newWholesalePrice?: number | null;
+  reason?: string | null;
+  createdAt?: string;
+  product?: ProductListItem;
+}
+
+export interface ProductPriceCostHistoryQuery {
+  skip?: number;
+  take?: number;
+  offset?: number;
+  limit?: number;
+  productId?: string;
+  from?: string;
+  to?: string;
+}
+
+export interface BarcodeLookupResolved {
+  code: string;
+  barcodeType?: "STANDARD" | "INTERNAL_EAN13" | "UNKNOWN";
+  quantity?: number;
+  unitPrice?: number;
+  subtotal?: number;
+  product: ProductListItem;
+}
+
+export type BarcodeLookupResponse = ProductListItem | BarcodeLookupResolved;
 
 export interface Stock {
   id: string;
@@ -290,6 +370,14 @@ export interface CreateStockRequest {
   productId: string;
   quantity: number;
   averageCost: number;
+}
+
+export interface StockQuery {
+  skip?: number;
+  take?: number;
+  offset?: number;
+  limit?: number;
+  productId?: string;
 }
 
 export interface Movement {
@@ -319,16 +407,43 @@ export interface TransferMovementRequest {
   quantity: number;
 }
 
+export interface MovementQuery {
+  skip?: number;
+  take?: number;
+  offset?: number;
+  limit?: number;
+  productId?: string;
+  type?: MovementType;
+  from?: string;
+  to?: string;
+}
+
 export interface SaleItemInput {
   productId: string;
   quantity: number;
   unitPrice: number;
 }
 
+export interface SalePaymentInput {
+  amount: number;
+  method: PaymentMethod;
+  reference?: string;
+  notes?: string;
+  paidAt?: string;
+}
+
+export interface SalePayment extends SalePaymentInput {
+  id: string;
+  saleId: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 export interface CreateSaleRequest {
   branchId?: string;
   clientId?: string;
   items: SaleItemInput[];
+  payments?: SalePaymentInput[];
 }
 
 export interface Sale {
@@ -336,8 +451,15 @@ export interface Sale {
   branchId: string;
   clientId?: string | null;
   total?: number;
+  totalAmount?: number;
+  paidAmount?: number;
+  outstandingAmount?: number;
+  chargeStatus?: SaleChargeStatus;
+  lifecycleStatus?: SaleLifecycleStatus;
   status?: string;
+  cancelledAt?: string | null;
   createdAt?: string;
+  updatedAt?: string;
   items: Array<{
     id?: string;
     productId: string;
@@ -345,6 +467,29 @@ export interface Sale {
     unitPrice: number;
     subtotal?: number;
   }>;
+  payments?: SalePayment[];
+}
+
+export interface SaleListQuery {
+  // skip?: number;
+  // take?: number;
+  offset?: number;
+  limit?: number;
+  search?: string;
+  chargeStatus?: SaleChargeStatus;
+  from?: string;
+  to?: string;
+}
+
+export interface SalePaymentsListQuery {
+  skip?: number;
+  take?: number;
+  offset?: number;
+  limit?: number;
+  saleId?: string;
+  method?: PaymentMethod;
+  from?: string;
+  to?: string;
 }
 
 export interface SnapshotMetricsResponse {
@@ -364,6 +509,7 @@ export interface CreateExpenseRequest {
   description: string;
   amount: number;
   category: ExpenseCategory;
+  context?: ExpenseContext;
 }
 
 export interface Expense {
@@ -372,8 +518,41 @@ export interface Expense {
   description: string;
   amount: number;
   category: ExpenseCategory;
+  context?: ExpenseContext;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface ExpenseListQuery {
+  skip?: number;
+  take?: number;
+  offset?: number;
+  limit?: number;
+  category?: string;
+  context?: ExpenseContext;
+  from?: string;
+  to?: string;
+  search?: string;
+}
+
+export interface ExpenseAnalyticsByCategory {
+  category: string;
+  total: number;
+  sharePercent: number;
+}
+
+export interface ExpenseAnalyticsEvolutionPoint {
+  period: string;
+  total: number;
+}
+
+export interface ExpenseAnalyticsResponse {
+  period: SnapshotPeriod;
+  context: ExpenseContext | "ALL";
+  total: number;
+  byCategory: ExpenseAnalyticsByCategory[];
+  evolution: ExpenseAnalyticsEvolutionPoint[];
+  currency?: string;
 }
 
 export interface CashSession {
@@ -415,6 +594,44 @@ export interface CloseCashSessionRequest {
   notes?: string;
 }
 
+export interface CashBookDailySummary {
+  opening: number;
+  expected: number;
+  counted: number;
+  difference: number;
+}
+
+export interface CashBookDailyBreakdown {
+  cash: number;
+  transfer: number;
+}
+
+export interface CashBookEntry {
+  id: string;
+  type: string;
+  amount: number;
+  method?: string | null;
+  description?: string | null;
+  saleId?: string | null;
+  sessionId?: string | null;
+  createdAt?: string;
+}
+
+export interface CashBookDailyQuery {
+  skip?: number;
+  take?: number;
+  date?: string;
+  offset?: number;
+  limit?: number;
+}
+
+export interface CashBookDailyResponse {
+  date: string;
+  summary: CashBookDailySummary;
+  breakdown: CashBookDailyBreakdown;
+  entries: PaginatedResponse<CashBookEntry>;
+}
+
 export interface AnalyticsPoint {
   period: string;
   value: number;
@@ -449,4 +666,17 @@ export interface AuditLog {
     email?: string;
     role?: UserRole;
   };
+}
+
+export interface AuditQuery {
+  skip?: number;
+  take?: number;
+  offset?: number;
+  limit?: number;
+  action?: string;
+  entityType?: string;
+  userId?: string;
+  from?: string;
+  to?: string;
+  search?: string;
 }

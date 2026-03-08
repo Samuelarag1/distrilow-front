@@ -3,9 +3,13 @@ import type {
   AnalyticsSalesQuery,
   AnalyticsSalesResponse,
   AuditLog,
+  AuditQuery,
   AuthResponse,
+  BarcodeLookupResponse,
   BootstrapBranchResponse,
   Branch,
+  CashBookDailyQuery,
+  CashBookDailyResponse,
   CashSession,
   Category,
   CloseCashSessionRequest,
@@ -20,25 +24,40 @@ import type {
   CreateUserRequest,
   DeleteResult,
   Expense,
+  ExpenseAnalyticsResponse,
+  ExpenseListQuery,
+  LoginRequest,
   LogoutRequest,
   LogoutResponse,
-  LoginRequest,
   Movement,
+  MovementQuery,
+  OffsetPaginationMeta,
   OpenCashSessionRequest,
+  PaginatedResponse,
   Product,
   ProductListItem,
+  ProductPriceCostHistoryQuery,
+  ProductPriceCostHistoryRow,
+  ProductReviewPendingQuery,
   ProductsListResponse,
   ProductsQuery,
   RefreshRequest,
-  SessionResponse,
-  SwitchBranchRequest,
   Sale,
+  SaleListQuery,
+  SalePayment,
+  SalePaymentInput,
+  SalePaymentsListQuery,
+  SessionResponse,
+  SnapshotPeriod,
   SnapshotMetricsResponse,
   Stock,
+  StockQuery,
+  SwitchBranchRequest,
   TransferMovementRequest,
   UpdateBranchRequest,
   UpdateCategoryRequest,
   UpdateProductRequest,
+  UpdateProductReviewFlagsRequest,
   UpdateResult,
   UpdateUserBranchesRequest,
   UpdateUserRequest,
@@ -55,16 +74,42 @@ export interface NormalizedProductsPage {
   hasMore: boolean;
 }
 
+export interface ResolvedBarcodeProduct {
+  product: ProductListItem;
+  quantity?: number;
+  unitPrice?: number;
+  subtotal?: number;
+  barcodeType?: string;
+}
+
 const STOCK_CACHE_TTL_MS = 10_000;
 const stockCacheByBranch = new Map<
   string,
   { cachedAt: number; rows: Stock[] }
 >();
 
+function toFiniteNumber(value: unknown, fallback = 0) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
 function buildQuery(params: object) {
   const query = new URLSearchParams();
+  const source = { ...(params as Record<string, unknown>) };
 
-  Object.entries(params as Record<string, unknown>).forEach(([key, value]) => {
+  if (source.skip === undefined && source.offset !== undefined) {
+    source.skip = source.offset;
+  }
+  if (source.take === undefined && source.limit !== undefined) {
+    source.take = source.limit;
+  }
+  if (source.take !== undefined) {
+    source.take = Math.min(100, Math.max(1, toFiniteNumber(source.take, 20)));
+  }
+  delete source.offset;
+  delete source.limit;
+
+  Object.entries(source).forEach(([key, value]) => {
     if (value === undefined || value === null || value === "") return;
     query.set(key, String(value));
   });
@@ -73,27 +118,143 @@ function buildQuery(params: object) {
   return value ? `?${value}` : "";
 }
 
+function buildOffsetQuery(params: object) {
+  const query = new URLSearchParams();
+  const source = { ...(params as Record<string, unknown>) };
+
+  const requestedLimit =
+    source.limit !== undefined ? source.limit : source.take;
+
+  if (requestedLimit !== undefined) {
+    const normalizedLimit = Math.min(
+      100,
+      Math.max(1, toFiniteNumber(requestedLimit, 20))
+    );
+    source.limit = normalizedLimit;
+
+    if (source.page === undefined) {
+      const requestedOffset =
+        source.offset !== undefined ? source.offset : source.skip;
+      if (requestedOffset !== undefined) {
+        const normalizedOffset = Math.max(
+          0,
+          toFiniteNumber(requestedOffset, 0)
+        );
+        source.page = Math.floor(normalizedOffset / normalizedLimit) + 1;
+      }
+    }
+  }
+
+  delete source.skip;
+  delete source.take;
+  delete source.offset;
+
+  Object.entries(source).forEach(([key, value]) => {
+    if (value === undefined || value === null || value === "") return;
+    query.set(key, String(value));
+  });
+
+  const value = query.toString();
+  return value ? `?${value}` : "";
+}
+
+function normalizeOffsetMeta(
+  meta: unknown,
+  fallbackOffset: number,
+  fallbackLimit: number,
+  fallbackTotal: number
+): OffsetPaginationMeta {
+  const parsed = (meta && typeof meta === "object" ? meta : {}) as Record<
+    string,
+    unknown
+  >;
+
+  const limit = Math.max(
+    1,
+    toFiniteNumber(parsed.limit ?? parsed.take, fallbackLimit)
+  );
+  const page = toFiniteNumber(parsed.page, NaN);
+  const computedOffsetFromPage = Number.isFinite(page)
+    ? Math.max(0, (page - 1) * limit)
+    : fallbackOffset;
+  const offset = Math.max(
+    0,
+    toFiniteNumber(parsed.offset, computedOffsetFromPage)
+  );
+  const total = Math.max(0, toFiniteNumber(parsed.total, fallbackTotal));
+  const hasMore =
+    typeof parsed.hasMore === "boolean"
+      ? parsed.hasMore
+      : typeof parsed.hasNextPage === "boolean"
+      ? parsed.hasNextPage
+      : offset + limit < total;
+
+  return {
+    total,
+    offset,
+    limit,
+    hasMore,
+    page: Number.isFinite(page) ? page : Math.floor(offset / limit) + 1,
+    hasNextPage: hasMore,
+    hasPreviousPage:
+      typeof parsed.hasPreviousPage === "boolean"
+        ? parsed.hasPreviousPage
+        : offset > 0,
+  };
+}
+
+function toPaginatedResponse<T>(
+  payload: PaginatedResponse<T> | T[],
+  fallbackOffset = 0,
+  fallbackLimit = 20
+): PaginatedResponse<T> {
+  if (Array.isArray(payload)) {
+    const items = payload;
+    return {
+      items,
+      meta: normalizeOffsetMeta(
+        { total: items.length, offset: fallbackOffset, limit: fallbackLimit },
+        fallbackOffset,
+        fallbackLimit,
+        items.length
+      ),
+    };
+  }
+
+  const items = Array.isArray(payload?.items) ? payload.items : [];
+  return {
+    items,
+    meta: normalizeOffsetMeta(
+      payload?.meta,
+      fallbackOffset,
+      fallbackLimit,
+      items.length
+    ),
+  };
+}
+
 function normalizeProductsPage(
   payload: ProductsListResponse,
   query: ProductsQuery
 ): NormalizedProductsPage {
   const defaultTake = Number(query.take ?? query.limit ?? 20);
-  const skip = Number(query.skip ?? 0);
+  const skip = Number(query.skip ?? query.offset ?? 0);
   const items = payload.items ?? [];
 
   if ("meta" in payload) {
-    const page = payload.meta.page ?? Math.floor(skip / defaultTake) + 1;
-    const take = payload.meta.limit ?? defaultTake;
-    const computedSkip = (page - 1) * take;
-    const hasMore = payload.meta.hasNextPage;
-
+    const meta = normalizeOffsetMeta(
+      payload.meta,
+      skip,
+      defaultTake,
+      items.length
+    );
     return {
       items,
-      total: payload.meta.total,
-      skip: computedSkip,
-      take,
-      nextSkip: hasMore ? computedSkip + take : null,
-      hasMore,
+      total: meta.total,
+      skip: meta.offset,
+      take: meta.limit,
+      nextSkip: meta.hasMore ? meta.offset + meta.limit : null,
+      hasMore: meta.hasMore,
     };
   }
 
@@ -150,6 +311,39 @@ function requireActiveBranchId() {
   return branchId;
 }
 
+function normalizeBarcodePayload(
+  payload: BarcodeLookupResponse
+): ResolvedBarcodeProduct {
+  if (
+    payload &&
+    typeof payload === "object" &&
+    "product" in payload &&
+    payload.product
+  ) {
+    const barcodePayload = payload as {
+      product: ProductListItem;
+      quantity?: unknown;
+      unitPrice?: unknown;
+      subtotal?: unknown;
+      barcodeType?: unknown;
+    };
+    return {
+      product: barcodePayload.product,
+      quantity: toFiniteNumber(barcodePayload.quantity, NaN),
+      unitPrice: toFiniteNumber(barcodePayload.unitPrice, NaN),
+      subtotal: toFiniteNumber(barcodePayload.subtotal, NaN),
+      barcodeType:
+        typeof barcodePayload.barcodeType === "string"
+          ? barcodePayload.barcodeType
+          : undefined,
+    };
+  }
+
+  return {
+    product: payload as ProductListItem,
+  };
+}
+
 async function getCachedStocksForBranch(branchId: string) {
   const cached = stockCacheByBranch.get(branchId);
   const now = Date.now();
@@ -157,7 +351,7 @@ async function getCachedStocksForBranch(branchId: string) {
     return cached.rows;
   }
 
-  const rows = await apiClientFetch.get<Stock[]>("/stocks");
+  const rows = await backendApi.stocks.listByBranch(branchId);
   stockCacheByBranch.set(branchId, { cachedAt: now, rows });
   return rows;
 }
@@ -165,15 +359,21 @@ async function getCachedStocksForBranch(branchId: string) {
 export const backendApi = {
   auth: {
     login: (body: LoginRequest) =>
-      apiClientFetch.post<AuthResponse>("/auth/login", body, { branchScoped: false }),
+      apiClientFetch.post<AuthResponse>("/auth/login", body, {
+        branchScoped: false,
+      }),
     switchBranch: (body: SwitchBranchRequest) =>
       apiClientFetch.post<SessionResponse>("/auth/switch-branch", body, {
         branchScoped: false,
       }),
     refresh: (body?: RefreshRequest) =>
-      apiClientFetch.post<AuthResponse>("/auth/refresh", body ?? {}, { branchScoped: false }),
+      apiClientFetch.post<AuthResponse>("/auth/refresh", body ?? {}, {
+        branchScoped: false,
+      }),
     logout: (body?: LogoutRequest) =>
-      apiClientFetch.post<LogoutResponse>("/auth/logout", body ?? {}, { branchScoped: false }),
+      apiClientFetch.post<LogoutResponse>("/auth/logout", body ?? {}, {
+        branchScoped: false,
+      }),
   },
   users: {
     list: () => apiClientFetch.get<User[]>("/users", { branchScoped: false }),
@@ -184,7 +384,9 @@ export const backendApi = {
     update: (id: string, body: UpdateUserRequest) =>
       apiClientFetch.patch<User>(`/users/${id}`, body, { branchScoped: false }),
     updateBranches: (id: string, body: UpdateUserBranchesRequest) =>
-      apiClientFetch.patch<User>(`/users/${id}/branches`, body, { branchScoped: false }),
+      apiClientFetch.patch<User>(`/users/${id}/branches`, body, {
+        branchScoped: false,
+      }),
     remove: (id: string) =>
       apiClientFetch.delete<boolean>(`/users/${id}`, { branchScoped: false }),
   },
@@ -195,43 +397,185 @@ export const backendApi = {
       }),
   },
   branches: {
-    list: () => apiClientFetch.get<Branch[]>("/branches", { branchScoped: false }),
+    list: () =>
+      apiClientFetch.get<Branch[]>("/branches", { branchScoped: false }),
     getById: (id: string) =>
       apiClientFetch.get<Branch>(`/branches/${id}`, { branchScoped: false }),
     create: (body: CreateBranchRequest) =>
       apiClientFetch.post<Branch>("/branches", body, { branchScoped: false }),
     update: (id: string, body: UpdateBranchRequest) =>
-      apiClientFetch.patch<Branch>(`/branches/${id}`, body, { branchScoped: false }),
-    remove: (id: string) =>
-      apiClientFetch.delete<boolean>(`/branches/${id}`, { branchScoped: false }),
-    bootstrap: (body: CreateBranchRequest) =>
-      apiClientFetch.post<BootstrapBranchResponse>("/branches/bootstrap", body, {
+      apiClientFetch.patch<Branch>(`/branches/${id}`, body, {
         branchScoped: false,
       }),
+    remove: (id: string) =>
+      apiClientFetch.delete<boolean>(`/branches/${id}`, {
+        branchScoped: false,
+      }),
+    bootstrap: (body: CreateBranchRequest) =>
+      apiClientFetch.post<BootstrapBranchResponse>(
+        "/branches/bootstrap",
+        body,
+        {
+          branchScoped: false,
+        }
+      ),
   },
   categories: {
-    list: () => apiClientFetch.get<Category[]>("/categories", { branchScoped: false }),
+    list: () =>
+      apiClientFetch.get<Category[]>("/categories", { branchScoped: false }),
     create: (body: CreateCategoryRequest) =>
-      apiClientFetch.post<Category>("/categories", body, { branchScoped: false }),
+      apiClientFetch.post<Category>("/categories", body, {
+        branchScoped: false,
+      }),
     update: (id: string, body: UpdateCategoryRequest) =>
       apiClientFetch.patch<UpdateResult>(`/categories/${id}`, body, {
         branchScoped: false,
       }),
     remove: (id: string) =>
-      apiClientFetch.delete<DeleteResult>(`/categories/${id}`, { branchScoped: false }),
+      apiClientFetch.delete<DeleteResult>(`/categories/${id}`, {
+        branchScoped: false,
+      }),
   },
   products: {
-    create: (body: CreateProductRequest) => apiClientFetch.post<Product>("/products", body),
-    getByBarcode: (code: string) =>
-      apiClientFetch.get<ProductListItem>(`/products/barcode/${code}`),
-    list: (query: ProductsQuery = {}) =>
-      apiClientFetch.get<ProductsListResponse>(`/products${buildQuery(query)}`),
-    getById: (id: string) => apiClientFetch.get<ProductListItem>(`/products/${id}`),
+    create: (body: CreateProductRequest) =>
+      apiClientFetch.post<Product>("/products", body),
+    resolveBarcode: async (code: string) => {
+      const payload = await apiClientFetch.get<BarcodeLookupResponse>(
+        `/products/barcode/${code}`
+      );
+      const normalized = normalizeBarcodePayload(payload);
+      const { branchId } = getApiSession();
+      if (!branchId) return normalized;
+
+      try {
+        const stock = await apiClientFetch.get<Stock>(
+          `/stocks/branch/${branchId}/product/${normalized.product.id}`
+        );
+        return {
+          ...normalized,
+          product: {
+            ...normalized.product,
+            stock: Number(stock.quantity ?? 0),
+          },
+        } satisfies ResolvedBarcodeProduct;
+      } catch {
+        return normalized;
+      }
+    },
+    getByBarcode: async (code: string) => {
+      const resolved = await backendApi.products.resolveBarcode(code);
+      return resolved.product;
+    },
+    list: async (
+      query: ProductsQuery = {},
+      branchIdOverride?: string | null
+    ) => {
+      const fallbackOffset = Number(query.offset ?? query.skip ?? 0);
+      const fallbackLimit = Number(query.limit ?? query.take ?? 20);
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      const payload = await apiClientFetch.get<ProductsListResponse>(
+        `/products${buildQuery(query)}`,
+        effectiveBranchId
+          ? {
+              headers: {
+                "x-branch-id": effectiveBranchId,
+              },
+            }
+          : undefined
+      );
+
+      if ("meta" in payload) {
+        return toPaginatedResponse<ProductListItem>(
+          payload as PaginatedResponse<ProductListItem>,
+          fallbackOffset,
+          fallbackLimit
+        );
+      }
+
+      const page = normalizeProductsPage(payload, query);
+      return {
+        items: page.items,
+        meta: normalizeOffsetMeta(
+          {
+            total: page.total,
+            offset: page.skip,
+            limit: page.take,
+            hasMore: page.hasMore,
+          },
+          page.skip,
+          page.take,
+          page.total
+        ),
+      } satisfies PaginatedResponse<ProductListItem>;
+    },
+    getById: (id: string) =>
+      apiClientFetch.get<ProductListItem>(`/products/${id}`),
     update: (id: string, body: UpdateProductRequest) =>
       apiClientFetch.patch<Product | null>(`/products/${id}`, body),
+    updateReviewFlags: (id: string, body: UpdateProductReviewFlagsRequest) =>
+      apiClientFetch.patch<Product>(`/products/${id}/review-flags`, body),
+    reviewPending: async (
+      query: ProductReviewPendingQuery = {},
+      branchIdOverride?: string | null
+    ) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<ProductListItem> | ProductListItem[]
+      >(
+        `/products/review-pending${buildQuery(query)}`,
+        effectiveBranchId
+          ? {
+              headers: {
+                "x-branch-id": effectiveBranchId,
+              },
+            }
+          : undefined
+      );
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 20)
+      );
+    },
+    priceHistory: async (
+      query: ProductPriceCostHistoryQuery = {},
+      branchIdOverride?: string | null
+    ) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      const payload = await apiClientFetch.get<
+        | PaginatedResponse<ProductPriceCostHistoryRow>
+        | ProductPriceCostHistoryRow[]
+      >(
+        `/products/history/prices${buildQuery(query)}`,
+        effectiveBranchId
+          ? {
+              headers: {
+                "x-branch-id": effectiveBranchId,
+              },
+            }
+          : undefined
+      );
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 20)
+      );
+    },
     remove: (id: string) => apiClientFetch.delete<boolean>(`/products/${id}`),
     uploadImageByProductId: (id: string, formData: FormData) =>
-      apiClientFetch.post<UploadImageResponse>(`/products/${id}/image`, formData),
+      apiClientFetch.post<UploadImageResponse>(
+        `/products/${id}/image`,
+        formData
+      ),
   },
   files: {
     uploadProductImage: (formData: FormData) =>
@@ -247,18 +591,61 @@ export const backendApi = {
       invalidateStockCache(payload.branchId);
       return created;
     },
-    list: () => apiClientFetch.get<Stock[]>("/stocks"),
-    listByBranch: (branchId: string) =>
-      apiClientFetch.get<Stock[]>(`/stocks/branch/${branchId}`),
+    list: async (query: StockQuery = {}) => {
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<Stock> | Stock[]
+      >(`/stocks${buildQuery(query)}`);
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 100)
+      );
+    },
+    listByBranch: async (branchId: string) => {
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<Stock> | Stock[] | { items?: Stock[] | null }
+      >(`/stocks/branch/${branchId}`);
+
+      if (Array.isArray(payload)) {
+        return payload;
+      }
+
+      if (
+        payload &&
+        typeof payload === "object" &&
+        Array.isArray((payload as { items?: unknown }).items)
+      ) {
+        return (payload as { items: Stock[] }).items;
+      }
+
+      return [];
+    },
     getByBranchAndProduct: (branchId: string, productId: string) =>
-      apiClientFetch.get<Stock>(`/stocks/branch/${branchId}/product/${productId}`),
+      apiClientFetch.get<Stock>(
+        `/stocks/branch/${branchId}/product/${productId}`
+      ),
   },
   stockMovements: {
-    list: () => apiClientFetch.get<Movement[]>("/stock-movements"),
-    history: (productId?: string) =>
-      apiClientFetch.get<Movement[]>(
-        `/stock-movements/history${buildQuery({ productId })}`
-      ),
+    list: async (query: MovementQuery = {}) => {
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<Movement> | Movement[]
+      >(`/stock-movements${buildQuery(query)}`);
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 50)
+      );
+    },
+    history: async (query: MovementQuery = {}) => {
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<Movement> | Movement[]
+      >(`/stock-movements/history${buildQuery(query)}`);
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 50)
+      );
+    },
     create: async (body: CreateMovementRequest) => {
       const payload: CreateMovementRequest = {
         ...body,
@@ -324,11 +711,52 @@ export const backendApi = {
       invalidateStockCache(payload.branchId);
       return sale;
     },
-    list: () => apiClientFetch.get<Sale[]>("/sales"),
+    list: async (
+      query: SaleListQuery = {},
+      branchIdOverride?: string | null
+    ) => {
+      const normalizedQuery = query as SaleListQuery & {
+        skip?: number;
+        take?: number;
+        page?: number;
+      };
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      const requestOptions = {
+        headers: {
+          "x-branch-id": effectiveBranchId,
+        },
+      };
+      const payload = await apiClientFetch.get<PaginatedResponse<Sale> | Sale[]>(
+        `/sales${buildOffsetQuery(normalizedQuery)}`,
+        requestOptions
+      );
+
+      return toPaginatedResponse(
+        payload,
+        Number(normalizedQuery.skip ?? normalizedQuery.offset ?? 0),
+        Number(normalizedQuery.take ?? normalizedQuery.limit ?? 20)
+      );
+    },
     getById: (id: string) => apiClientFetch.get<Sale>(`/sales/${id}`),
+    addPayment: (id: string, body: SalePaymentInput) =>
+      apiClientFetch.post<SalePayment>(`/sales/${id}/payments`, body),
+    paymentsList: async (query: SalePaymentsListQuery = {}) => {
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<SalePayment> | SalePayment[]
+      >(`/sales/payments/list${buildQuery(query)}`);
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 20)
+      );
+    },
+    cancel: (id: string) => apiClientFetch.delete<Sale | true>(`/sales/${id}`),
   },
   snapshots: {
-    metrics: (period: "monthly" | "quarterly" | "semiannual" | "annual" = "monthly") =>
+    metrics: (period: SnapshotPeriod = "monthly") =>
       apiClientFetch.get<SnapshotMetricsResponse>(
         `/snapshots/metrics${buildQuery({ period })}`,
         { branchScoped: true }
@@ -342,8 +770,56 @@ export const backendApi = {
       };
       return apiClientFetch.post<Expense>("/expenses", payload);
     },
-    list: (category?: string) =>
-      apiClientFetch.get<Expense[]>(`/expenses${buildQuery({ category })}`),
+    list: async (
+      query: ExpenseListQuery = {},
+      branchIdOverride?: string | null
+    ) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<Expense> | Expense[]
+      >(
+        `/expenses${buildOffsetQuery(query)}`,
+        effectiveBranchId
+          ? {
+              headers: {
+                "x-branch-id": effectiveBranchId,
+              },
+            }
+          : undefined
+      );
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 20)
+      );
+    },
+    analytics: (
+      query: {
+        period: SnapshotPeriod;
+        context?: string;
+        from?: string;
+        to?: string;
+      },
+      branchIdOverride?: string | null
+    ) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      return apiClientFetch.get<ExpenseAnalyticsResponse>(
+        `/expenses/analytics${buildQuery(query)}`,
+        effectiveBranchId
+          ? {
+              headers: {
+                "x-branch-id": effectiveBranchId,
+              },
+            }
+          : undefined
+      );
+    },
     getById: (id: string) => apiClientFetch.get<Expense>(`/expenses/${id}`),
     remove: (id: string) => apiClientFetch.delete<true>(`/expenses/${id}`),
   },
@@ -351,13 +827,118 @@ export const backendApi = {
     openSession: (body: OpenCashSessionRequest) =>
       apiClientFetch.post<CashSession>("/cash/sessions/open", body),
     addMovement: (sessionId: string, body: CreateCashMovementRequest) =>
-      apiClientFetch.post<CashSession>(`/cash/sessions/${sessionId}/movements`, body),
+      apiClientFetch.post<CashSession>(
+        `/cash/sessions/${sessionId}/movements`,
+        body
+      ),
     closeSession: (sessionId: string, body: CloseCashSessionRequest) =>
-      apiClientFetch.post<CashSession>(`/cash/sessions/${sessionId}/close`, body),
+      apiClientFetch.post<CashSession>(
+        `/cash/sessions/${sessionId}/close`,
+        body
+      ),
     getCurrentSession: () =>
       apiClientFetch.get<CashSession | null>("/cash/sessions/current"),
-    listSessions: (from?: string, to?: string) =>
-      apiClientFetch.get<CashSession[]>(`/cash/sessions${buildQuery({ from, to })}`),
+    listSessions: async (
+      query: {
+        from?: string;
+        to?: string;
+        skip?: number;
+        take?: number;
+        offset?: number;
+        page?: number;
+        limit?: number;
+      } = {},
+      branchIdOverride?: string | null
+    ) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+
+      const requestOptions = effectiveBranchId
+        ? {
+            headers: {
+              "x-branch-id": effectiveBranchId,
+            },
+          }
+        : undefined;
+
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<CashSession> | CashSession[]
+      >(`/cash/sessions${buildOffsetQuery(query)}`, requestOptions);
+
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 20)
+      );
+    },
+    dailyBook: async (
+      query: CashBookDailyQuery = {},
+      branchIdOverride?: string | null
+    ) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      const safeQuery = {
+        date: query.date,
+      };
+      const payload = await apiClientFetch.get<Record<string, unknown>>(
+        `/cash/book/daily${buildQuery(safeQuery)}`,
+        effectiveBranchId
+          ? {
+              headers: {
+                "x-branch-id": effectiveBranchId,
+              },
+            }
+          : undefined
+      );
+
+      const entriesPayload =
+        (payload.entries as PaginatedResponse<any> | any[] | undefined) ??
+        (payload.items as any[] | undefined) ??
+        [];
+      const entries = toPaginatedResponse(
+        Array.isArray(entriesPayload)
+          ? entriesPayload
+          : (entriesPayload as PaginatedResponse<any>),
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 30)
+      );
+
+      const summarySource = (payload.summary ?? payload) as Record<
+        string,
+        unknown
+      >;
+      const breakdownSource = (payload.breakdown ??
+        payload.paymentBreakdown ??
+        payload.byMethod ??
+        {}) as Record<string, unknown>;
+
+      return {
+        date: String(payload.date ?? new Date().toISOString().slice(0, 10)),
+        summary: {
+          opening: toFiniteNumber(summarySource.opening, 0),
+          expected: toFiniteNumber(summarySource.expected, 0),
+          counted: toFiniteNumber(summarySource.counted, 0),
+          difference: toFiniteNumber(summarySource.difference, 0),
+        },
+        breakdown: {
+          cash: toFiniteNumber(
+            breakdownSource.cash ?? breakdownSource.efectivo,
+            0
+          ),
+          transfer: toFiniteNumber(
+            breakdownSource.transfer ??
+              breakdownSource.transfers ??
+              breakdownSource.transferencia,
+            0
+          ),
+        },
+        entries,
+      } satisfies CashBookDailyResponse;
+    },
   },
   analytics: {
     sales: (query: AnalyticsSalesQuery) =>
@@ -366,16 +947,31 @@ export const backendApi = {
       ),
   },
   audit: {
-    list: () => apiClientFetch.get<AuditLog[]>("/audit", { branchScoped: false }),
-    byEntity: (entityType: string, entityId?: string) =>
-      apiClientFetch.get<AuditLog[]>(
-        `/audit/entity/${entityType}${buildQuery({ entityId })}`,
-        { branchScoped: false }
-      ),
-    byUser: (userId: string) =>
-      apiClientFetch.get<AuditLog[]>(`/audit/user/${userId}`, {
+    list: async (query: AuditQuery = {}) => {
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<AuditLog> | AuditLog[]
+      >(`/audit${buildOffsetQuery(query)}`, { branchScoped: false });
+
+      return toPaginatedResponse(
+        payload,
+        Number(query.skip ?? query.offset ?? 0),
+        Number(query.take ?? query.limit ?? 50)
+      );
+    },
+    byEntity: async (entityType: string, entityId?: string) => {
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<AuditLog> | AuditLog[]
+      >(`/audit/entity/${entityType}${buildQuery({ entityId })}`, {
         branchScoped: false,
-      }),
+      });
+      return toPaginatedResponse(payload, 0, 50);
+    },
+    byUser: async (userId: string) => {
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<AuditLog> | AuditLog[]
+      >(`/audit/user/${userId}`, { branchScoped: false });
+      return toPaginatedResponse(payload, 0, 50);
+    },
   },
   productsWithStock: async (
     query: ProductsQuery = {},
@@ -383,23 +979,35 @@ export const backendApi = {
   ) => {
     const normalizedQuery: ProductsQuery = {
       ...query,
+      skip: query.skip ?? query.offset,
+      take: query.take ?? query.limit,
       name: query.name ?? query.search ?? query.q,
       q: query.q ?? query.search ?? query.name,
       search: query.search ?? query.q ?? query.name,
     };
 
     const explicitBranchId = branchIdOverride ?? null;
-    const productsPayload = await apiClientFetch.get<ProductsListResponse>(
-      `/products${buildQuery(normalizedQuery)}`,
+    const productsPayload = await backendApi.products.list(
+      normalizedQuery,
       explicitBranchId
-        ? {
-            headers: {
-              "x-branch-id": explicitBranchId,
-            },
-          }
-        : undefined
     );
-    const normalizedPage = normalizeProductsPage(productsPayload, normalizedQuery);
+    const take = Number(normalizedQuery.take ?? normalizedQuery.limit ?? 20);
+    const skip = Number(normalizedQuery.skip ?? normalizedQuery.offset ?? 0);
+    const hasMore =
+      productsPayload.meta.hasMore ??
+      productsPayload.meta.offset + productsPayload.meta.limit <
+        productsPayload.meta.total;
+    const normalizedPage: NormalizedProductsPage = {
+      items: productsPayload.items,
+      total: productsPayload.meta.total,
+      skip: productsPayload.meta.offset ?? skip,
+      take: productsPayload.meta.limit ?? take,
+      nextSkip: hasMore
+        ? (productsPayload.meta.offset ?? skip) +
+          (productsPayload.meta.limit ?? take)
+        : null,
+      hasMore,
+    };
     const scopedBranchId = explicitBranchId ?? getApiSession().branchId;
 
     if (!scopedBranchId) return normalizedPage;
@@ -428,19 +1036,7 @@ export const backendApi = {
     } satisfies NormalizedProductsPage;
   },
   productByBarcodeWithStock: async (code: string) => {
-    const product = await apiClientFetch.get<ProductListItem>(
-      `/products/barcode/${code}`
-    );
-    const { branchId } = getApiSession();
-    if (!branchId) return product;
-
-    const stock = await apiClientFetch.get<Stock>(
-      `/stocks/branch/${branchId}/product/${product.id}`
-    );
-
-    return {
-      ...product,
-      stock: Number(stock.quantity ?? 0),
-    } as ProductListItem;
+    const resolved = await backendApi.products.resolveBarcode(code);
+    return resolved.product;
   },
 };

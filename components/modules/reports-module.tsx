@@ -256,8 +256,8 @@ export function ReportsModule() {
     setCashLoading(true);
     setCashError(null);
     try {
-      const sessions = await backendApi.cash.listSessions();
-      setCashSessions(sessions);
+      const sessions = await backendApi.cash.listSessions({ skip: 0, take: 100 }, branchId);
+      setCashSessions(sessions.items);
     } catch (err: any) {
       setCashError(err?.message || "No se pudieron cargar sesiones de caja.");
     } finally {

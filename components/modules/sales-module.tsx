@@ -47,6 +47,7 @@ export function SalesModule() {
   const { sales, isLoading } = useTransactions();
 
   const metrics = useMemo(() => {
+    const activeSales = sales.filter((sale) => sale.lifecycleStatus !== "CANCELLED");
     const now = new Date();
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
@@ -55,24 +56,24 @@ export function SalesModule() {
     const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
 
-    const todaySales = sales.filter((sale) => sameDay(new Date(sale.date), now));
-    const yesterdaySales = sales.filter((sale) => sameDay(new Date(sale.date), yesterday));
+    const todaySales = activeSales.filter((sale) => sameDay(new Date(sale.date), now));
+    const yesterdaySales = activeSales.filter((sale) => sameDay(new Date(sale.date), yesterday));
 
-    const monthSales = sales.filter((sale) => {
+    const monthSales = activeSales.filter((sale) => {
       const date = new Date(sale.date);
       return date >= monthStart && date <= now;
     });
 
-    const prevMonthSales = sales.filter((sale) => {
+    const prevMonthSales = activeSales.filter((sale) => {
       const date = new Date(sale.date);
       return date >= prevMonthStart && date <= prevMonthEnd;
     });
 
-    const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.amount, 0);
-    const yesterdayRevenue = yesterdaySales.reduce((sum, sale) => sum + sale.amount, 0);
+    const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+    const yesterdayRevenue = yesterdaySales.reduce((sum, sale) => sum + sale.totalAmount, 0);
 
-    const monthRevenue = monthSales.reduce((sum, sale) => sum + sale.amount, 0);
-    const prevMonthRevenue = prevMonthSales.reduce((sum, sale) => sum + sale.amount, 0);
+    const monthRevenue = monthSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
+    const prevMonthRevenue = prevMonthSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
 
     const todayCustomers = new Set(todaySales.map((sale) => sale.customerName)).size;
     const monthCustomers = new Set(monthSales.map((sale) => sale.customerName)).size;

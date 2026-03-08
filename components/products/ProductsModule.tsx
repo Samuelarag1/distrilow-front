@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import useSWR from "swr";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -7,24 +7,20 @@ import { ProductDialog } from "@/components/dialogs/product-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { Product } from "@/lib/products";
 import { useProducts } from "@/hooks/useProducts";
-
 import { useProductActions } from "@/components/providers/product-provider";
 import { useBranch } from "@/components/providers/business-provider";
 import { useUser } from "../providers/user-provider";
-
-import { mapSort } from "./utils/sort";
-
 import { useDebouncedValue } from "./hooks/useDebouncedValue";
 import { useProductSave } from "./hooks/useProductSave";
-
-import { ProductsHeader } from "./components/ProductsHeader";
-import { ProductsGrid } from "./components/ProductsGrid";
 import { DeleteProductDialog } from "./components/DeleteProductDialog";
 import { useApiSessionSync } from "./hooks/useApiSessionAsync";
-import { ProductsToolbar } from "./components/ProductsToolBar";
-import { ProductsSortBar } from "./components/ProductSortBar";
-import { SortKey, SortOrder } from "./types/product";
 import { swrFetcher } from "@/lib/swr-fetcher";
+import { backendApi } from "@/lib/backend-api";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import type { ProductPriceCostHistoryRow } from "@/lib/api-types";
 
 type Category = {
   id: string;
@@ -32,14 +28,32 @@ type Category = {
   isActive?: boolean;
 };
 
-const PAGE_SIZE = 20;
+type SortKey = "name" | "cost" | "retail" | "wholesale" | "margin";
+type SortOrder = "asc" | "desc";
+
+const PAGE_SIZE = 25;
+
+function formatMoney(value: number) {
+  return Number(value ?? 0).toLocaleString("es-AR", {
+    style: "currency",
+    currency: "ARS",
+  });
+}
+
+function getMarginPercent(product: Product) {
+  const explicitMargin = Number(product.marginPercent ?? NaN);
+  if (Number.isFinite(explicitMargin)) return explicitMargin;
+  const cost = Number(product.costPrice ?? 0);
+  const retail = Number(product.retailPrice ?? 0);
+  if (cost <= 0) return 0;
+  return ((retail - cost) / cost) * 100;
+}
 
 export function ProductsModule() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { addProduct, updateProduct, removeProduct } = useProductActions();
   const { activeBranchId } = useBranch();
-
   const { token, branchId } = useUser();
   const { toast } = useToast();
 
@@ -47,23 +61,26 @@ export function ProductsModule() {
 
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 350);
-
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
-
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
+  const [activeTab, setActiveTab] = useState("catalog");
 
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
-
   const [productToDelete, setProductToDelete] = useState<string | null>(null);
   const [isDeleteDialogOpen, setIsDeleteDialogOpen] = useState(false);
 
-  const { sortBy, sortOrder: mappedSortOrder } = useMemo(
-    () => mapSort(sortKey, sortOrder),
-    [sortKey, sortOrder]
-  );
+  const [pendingPage, setPendingPage] = useState(1);
+  const [pendingRows, setPendingRows] = useState<Product[]>([]);
+  const [pendingTotal, setPendingTotal] = useState(0);
+  const [isLoadingPending, setIsLoadingPending] = useState(false);
+
+  const [historyPage, setHistoryPage] = useState(1);
+  const [historyRows, setHistoryRows] = useState<ProductPriceCostHistoryRow[]>([]);
+  const [historyTotal, setHistoryTotal] = useState(0);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
   const {
     products,
@@ -78,8 +95,8 @@ export function ProductsModule() {
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     branchId: activeBranchId ?? null,
-    sortBy,
-    sortOrder: mappedSortOrder,
+    sortBy: sortKey === "name" ? "name" : "price",
+    sortOrder,
   });
 
   const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
@@ -96,30 +113,82 @@ export function ProductsModule() {
     [categoriesData]
   );
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
-  const currentPageSafe = Math.min(currentPage, totalPages);
-  const showingFrom = total === 0 ? 0 : (currentPageSafe - 1) * PAGE_SIZE + 1;
-  const showingTo = total === 0 ? 0 : Math.min(currentPageSafe * PAGE_SIZE, total);
+  const categoryMap = useMemo(() => {
+    const map = new Map<string, string>();
+    categories.forEach((category) => map.set(category.value, category.label));
+    return map;
+  }, [categories]);
+
+  const sortedProducts = useMemo(() => {
+    const factor = sortOrder === "asc" ? 1 : -1;
+    return [...products].sort((a, b) => {
+      if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
+      if (sortKey === "cost") return (Number(a.costPrice) - Number(b.costPrice)) * factor;
+      if (sortKey === "retail") return (Number(a.retailPrice) - Number(b.retailPrice)) * factor;
+      if (sortKey === "wholesale")
+        return (Number(a.wholesalePrice) - Number(b.wholesalePrice)) * factor;
+      return (getMarginPercent(a) - getMarginPercent(b)) * factor;
+    });
+  }, [products, sortKey, sortOrder]);
+
+  const loadPending = useCallback(async () => {
+    if (!activeBranchId) {
+      setPendingRows([]);
+      setPendingTotal(0);
+      return;
+    }
+    try {
+      setIsLoadingPending(true);
+      const payload = await backendApi.products.reviewPending({
+        skip: (pendingPage - 1) * 20,
+        take: 20,
+      }, activeBranchId);
+      setPendingRows(payload.items as Product[]);
+      setPendingTotal(payload.meta.total);
+    } finally {
+      setIsLoadingPending(false);
+    }
+  }, [activeBranchId, pendingPage]);
+
+  const loadHistory = useCallback(async () => {
+    if (!activeBranchId) {
+      setHistoryRows([]);
+      setHistoryTotal(0);
+      return;
+    }
+    try {
+      setIsLoadingHistory(true);
+      const payload = await backendApi.products.priceHistory({
+        skip: (historyPage - 1) * 20,
+        take: 20,
+      }, activeBranchId);
+      setHistoryRows(payload.items);
+      setHistoryTotal(payload.meta.total);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [activeBranchId, historyPage]);
 
   useEffect(() => {
-    if (currentPage > totalPages) {
-      setCurrentPage(totalPages);
-    }
-  }, [currentPage, totalPages]);
+    if (activeTab === "pending") void loadPending();
+  }, [activeTab, loadPending]);
+
+  useEffect(() => {
+    if (activeTab === "history") void loadHistory();
+  }, [activeTab, loadHistory]);
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, selectedCategory, sortBy, mappedSortOrder, activeBranchId]);
+  }, [debouncedSearch, selectedCategory, activeBranchId]);
 
-  const handleSort = (key: SortKey) => {
-    setCurrentPage(1);
-    if (sortKey === key) {
-      setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
-    } else {
-      setSortKey(key);
-      setSortOrder("asc");
-    }
-  };
+  useEffect(() => {
+    const shouldOpenCreate = searchParams.get("create");
+    if (shouldOpenCreate !== "1") return;
+    if (!activeBranchId) return;
+    setEditingProduct(null);
+    setIsDialogOpen(true);
+    router.replace("/products");
+  }, [searchParams, activeBranchId, router]);
 
   const handleCreate = () => {
     setEditingProduct(null);
@@ -131,14 +200,8 @@ export function ProductsModule() {
     setIsDialogOpen(true);
   };
 
-  const handleDeleteTrigger = (productId: string) => {
-    setProductToDelete(productId);
-    setIsDeleteDialogOpen(true);
-  };
-
   const handleDeleteConfirm = async () => {
     if (!productToDelete) return;
-
     try {
       await removeProduct(productToDelete);
       await mutateProducts();
@@ -146,15 +209,35 @@ export function ProductsModule() {
         title: "Producto eliminado",
         description: "El producto ha sido eliminado correctamente.",
       });
-    } catch (e: any) {
+    } catch (error: any) {
       toast({
         variant: "destructive",
         title: "Error al eliminar",
-        description: e?.message || "Ocurrio un error inesperado.",
+        description: error?.message || "Ocurrio un error inesperado.",
       });
     } finally {
       setIsDeleteDialogOpen(false);
       setProductToDelete(null);
+    }
+  };
+
+  const handleResolvePendingFlags = async (product: Product) => {
+    try {
+      await backendApi.products.updateReviewFlags(product.id, {
+        priceReviewPending: false,
+        costReviewPending: false,
+      });
+      toast({
+        title: "Revision actualizada",
+        description: "Se marcaron las revisiones como resueltas.",
+      });
+      await Promise.all([loadPending(), mutateProducts()]);
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "No se pudo actualizar",
+        description: error?.message ?? "Intenta nuevamente.",
+      });
     }
   };
 
@@ -168,106 +251,391 @@ export function ProductsModule() {
     onClearEditing: () => setEditingProduct(null),
   });
 
-  useEffect(() => {
-    const shouldOpenCreate = searchParams.get("create");
-    if (shouldOpenCreate !== "1") return;
-    if (!activeBranchId) return;
-
-    setEditingProduct(null);
-    setIsDialogOpen(true);
-    router.replace("/products");
-  }, [searchParams, activeBranchId, router]);
-
-  const isEmpty = !isLoading && products.length === 0;
+  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const currentPageSafe = Math.min(currentPage, totalPages);
+  const showingFrom = total === 0 ? 0 : (currentPageSafe - 1) * PAGE_SIZE + 1;
+  const showingTo = total === 0 ? 0 : Math.min(currentPageSafe * PAGE_SIZE, total);
 
   return (
     <div className="space-y-6">
-      <ProductsHeader activeBranchId={activeBranchId} onCreate={handleCreate} />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Productos</h1>
+          <p className="text-muted-foreground">
+            Vista tipo Excel con costos, precios y control de margen.
+          </p>
+        </div>
+        <Button onClick={handleCreate} disabled={!activeBranchId}>
+          Nuevo producto
+        </Button>
+      </div>
 
-      <Card>
-        <CardHeader className="pb-4">
-          <div className="flex flex-col space-y-4">
-            <ProductsToolbar
-              activeBranchId={activeBranchId}
-              searchQuery={searchQuery}
-              onSearchChange={(value) => {
-                setSearchQuery(value);
-                setCurrentPage(1);
-              }}
-              selectedCategory={selectedCategory}
-              categories={categories}
-              onCategoryChange={(value) => {
-                setSelectedCategory(value);
-                setCurrentPage(1);
-              }}
-            />
+      <Tabs value={activeTab} onValueChange={setActiveTab}>
+        <TabsList className="grid w-full grid-cols-3">
+          <TabsTrigger value="catalog">Catalogo</TabsTrigger>
+          <TabsTrigger value="pending">Pendientes de revision</TabsTrigger>
+          <TabsTrigger value="history">Historial precio/costo</TabsTrigger>
+        </TabsList>
 
-            <ProductsSortBar
-              activeBranchId={activeBranchId}
-              sortKey={sortKey}
-              sortOrder={sortOrder}
-              onSort={handleSort}
-              productsCount={products.length}
-              total={total}
-              isLoadingMore={isLoading}
-            />
-
-            {!activeBranchId && (
-              <div className="text-sm text-muted-foreground">
-                Selecciona una sucursal para cargar el catalogo.
+        <TabsContent value="catalog" className="space-y-4">
+          <Card>
+            <CardHeader className="space-y-4">
+              <div className="grid gap-3 md:grid-cols-3">
+                <div className="relative md:col-span-2">
+                  <Input
+                    placeholder="Buscar por nombre, sku o codigo..."
+                    value={searchQuery}
+                    onChange={(event) => setSearchQuery(event.target.value)}
+                  />
+                </div>
+                <select
+                  value={selectedCategory}
+                  onChange={(event) => setSelectedCategory(event.target.value)}
+                  className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm"
+                >
+                  <option value="all">Todas las categorias</option>
+                  {categories.map((category) => (
+                    <option key={category.value} value={category.value}>
+                      {category.label}
+                    </option>
+                  ))}
+                </select>
               </div>
-            )}
 
-            {isError && (
-              <div className="text-sm text-destructive">
-                Error al cargar productos:{" "}
-                {String((isError as any)?.message ?? isError)}
+              <div className="flex flex-wrap items-center gap-2">
+                <Label className="text-xs text-muted-foreground">Ordenar:</Label>
+                {([
+                  ["name", "Nombre"],
+                  ["cost", "Costo"],
+                  ["retail", "Minorista"],
+                  ["wholesale", "Mayorista"],
+                  ["margin", "Margen"],
+                ] as Array<[SortKey, string]>).map(([key, label]) => (
+                  <Button
+                    key={key}
+                    size="sm"
+                    variant={sortKey === key ? "default" : "outline"}
+                    onClick={() => {
+                      if (sortKey === key) {
+                        setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+                      } else {
+                        setSortKey(key);
+                        setSortOrder("asc");
+                      }
+                    }}
+                  >
+                    {label}
+                  </Button>
+                ))}
               </div>
-            )}
-          </div>
-        </CardHeader>
 
-        <CardContent>
-          <ProductsGrid
-            isLoading={isLoading}
-            isEmpty={isEmpty}
-            products={products}
-            onEdit={handleEdit}
-            onDelete={handleDeleteTrigger}
-          />
+              {isError && (
+                <p className="text-sm text-destructive">
+                  Error al cargar productos: {String((isError as any)?.message ?? isError)}
+                </p>
+              )}
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-auto rounded-md border">
+                <table className="w-full min-w-[1100px] border-collapse">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="p-2 text-left text-xs font-semibold border-r">SKU</th>
+                      <th className="p-2 text-left text-xs font-semibold border-r">PLU</th>
+                      <th className="p-2 text-left text-xs font-semibold border-r">Nombre</th>
+                      <th className="p-2 text-left text-xs font-semibold border-r">Categoria</th>
+                      <th className="p-2 text-center text-xs font-semibold border-r">Pesable</th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">Costo</th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">Minorista</th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">Mayorista</th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">Margen</th>
+                      <th className="p-2 text-center text-xs font-semibold border-r">Pendiente</th>
+                      <th className="p-2 text-center text-xs font-semibold">Acciones</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoading ? (
+                      <tr>
+                        <td colSpan={11} className="p-6 text-center text-sm text-muted-foreground">
+                          Cargando productos...
+                        </td>
+                      </tr>
+                    ) : sortedProducts.length === 0 ? (
+                      <tr>
+                        <td colSpan={11} className="p-6 text-center text-sm text-muted-foreground">
+                          Sin productos para los filtros seleccionados.
+                        </td>
+                      </tr>
+                    ) : (
+                      sortedProducts.map((product) => {
+                        const margin = getMarginPercent(product);
+                        const lowMargin = margin < 20;
+                        return (
+                          <tr key={product.id} className="border-t hover:bg-muted/20">
+                            <td className="p-2 text-xs border-r font-mono">{product.sku}</td>
+                            <td className="p-2 text-xs border-r">{product.pluCode ?? "-"}</td>
+                            <td className="p-2 text-sm border-r font-medium">{product.name}</td>
+                            <td className="p-2 text-xs border-r">
+                              {product.categoryId ? categoryMap.get(product.categoryId) ?? product.categoryId : "-"}
+                            </td>
+                            <td className="p-2 text-center text-xs border-r">
+                              {product.isWeighable ? "Si" : "No"}
+                            </td>
+                            <td className="p-2 text-right text-xs border-r">
+                              {formatMoney(Number(product.costPrice ?? 0))}
+                            </td>
+                            <td className="p-2 text-right text-xs border-r">
+                              {formatMoney(Number(product.retailPrice ?? 0))}
+                            </td>
+                            <td className="p-2 text-right text-xs border-r">
+                              {formatMoney(Number(product.wholesalePrice ?? 0))}
+                            </td>
+                            <td
+                              className={`p-2 text-right text-xs border-r font-semibold ${
+                                lowMargin ? "text-red-600" : "text-emerald-600"
+                              }`}
+                            >
+                              {margin.toFixed(2)}%
+                            </td>
+                            <td className="p-2 text-center text-xs border-r">
+                              <div className="flex items-center justify-center gap-1">
+                                {product.priceReviewPending && <Badge variant="secondary">Precio</Badge>}
+                                {product.costReviewPending && <Badge variant="secondary">Costo</Badge>}
+                                {!product.priceReviewPending && !product.costReviewPending && (
+                                  <span className="text-muted-foreground">-</span>
+                                )}
+                              </div>
+                            </td>
+                            <td className="p-2 text-center text-xs">
+                              <div className="flex justify-center gap-2">
+                                <Button size="sm" variant="outline" onClick={() => handleEdit(product)}>
+                                  Editar
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setProductToDelete(product.id);
+                                    setIsDeleteDialogOpen(true);
+                                  }}
+                                >
+                                  Eliminar
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
 
-          {!!activeBranchId && !isLoading && total > 0 && (
-            <div className="mt-6 flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-              <p className="text-xs text-muted-foreground">
-                Mostrando {showingFrom}-{showingTo} de {total} productos
+              {!!activeBranchId && !isLoading && total > 0 && (
+                <div className="mt-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    Mostrando {showingFrom}-{showingTo} de {total} productos
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                      disabled={currentPageSafe <= 1}
+                    >
+                      Anterior
+                    </Button>
+                    <span className="text-xs text-muted-foreground">
+                      Pagina {currentPageSafe} de {totalPages}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                      disabled={!hasMore || currentPageSafe >= totalPages}
+                    >
+                      Siguiente
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="pending">
+          <Card>
+            <CardHeader>
+              <p className="text-sm text-muted-foreground">
+                Productos con bandera de revision pendiente.
               </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
-                  disabled={currentPageSafe <= 1}
-                >
-                  Anterior
-                </Button>
-                <span className="text-xs text-muted-foreground">
-                  Pagina {currentPageSafe} de {totalPages}
-                </span>
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() =>
-                    setCurrentPage((prev) => Math.min(totalPages, prev + 1))
-                  }
-                  disabled={!hasMore || currentPageSafe >= totalPages}
-                >
-                  Siguiente
-                </Button>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-md border overflow-auto">
+                <table className="w-full min-w-[720px]">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="p-2 text-left text-xs font-semibold">Producto</th>
+                      <th className="p-2 text-left text-xs font-semibold">SKU</th>
+                      <th className="p-2 text-left text-xs font-semibold">PLU</th>
+                      <th className="p-2 text-left text-xs font-semibold">Pendiente</th>
+                      <th className="p-2 text-right text-xs font-semibold">Accion</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingPending ? (
+                      <tr>
+                        <td colSpan={5} className="p-6 text-center text-sm text-muted-foreground">
+                          Cargando pendientes...
+                        </td>
+                      </tr>
+                    ) : pendingRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={5} className="p-6 text-center text-sm text-muted-foreground">
+                          No hay productos pendientes.
+                        </td>
+                      </tr>
+                    ) : (
+                      pendingRows.map((product) => (
+                        <tr key={product.id} className="border-t">
+                          <td className="p-2 text-sm font-medium">{product.name}</td>
+                          <td className="p-2 text-xs font-mono">{product.sku}</td>
+                          <td className="p-2 text-xs">{product.pluCode ?? "-"}</td>
+                          <td className="p-2 text-xs">
+                            <div className="flex gap-1">
+                              {product.priceReviewPending && <Badge variant="secondary">Precio</Badge>}
+                              {product.costReviewPending && <Badge variant="secondary">Costo</Badge>}
+                            </div>
+                          </td>
+                          <td className="p-2 text-right">
+                            <Button
+                              size="sm"
+                              variant="outline"
+                              onClick={() => handleResolvePendingFlags(product)}
+                            >
+                              Marcar revisado
+                            </Button>
+                          </td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
               </div>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+
+              {!isLoadingPending && pendingTotal > 0 && (
+                <div className="mt-4 flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">
+                    {pendingTotal} registros
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setPendingPage((prev) => Math.max(1, prev - 1))}
+                      disabled={pendingPage <= 1}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setPendingPage((prev) => prev + 1)}
+                      disabled={pendingPage * 20 >= pendingTotal}
+                    >
+                      Siguiente
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="history">
+          <Card>
+            <CardHeader>
+              <p className="text-sm text-muted-foreground">
+                Historial de cambios de precio y costo.
+              </p>
+            </CardHeader>
+            <CardContent>
+              <div className="rounded-md border overflow-auto">
+                <table className="w-full min-w-[960px]">
+                  <thead className="bg-muted/40">
+                    <tr>
+                      <th className="p-2 text-left text-xs font-semibold">Fecha</th>
+                      <th className="p-2 text-left text-xs font-semibold">Producto</th>
+                      <th className="p-2 text-right text-xs font-semibold">Costo (antes)</th>
+                      <th className="p-2 text-right text-xs font-semibold">Costo (despues)</th>
+                      <th className="p-2 text-right text-xs font-semibold">Minorista (antes)</th>
+                      <th className="p-2 text-right text-xs font-semibold">Minorista (despues)</th>
+                      <th className="p-2 text-right text-xs font-semibold">Mayorista (antes)</th>
+                      <th className="p-2 text-right text-xs font-semibold">Mayorista (despues)</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {isLoadingHistory ? (
+                      <tr>
+                        <td colSpan={8} className="p-6 text-center text-sm text-muted-foreground">
+                          Cargando historial...
+                        </td>
+                      </tr>
+                    ) : historyRows.length === 0 ? (
+                      <tr>
+                        <td colSpan={8} className="p-6 text-center text-sm text-muted-foreground">
+                          Sin historial de cambios.
+                        </td>
+                      </tr>
+                    ) : (
+                      historyRows.map((row) => (
+                        <tr key={row.id} className="border-t">
+                          <td className="p-2 text-xs">
+                            {row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}
+                          </td>
+                          <td className="p-2 text-xs">
+                            {row.product?.name ?? row.productId}
+                          </td>
+                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.oldCostPrice ?? 0))}</td>
+                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.newCostPrice ?? 0))}</td>
+                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.oldRetailPrice ?? 0))}</td>
+                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.newRetailPrice ?? 0))}</td>
+                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.oldWholesalePrice ?? 0))}</td>
+                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.newWholesalePrice ?? 0))}</td>
+                        </tr>
+                      ))
+                    )}
+                  </tbody>
+                </table>
+              </div>
+
+              {!isLoadingHistory && historyTotal > 0 && (
+                <div className="mt-4 flex items-center justify-between">
+                  <p className="text-xs text-muted-foreground">{historyTotal} registros</p>
+                  <div className="flex items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
+                      disabled={historyPage <= 1}
+                    >
+                      Anterior
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={() => setHistoryPage((prev) => prev + 1)}
+                      disabled={historyPage * 20 >= historyTotal}
+                    >
+                      Siguiente
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </TabsContent>
+      </Tabs>
 
       <ProductDialog
         open={isDialogOpen}
