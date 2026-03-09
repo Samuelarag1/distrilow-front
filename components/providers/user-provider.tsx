@@ -9,7 +9,7 @@ import {
 import { backendApi } from "@/lib/backend-api";
 import {
   clearSessionCookies,
-  setClientCookie,
+  setPersistentSessionCookie,
   syncClientAuthCookies,
 } from "@/lib/client-cookies";
 import { isManagementRole } from "@/lib/permissions";
@@ -142,15 +142,15 @@ function writeSessionCookies(payload: {
   needsOnboarding?: boolean;
 }) {
   if (payload.branches) {
-    setClientCookie("branches", JSON.stringify(payload.branches));
+    setPersistentSessionCookie("branches", JSON.stringify(payload.branches));
   }
 
   if (payload.activeBranchId !== undefined) {
-    setClientCookie("activeBranchId", payload.activeBranchId ?? "");
+    setPersistentSessionCookie("activeBranchId", payload.activeBranchId ?? "");
   }
 
   if (payload.needsOnboarding !== undefined) {
-    setClientCookie("needsOnboarding", payload.needsOnboarding);
+    setPersistentSessionCookie("needsOnboarding", payload.needsOnboarding);
   }
 }
 
@@ -187,7 +187,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     const hydrated = hydrateUserAvatar(user);
     setCurrentUserState(hydrated);
-    setClientCookie("user", JSON.stringify(hydrated));
+    setPersistentSessionCookie("user", JSON.stringify(hydrated));
   }, [hydrateUserAvatar]);
 
   const setAvatar = useCallback((avatar: string | null) => {
@@ -207,7 +207,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         delete store[prev.id];
       }
       writeAvatarStore(store);
-      setClientCookie("user", JSON.stringify(next));
+      setPersistentSessionCookie("user", JSON.stringify(next));
       return next;
     });
   }, []);
@@ -257,7 +257,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     }
 
     if (!activeBranchCookie && resolvedBranchId) {
-      setClientCookie("activeBranchId", resolvedBranchId);
+      setPersistentSessionCookie("activeBranchId", resolvedBranchId);
     }
 
     let cancelled = false;
@@ -293,7 +293,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           name: payload.user.email,
         });
         setCurrentUserState(hydratedUser);
-        setClientCookie("user", JSON.stringify(hydratedUser));
+        setPersistentSessionCookie("user", JSON.stringify(hydratedUser));
       }
 
       setToken(refreshedToken);
@@ -324,7 +324,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setApiSession({ accessToken: token, branchId: branchId ?? undefined });
     syncClientAuthCookies({ accessToken: token });
     if (branchId !== undefined) {
-      setClientCookie("activeBranchId", branchId ?? "");
+      setPersistentSessionCookie("activeBranchId", branchId ?? "");
     }
   }, [token, branchId]);
 
@@ -390,21 +390,17 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, [branchId, token, branches, needsOnboarding, currentUser?.role]);
 
   useEffect(() => {
-    if (!currentUser) return;
+    const hasRefreshCookie = Boolean(
+      getCookie("refreshToken") ?? getCookie("refresh_token")
+    );
+    if (!currentUser && !token && !hasRefreshCookie) return;
     if (typeof window === "undefined") return;
 
-    const refreshIntervalMs = 11 * 60 * 1000;
-    const activeWindowMs = 2 * 60 * 1000;
+    const refreshIntervalMs = 5 * 60 * 1000;
     let destroyed = false;
-    let lastActivityAt = Date.now();
-
-    const markActivity = () => {
-      lastActivityAt = Date.now();
-    };
 
     const maybeRefresh = async () => {
       if (destroyed) return;
-      if (Date.now() - lastActivityAt > activeWindowMs) return;
 
       const refreshed = await refreshSessionIfNeeded(refreshIntervalMs);
       if (!refreshed || destroyed) return;
@@ -419,27 +415,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     };
 
     const handleFocus = () => {
-      markActivity();
       void maybeRefresh();
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
-      markActivity();
       void maybeRefresh();
     };
-
-    const activityEvents: Array<keyof WindowEventMap> = [
-      "pointerdown",
-      "mousemove",
-      "keydown",
-      "scroll",
-      "touchstart",
-    ];
-
-    activityEvents.forEach((eventName) => {
-      window.addEventListener(eventName, markActivity, { passive: true });
-    });
     window.addEventListener("focus", handleFocus);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
@@ -454,9 +436,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       window.clearInterval(intervalId);
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
-      activityEvents.forEach((eventName) => {
-        window.removeEventListener(eventName, markActivity);
-      });
     };
   }, [currentUser, token, branchId]);
 

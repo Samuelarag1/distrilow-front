@@ -268,6 +268,50 @@ export function POSModule() {
   const getActivePrice = (product: Product) => getRetailPrice(product);
 
   useEffect(() => {
+    if (cart.length === 0 || products.length === 0) return;
+
+    const productById = new Map(products.map((product) => [product.id, product]));
+    setCart((prev) => {
+      let changed = false;
+      const next = prev.map((item) => {
+        const latest = productById.get(item.id);
+        if (!latest) return item;
+
+        const merged: CartItem = {
+          ...latest,
+          quantity: item.quantity,
+          pricingMode: item.pricingMode,
+          requestedPriceType: item.requestedPriceType,
+          manualOverrideReason: item.manualOverrideReason,
+          visualPriceType: item.visualPriceType,
+          backendPriceType: item.backendPriceType,
+          backendPricingSource: item.backendPricingSource,
+          backendUnitPrice: item.backendUnitPrice,
+          backendSubtotal: item.backendSubtotal,
+          backendBaseRetailPrice: item.backendBaseRetailPrice,
+          backendBaseWholesalePrice: item.backendBaseWholesalePrice,
+          backendPricingRuleSnapshot: item.backendPricingRuleSnapshot,
+          backendManualOverrideReason: item.backendManualOverrideReason,
+        };
+
+        const sameSnapshot =
+          merged.stock === item.stock &&
+          merged.costPrice === item.costPrice &&
+          merged.retailPrice === item.retailPrice &&
+          merged.wholesalePrice === item.wholesalePrice &&
+          merged.branchId === item.branchId &&
+          merged.updatedAt === item.updatedAt;
+
+        if (sameSnapshot) return item;
+        changed = true;
+        return merged;
+      });
+
+      return changed ? next : prev;
+    });
+  }, [products, cart.length]);
+
+  useEffect(() => {
     if (!branchId) {
       previousBranchRef.current = null;
       return;

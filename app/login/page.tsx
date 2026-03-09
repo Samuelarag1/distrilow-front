@@ -10,7 +10,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
 import { setApiSession } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
-import { setClientCookie, syncClientAuthCookies } from "@/lib/client-cookies";
+import {
+  setPersistentSessionCookie,
+  syncClientAuthCookies,
+} from "@/lib/client-cookies";
 import { isPosCashOnlyUser } from "@/lib/permissions";
 import type { SessionBranch } from "@/lib/api-types";
 import { BrandMark } from "@/components/common/brand-mark";
@@ -89,9 +92,9 @@ export default function LoginPage() {
         refreshToken: data.refreshToken,
       });
 
-      setClientCookie("branches", JSON.stringify(availableBranches));
-      setClientCookie("activeBranchId", activeBranchId ?? "");
-      setClientCookie("needsOnboarding", needsOnboarding);
+      setPersistentSessionCookie("branches", JSON.stringify(availableBranches));
+      setPersistentSessionCookie("activeBranchId", activeBranchId ?? "");
+      setPersistentSessionCookie("needsOnboarding", needsOnboarding);
 
       toast({
         title: "Inicio de sesion exitoso",

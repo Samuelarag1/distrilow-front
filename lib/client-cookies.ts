@@ -12,6 +12,7 @@ const SESSION_COOKIE_NAMES = [
 
 const ACCESS_TOKEN_COOKIE_ALIASES = ["token", "access_token"] as const;
 const REFRESH_TOKEN_COOKIE_ALIASES = ["refresh_token"] as const;
+export const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 function shouldUseSecureCookie() {
   if (typeof window !== "undefined") {
@@ -48,6 +49,18 @@ export function setClientCookie(
   document.cookie = `${name}=${serializedValue}; ${buildCookieAttributes(extra)}`;
 }
 
+export function setPersistentSessionCookie(
+  name: string,
+  value: string | number | boolean,
+  options?: { encode?: boolean; maxAgeSeconds?: number }
+) {
+  setClientCookie(name, value, {
+    ...options,
+    maxAgeSeconds:
+      options?.maxAgeSeconds ?? SESSION_COOKIE_MAX_AGE_SECONDS,
+  });
+}
+
 export function deleteClientCookie(name: string) {
   if (typeof document === "undefined") return;
   document.cookie = `${name}=; ${buildCookieAttributes([
@@ -71,7 +84,7 @@ export function syncClientAuthCookies(payload: {
 
     const accessToken = payload.accessToken?.trim();
     if (accessToken) {
-      setClientCookie("accessToken", accessToken);
+      setPersistentSessionCookie("accessToken", accessToken);
     } else {
       deleteClientCookie("accessToken");
     }
@@ -84,7 +97,7 @@ export function syncClientAuthCookies(payload: {
 
     const refreshToken = payload.refreshToken?.trim();
     if (refreshToken) {
-      setClientCookie("refreshToken", refreshToken);
+      setPersistentSessionCookie("refreshToken", refreshToken);
     } else {
       deleteClientCookie("refreshToken");
     }

@@ -33,7 +33,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { backendApi } from "@/lib/backend-api";
-import { setClientCookie } from "@/lib/client-cookies";
+import { setPersistentSessionCookie } from "@/lib/client-cookies";
 
 type BranchPayload = {
   code: string;
@@ -121,9 +121,9 @@ export default function OnboardingBranchesPage() {
         branchId: activeBranchId,
       });
 
-      setClientCookie("branches", JSON.stringify(availableBranches));
-      setClientCookie("activeBranchId", createdBranchId);
-      setClientCookie("needsOnboarding", false);
+      setPersistentSessionCookie("branches", JSON.stringify(availableBranches));
+      setPersistentSessionCookie("activeBranchId", createdBranchId);
+      setPersistentSessionCookie("needsOnboarding", false);
 
       router.push("/");
     } catch (err: any) {
