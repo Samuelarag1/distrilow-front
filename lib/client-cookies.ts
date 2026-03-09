@@ -10,6 +10,9 @@ const SESSION_COOKIE_NAMES = [
   "needsOnboarding",
 ] as const;
 
+const ACCESS_TOKEN_COOKIE_ALIASES = ["token", "access_token"] as const;
+const REFRESH_TOKEN_COOKIE_ALIASES = ["refresh_token"] as const;
+
 function shouldUseSecureCookie() {
   if (typeof window !== "undefined") {
     return window.location.protocol === "https:";
@@ -57,3 +60,33 @@ export function clearSessionCookies() {
   SESSION_COOKIE_NAMES.forEach((cookieName) => deleteClientCookie(cookieName));
 }
 
+export function syncClientAuthCookies(payload: {
+  accessToken?: string | null;
+  refreshToken?: string | null;
+}) {
+  if (payload.accessToken !== undefined) {
+    ACCESS_TOKEN_COOKIE_ALIASES.forEach((cookieName) =>
+      deleteClientCookie(cookieName)
+    );
+
+    const accessToken = payload.accessToken?.trim();
+    if (accessToken) {
+      setClientCookie("accessToken", accessToken);
+    } else {
+      deleteClientCookie("accessToken");
+    }
+  }
+
+  if (payload.refreshToken !== undefined) {
+    REFRESH_TOKEN_COOKIE_ALIASES.forEach((cookieName) =>
+      deleteClientCookie(cookieName)
+    );
+
+    const refreshToken = payload.refreshToken?.trim();
+    if (refreshToken) {
+      setClientCookie("refreshToken", refreshToken);
+    } else {
+      deleteClientCookie("refreshToken");
+    }
+  }
+}

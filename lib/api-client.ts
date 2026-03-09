@@ -1,5 +1,5 @@
 import type { AuthResponse } from "@/lib/api-types";
-import { clearSessionCookies } from "@/lib/client-cookies";
+import { clearSessionCookies, syncClientAuthCookies } from "@/lib/client-cookies";
 
 type ApiSessionInput =
   | {
@@ -204,6 +204,10 @@ async function refreshSession(): Promise<boolean> {
       if (payload?.session?.activeBranchId !== undefined) {
         activeBranchId = payload.session.activeBranchId ?? null;
       }
+      syncClientAuthCookies({
+        accessToken: payload?.accessToken,
+        refreshToken: payload?.refreshToken,
+      });
       lastSuccessfulRefreshAt = Date.now();
 
       return true;

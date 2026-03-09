@@ -7,7 +7,11 @@ import {
   setApiSession,
 } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
-import { clearSessionCookies, setClientCookie } from "@/lib/client-cookies";
+import {
+  clearSessionCookies,
+  setClientCookie,
+  syncClientAuthCookies,
+} from "@/lib/client-cookies";
 import { isManagementRole } from "@/lib/permissions";
 import React, {
   useCallback,
@@ -278,6 +282,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         payload?.session?.needsOnboarding ??
         (onboardingCookie ? onboardingCookie === "true" : false);
 
+      syncClientAuthCookies({
+        accessToken: refreshedToken,
+        refreshToken: payload?.refreshToken,
+      });
+
       if (payload?.user) {
         const hydratedUser = hydrateUserAvatar({
           ...payload.user,
@@ -313,6 +322,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     setApiSession({ accessToken: token, branchId: branchId ?? undefined });
+    syncClientAuthCookies({ accessToken: token });
     if (branchId !== undefined) {
       setClientCookie("activeBranchId", branchId ?? "");
     }
@@ -354,6 +364,11 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const nextBranchId = response.session?.activeBranchId ?? id;
     const nextNeedsOnboarding =
       response.session?.needsOnboarding ?? needsOnboarding;
+
+    syncClientAuthCookies({
+      accessToken: nextToken,
+      refreshToken: response.refreshToken,
+    });
 
     if (nextToken !== token) {
       setToken(nextToken);
