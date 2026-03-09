@@ -81,8 +81,9 @@ export function useProducts(args: UseProductsArgs = {}) {
   useEffect(() => {
     if (!effectiveBranchId) return;
 
-    return subscribeProductsSync((payload) => {
-      if (payload.branchId && payload.branchId !== effectiveBranchId) return;
+    return subscribeProductsSync(() => {
+      // Revalidate on any products sync event to avoid stale pricing snapshots.
+      // Branch-scoped filtering is handled by the query itself (x-branch-id).
       void mutate();
     });
   }, [effectiveBranchId, mutate]);

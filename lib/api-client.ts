@@ -1,4 +1,4 @@
-import type { AuthResponse } from "@/lib/api-types";
+import type { AuthResponse, SessionResponse } from "@/lib/api-types";
 import { clearSessionCookies, syncClientAuthCookies } from "@/lib/client-cookies";
 
 type ApiSessionInput =
@@ -18,7 +18,7 @@ let authToken: string | null = null;
 let activeBranchId: string | null = null;
 let refreshPromise: Promise<boolean> | null = null;
 let lastSuccessfulRefreshAt = 0;
-let lastRefreshPayload: AuthResponse | null = null;
+let lastRefreshPayload: SessionResponse | AuthResponse | null = null;
 
 const BRANCH_SCOPED_PREFIXES = [
   "/products",
@@ -80,6 +80,10 @@ function getSessionToken() {
     getCookie("token") ??
     getCookie("access_token")
   );
+}
+
+function getSessionRefreshToken() {
+  return getCookie("refreshToken") ?? getCookie("refresh_token");
 }
 
 function getSessionBranchId() {
@@ -184,30 +188,47 @@ async function refreshSession(): Promise<boolean> {
 
   refreshPromise = (async () => {
     try {
+      const refreshToken = getSessionRefreshToken();
+      const accessToken = getSessionToken();
+      const headers: Record<string, string> = {
+        "Content-Type": "application/json",
+      };
+
+      if (accessToken) {
+        headers.Authorization = `Bearer ${accessToken}`;
+      }
+
       const res = await fetch(`${resolveApiBaseUrl()}/auth/refresh`, {
         method: "POST",
         credentials: "include",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
+        headers,
+        body: JSON.stringify(
+          refreshToken ? { refreshToken } : {}
+        ),
       });
 
       if (!res.ok) return false;
-      const payload = (await parseResponse<AuthResponse>(
+      const payload = (await parseResponse<SessionResponse | AuthResponse>(
         res
-      )) as AuthResponse | null;
+      )) as SessionResponse | AuthResponse | null;
       lastRefreshPayload = payload ?? null;
-      if (payload?.accessToken) {
-        authToken = payload.accessToken;
+      const nextAccessToken = payload?.accessToken?.trim();
+      if (nextAccessToken) {
+        authToken = nextAccessToken;
       }
       if (payload?.session?.activeBranchId !== undefined) {
         activeBranchId = payload.session.activeBranchId ?? null;
       }
       syncClientAuthCookies({
-        accessToken: payload?.accessToken,
+        accessToken: nextAccessToken,
         refreshToken: payload?.refreshToken,
       });
+
+      const hasUsableToken = Boolean(nextAccessToken || getSessionToken());
+      if (!hasUsableToken) {
+        return false;
+      }
+
       lastSuccessfulRefreshAt = Date.now();
 
       return true;

@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { Product } from "@/lib/products";
 import { useToast } from "@/hooks/use-toast";
 import { backendApi } from "@/lib/backend-api";
+import { emitProductsSync } from "@/lib/products-live-sync";
 import { normalizeProductPayload } from "../utils/normalizePayload";
 
 export type ProductSaveInput = Partial<Product> & {
@@ -99,6 +100,7 @@ export function useProductSave(opts: {
         }
 
         await opts.mutate();
+        emitProductsSync(resolvedBranchId);
         opts.onCloseDialog();
         opts.onClearEditing();
       } catch (err: any) {
