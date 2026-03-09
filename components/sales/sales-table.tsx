@@ -25,7 +25,10 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import { useTransactions, type Sale } from "@/components/providers/transactions-provider";
+import {
+  useTransactions,
+  type Sale,
+} from "@/components/providers/transactions-provider";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useToast } from "@/hooks/use-toast";
 import type { PaymentMethod } from "@/lib/api-types";
@@ -57,7 +60,8 @@ function getStatusText(status: string) {
 }
 
 export function SalesTable() {
-  const { sales, isLoading, registerSalePayment, cancelSale } = useTransactions();
+  const { sales, isLoading, registerSalePayment, cancelSale } =
+    useTransactions();
   const { businessType } = useBusiness();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
@@ -84,7 +88,8 @@ export function SalesTable() {
           query.length === 0 ||
           sale.customerName.toLowerCase().includes(query) ||
           sale.id.toLowerCase().includes(query);
-        const matchesStatus = selectedStatus === "all" || selectedStatus === status;
+        const matchesStatus =
+          selectedStatus === "all" || selectedStatus === status;
         return matchesSearch && matchesStatus;
       }),
     [sales, businessType, searchQuery, selectedStatus]
@@ -99,7 +104,9 @@ export function SalesTable() {
 
   const openPayDialog = (sale: Sale) => {
     setSaleToPay(sale);
-    setPayAmount(String(sale.outstandingAmount > 0 ? sale.outstandingAmount : ""));
+    setPayAmount(
+      String(sale.outstandingAmount > 0 ? sale.outstandingAmount : "")
+    );
     setPayMethod("CASH");
     setPayReference("");
     setIsPayDialogOpen(true);
@@ -209,7 +216,6 @@ export function SalesTable() {
               <table className="w-full">
                 <thead className="bg-muted/50">
                   <tr>
-                    <th className="text-left p-3 font-medium">ID</th>
                     <th className="text-left p-3 font-medium">Fecha</th>
                     <th className="text-left p-3 font-medium">Cliente</th>
                     <th className="text-left p-3 font-medium">Total</th>
@@ -220,72 +226,94 @@ export function SalesTable() {
                   </tr>
                 </thead>
                 <tbody>
-                  {isLoading ? (
-                    Array.from({ length: 6 }).map((_, index) => (
-                      <tr key={index} className="border-t">
-                        <td className="p-3"><Skeleton className="h-4 w-24" /></td>
-                        <td className="p-3"><Skeleton className="h-4 w-36" /></td>
-                        <td className="p-3"><Skeleton className="h-4 w-32" /></td>
-                        <td className="p-3"><Skeleton className="h-4 w-20" /></td>
-                        <td className="p-3"><Skeleton className="h-4 w-20" /></td>
-                        <td className="p-3"><Skeleton className="h-4 w-20" /></td>
-                        <td className="p-3"><Skeleton className="h-6 w-24" /></td>
-                        <td className="p-3"><Skeleton className="h-8 w-28" /></td>
-                      </tr>
-                    ))
-                  ) : (
-                    paginatedSales.map((sale) => {
-                      const rowStatus = getSaleRowStatus(sale);
-                      const canPay =
-                        sale.lifecycleStatus !== "CANCELLED" && sale.outstandingAmount > 0;
-                      const canCancel = sale.lifecycleStatus !== "CANCELLED";
-
-                      return (
-                        <tr key={sale.id} className="border-t hover:bg-muted/25 transition-colors">
-                          <td className="p-3 font-mono text-xs">{sale.id}</td>
-                          <td className="p-3 text-sm whitespace-nowrap">
-                            {new Date(sale.date).toLocaleString()}
-                          </td>
-                          <td className="p-3 font-medium">{sale.customerName}</td>
-                          <td className="p-3 font-semibold">{formatMoney(sale.totalAmount)}</td>
-                          <td className="p-3">{formatMoney(sale.paidAmount)}</td>
-                          <td className="p-3">{formatMoney(sale.outstandingAmount)}</td>
+                  {isLoading
+                    ? Array.from({ length: 6 }).map((_, index) => (
+                        <tr key={index} className="border-t">
                           <td className="p-3">
-                            <Badge className={getStatusColor(rowStatus)}>
-                              {getStatusText(rowStatus)}
-                            </Badge>
+                            <Skeleton className="h-4 w-36" />
                           </td>
                           <td className="p-3">
-                            <div className="flex items-center gap-2">
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setDetailSale(sale)}
-                              >
-                                <Eye className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => openPayDialog(sale)}
-                                disabled={!canPay}
-                              >
-                                <Wallet className="h-3.5 w-3.5" />
-                              </Button>
-                              <Button
-                                variant="outline"
-                                size="sm"
-                                onClick={() => setCancelTarget(sale)}
-                                disabled={!canCancel}
-                              >
-                                <Ban className="h-3.5 w-3.5" />
-                              </Button>
-                            </div>
+                            <Skeleton className="h-4 w-32" />
+                          </td>
+                          <td className="p-3">
+                            <Skeleton className="h-4 w-20" />
+                          </td>
+                          <td className="p-3">
+                            <Skeleton className="h-4 w-20" />
+                          </td>
+                          <td className="p-3">
+                            <Skeleton className="h-4 w-20" />
+                          </td>
+                          <td className="p-3">
+                            <Skeleton className="h-6 w-24" />
+                          </td>
+                          <td className="p-3">
+                            <Skeleton className="h-8 w-28" />
                           </td>
                         </tr>
-                      );
-                    })
-                  )}
+                      ))
+                    : paginatedSales.map((sale) => {
+                        const rowStatus = getSaleRowStatus(sale);
+                        const canPay =
+                          sale.lifecycleStatus !== "CANCELLED" &&
+                          sale.outstandingAmount > 0;
+                        const canCancel = sale.lifecycleStatus !== "CANCELLED";
+
+                        return (
+                          <tr
+                            key={sale.id}
+                            className="border-t hover:bg-muted/25 transition-colors"
+                          >
+                            <td className="p-3 text-sm whitespace-nowrap">
+                              {new Date(sale.date).toLocaleString()}
+                            </td>
+                            <td className="p-3 font-medium">
+                              {sale.customerName}
+                            </td>
+                            <td className="p-3 font-semibold">
+                              {formatMoney(sale.totalAmount)}
+                            </td>
+                            <td className="p-3">
+                              {formatMoney(sale.paidAmount)}
+                            </td>
+                            <td className="p-3">
+                              {formatMoney(sale.outstandingAmount)}
+                            </td>
+                            <td className="p-3">
+                              <Badge className={getStatusColor(rowStatus)}>
+                                {getStatusText(rowStatus)}
+                              </Badge>
+                            </td>
+                            <td className="p-3">
+                              <div className="flex items-center gap-2">
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setDetailSale(sale)}
+                                >
+                                  <Eye className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => openPayDialog(sale)}
+                                  disabled={!canPay}
+                                >
+                                  <Wallet className="h-3.5 w-3.5" />
+                                </Button>
+                                <Button
+                                  variant="outline"
+                                  size="sm"
+                                  onClick={() => setCancelTarget(sale)}
+                                  disabled={!canCancel}
+                                >
+                                  <Ban className="h-3.5 w-3.5" />
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
                 </tbody>
               </table>
             </div>
@@ -300,13 +328,16 @@ export function SalesTable() {
           {!isLoading && filteredSales.length > 0 && (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted-foreground">
-                Pagina {currentPageSafe} de {totalPages} ({filteredSales.length} registros)
+                Pagina {currentPageSafe} de {totalPages} ({filteredSales.length}{" "}
+                registros)
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => setCurrentPage(Math.max(1, currentPageSafe - 1))}
+                  onClick={() =>
+                    setCurrentPage(Math.max(1, currentPageSafe - 1))
+                  }
                   disabled={currentPageSafe <= 1}
                 >
                   Anterior
@@ -314,7 +345,9 @@ export function SalesTable() {
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => setCurrentPage(Math.min(totalPages, currentPageSafe + 1))}
+                  onClick={() =>
+                    setCurrentPage(Math.min(totalPages, currentPageSafe + 1))
+                  }
                   disabled={currentPageSafe >= totalPages}
                 >
                   Siguiente
@@ -341,19 +374,27 @@ export function SalesTable() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <p className="text-muted-foreground">Total</p>
-                  <p className="font-semibold">{formatMoney(detailSale.totalAmount)}</p>
+                  <p className="font-semibold">
+                    {formatMoney(detailSale.totalAmount)}
+                  </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Pagado</p>
-                  <p className="font-semibold">{formatMoney(detailSale.paidAmount)}</p>
+                  <p className="font-semibold">
+                    {formatMoney(detailSale.paidAmount)}
+                  </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Saldo pendiente</p>
-                  <p className="font-semibold">{formatMoney(detailSale.outstandingAmount)}</p>
+                  <p className="font-semibold">
+                    {formatMoney(detailSale.outstandingAmount)}
+                  </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Estado</p>
-                  <Badge className={getStatusColor(getSaleRowStatus(detailSale))}>
+                  <Badge
+                    className={getStatusColor(getSaleRowStatus(detailSale))}
+                  >
                     {getStatusText(getSaleRowStatus(detailSale))}
                   </Badge>
                 </div>
@@ -361,11 +402,16 @@ export function SalesTable() {
               <div className="rounded-md border p-3">
                 <p className="font-semibold mb-2">Pagos</p>
                 {detailSale.payments.length === 0 ? (
-                  <p className="text-muted-foreground">Sin pagos registrados.</p>
+                  <p className="text-muted-foreground">
+                    Sin pagos registrados.
+                  </p>
                 ) : (
                   <div className="space-y-2">
                     {detailSale.payments.map((payment, index) => (
-                      <div key={`${payment.id ?? index}`} className="flex justify-between gap-2">
+                      <div
+                        key={`${payment.id ?? index}`}
+                        className="flex justify-between gap-2"
+                      >
                         <span className="uppercase">{payment.method}</span>
                         <span>{formatMoney(payment.amount)}</span>
                       </div>
@@ -409,7 +455,9 @@ export function SalesTable() {
             />
             <select
               value={payMethod}
-              onChange={(event) => setPayMethod(event.target.value as PaymentMethod)}
+              onChange={(event) =>
+                setPayMethod(event.target.value as PaymentMethod)
+              }
               className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
             >
               <option value="CASH">Efectivo</option>
@@ -435,7 +483,10 @@ export function SalesTable() {
             >
               Cancelar
             </Button>
-            <Button onClick={handleRegisterPayment} disabled={isSubmittingPayment}>
+            <Button
+              onClick={handleRegisterPayment}
+              disabled={isSubmittingPayment}
+            >
               {isSubmittingPayment ? "Registrando..." : "Registrar pago"}
             </Button>
           </DialogFooter>
@@ -452,7 +503,8 @@ export function SalesTable() {
           <AlertDialogHeader>
             <AlertDialogTitle>Cancelar venta</AlertDialogTitle>
             <AlertDialogDescription>
-              Esta accion realiza cancelacion logica. La venta quedara marcada como cancelada.
+              Esta accion realiza cancelacion logica. La venta quedara marcada
+              como cancelada.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

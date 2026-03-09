@@ -78,28 +78,27 @@ export function ProductsModule() {
   const [isLoadingPending, setIsLoadingPending] = useState(false);
 
   const [historyPage, setHistoryPage] = useState(1);
-  const [historyRows, setHistoryRows] = useState<ProductPriceCostHistoryRow[]>([]);
+  const [historyRows, setHistoryRows] = useState<ProductPriceCostHistoryRow[]>(
+    []
+  );
   const [historyTotal, setHistoryTotal] = useState(0);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
 
-  const {
-    products,
-    total,
-    hasMore,
-    isLoading,
-    isError,
-    mutateProducts,
-  } = useProducts({
-    skip: (currentPage - 1) * PAGE_SIZE,
-    take: PAGE_SIZE,
-    search: debouncedSearch,
-    categoryId: selectedCategory === "all" ? null : selectedCategory,
-    branchId: activeBranchId ?? null,
-    sortBy: sortKey === "name" ? "name" : "price",
-    sortOrder,
-  });
+  const { products, total, hasMore, isLoading, isError, mutateProducts } =
+    useProducts({
+      skip: (currentPage - 1) * PAGE_SIZE,
+      take: PAGE_SIZE,
+      search: debouncedSearch,
+      categoryId: selectedCategory === "all" ? null : selectedCategory,
+      branchId: activeBranchId ?? null,
+      sortBy: sortKey === "name" ? "name" : "price",
+      sortOrder,
+    });
 
-  const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
+  const { data: categoriesData } = useSWR<Category[]>(
+    "/categories",
+    swrFetcher
+  );
 
   const categories = useMemo(
     () =>
@@ -123,8 +122,10 @@ export function ProductsModule() {
     const factor = sortOrder === "asc" ? 1 : -1;
     return [...products].sort((a, b) => {
       if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
-      if (sortKey === "cost") return (Number(a.costPrice) - Number(b.costPrice)) * factor;
-      if (sortKey === "retail") return (Number(a.retailPrice) - Number(b.retailPrice)) * factor;
+      if (sortKey === "cost")
+        return (Number(a.costPrice) - Number(b.costPrice)) * factor;
+      if (sortKey === "retail")
+        return (Number(a.retailPrice) - Number(b.retailPrice)) * factor;
       if (sortKey === "wholesale")
         return (Number(a.wholesalePrice) - Number(b.wholesalePrice)) * factor;
       return (getMarginPercent(a) - getMarginPercent(b)) * factor;
@@ -139,10 +140,13 @@ export function ProductsModule() {
     }
     try {
       setIsLoadingPending(true);
-      const payload = await backendApi.products.reviewPending({
-        skip: (pendingPage - 1) * 20,
-        take: 20,
-      }, activeBranchId);
+      const payload = await backendApi.products.reviewPending(
+        {
+          skip: (pendingPage - 1) * 20,
+          take: 20,
+        },
+        activeBranchId
+      );
       setPendingRows(payload.items as Product[]);
       setPendingTotal(payload.meta.total);
     } finally {
@@ -158,10 +162,13 @@ export function ProductsModule() {
     }
     try {
       setIsLoadingHistory(true);
-      const payload = await backendApi.products.priceHistory({
-        skip: (historyPage - 1) * 20,
-        take: 20,
-      }, activeBranchId);
+      const payload = await backendApi.products.priceHistory(
+        {
+          // skip: (historyPage - 1) * 20,
+          // take: 20,
+        },
+        activeBranchId
+      );
       setHistoryRows(payload.items);
       setHistoryTotal(payload.meta.total);
     } finally {
@@ -254,13 +261,16 @@ export function ProductsModule() {
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
   const currentPageSafe = Math.min(currentPage, totalPages);
   const showingFrom = total === 0 ? 0 : (currentPageSafe - 1) * PAGE_SIZE + 1;
-  const showingTo = total === 0 ? 0 : Math.min(currentPageSafe * PAGE_SIZE, total);
+  const showingTo =
+    total === 0 ? 0 : Math.min(currentPageSafe * PAGE_SIZE, total);
 
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">Productos</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
+            Productos
+          </h1>
           <p className="text-muted-foreground">
             Vista tipo Excel con costos, precios y control de margen.
           </p>
@@ -303,21 +313,27 @@ export function ProductsModule() {
               </div>
 
               <div className="flex flex-wrap items-center gap-2">
-                <Label className="text-xs text-muted-foreground">Ordenar:</Label>
-                {([
-                  ["name", "Nombre"],
-                  ["cost", "Costo"],
-                  ["retail", "Minorista"],
-                  ["wholesale", "Mayorista"],
-                  ["margin", "Margen"],
-                ] as Array<[SortKey, string]>).map(([key, label]) => (
+                <Label className="text-xs text-muted-foreground">
+                  Ordenar:
+                </Label>
+                {(
+                  [
+                    ["name", "Nombre"],
+                    ["cost", "Costo"],
+                    ["retail", "Minorista"],
+                    ["wholesale", "Mayorista"],
+                    ["margin", "Margen"],
+                  ] as Array<[SortKey, string]>
+                ).map(([key, label]) => (
                   <Button
                     key={key}
                     size="sm"
                     variant={sortKey === key ? "default" : "outline"}
                     onClick={() => {
                       if (sortKey === key) {
-                        setSortOrder((prev) => (prev === "asc" ? "desc" : "asc"));
+                        setSortOrder((prev) =>
+                          prev === "asc" ? "desc" : "asc"
+                        );
                       } else {
                         setSortKey(key);
                         setSortOrder("asc");
@@ -331,7 +347,8 @@ export function ProductsModule() {
 
               {isError && (
                 <p className="text-sm text-destructive">
-                  Error al cargar productos: {String((isError as any)?.message ?? isError)}
+                  Error al cargar productos:{" "}
+                  {String((isError as any)?.message ?? isError)}
                 </p>
               )}
             </CardHeader>
@@ -340,29 +357,56 @@ export function ProductsModule() {
                 <table className="w-full min-w-[1100px] border-collapse">
                   <thead className="bg-muted/40">
                     <tr>
-                      <th className="p-2 text-left text-xs font-semibold border-r">SKU</th>
-                      <th className="p-2 text-left text-xs font-semibold border-r">PLU</th>
-                      <th className="p-2 text-left text-xs font-semibold border-r">Nombre</th>
-                      <th className="p-2 text-left text-xs font-semibold border-r">Categoria</th>
-                      <th className="p-2 text-center text-xs font-semibold border-r">Pesable</th>
-                      <th className="p-2 text-right text-xs font-semibold border-r">Costo</th>
-                      <th className="p-2 text-right text-xs font-semibold border-r">Minorista</th>
-                      <th className="p-2 text-right text-xs font-semibold border-r">Mayorista</th>
-                      <th className="p-2 text-right text-xs font-semibold border-r">Margen</th>
-                      <th className="p-2 text-center text-xs font-semibold border-r">Pendiente</th>
-                      <th className="p-2 text-center text-xs font-semibold">Acciones</th>
+                      {/* <th className="p-2 text-left text-xs font-semibold border-r">SKU</th> */}
+                      <th className="p-2 text-left text-xs font-semibold border-r">
+                        PLU
+                      </th>
+                      <th className="p-2 text-left text-xs font-semibold border-r">
+                        Nombre
+                      </th>
+                      <th className="p-2 text-left text-xs font-semibold border-r">
+                        Categoria
+                      </th>
+                      {/* <th className="p-2 text-center text-xs font-semibold border-r">Pesable</th> */}
+                      <th className="p-2 text-right text-xs font-semibold border-r">
+                        Costo
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">
+                        Minorista
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">
+                        Margen Minorista
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">
+                        Mayorista
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">
+                        Margen Mayorista
+                      </th>
+                      <th className="p-2 text-center text-xs font-semibold border-r">
+                        Pendiente
+                      </th>
+                      <th className="p-2 text-center text-xs font-semibold">
+                        Acciones
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoading ? (
                       <tr>
-                        <td colSpan={11} className="p-6 text-center text-sm text-muted-foreground">
+                        <td
+                          colSpan={11}
+                          className="p-6 text-center text-sm text-muted-foreground"
+                        >
                           Cargando productos...
                         </td>
                       </tr>
                     ) : sortedProducts.length === 0 ? (
                       <tr>
-                        <td colSpan={11} className="p-6 text-center text-sm text-muted-foreground">
+                        <td
+                          colSpan={11}
+                          className="p-6 text-center text-sm text-muted-foreground"
+                        >
                           Sin productos para los filtros seleccionados.
                         </td>
                       </tr>
@@ -371,21 +415,34 @@ export function ProductsModule() {
                         const margin = getMarginPercent(product);
                         const lowMargin = margin < 20;
                         return (
-                          <tr key={product.id} className="border-t hover:bg-muted/20">
-                            <td className="p-2 text-xs border-r font-mono">{product.sku}</td>
-                            <td className="p-2 text-xs border-r">{product.pluCode ?? "-"}</td>
-                            <td className="p-2 text-sm border-r font-medium">{product.name}</td>
+                          <tr
+                            key={product.id}
+                            className="border-t hover:bg-muted/20"
+                          >
                             <td className="p-2 text-xs border-r">
-                              {product.categoryId ? categoryMap.get(product.categoryId) ?? product.categoryId : "-"}
+                              {product.pluCode ?? "-"}
                             </td>
-                            <td className="p-2 text-center text-xs border-r">
-                              {product.isWeighable ? "Si" : "No"}
+                            <td className="p-2 text-sm border-r font-medium">
+                              {product.name}
+                            </td>
+                            <td className="p-2 text-xs border-r">
+                              {product.categoryId
+                                ? categoryMap.get(product.categoryId) ??
+                                  product.categoryId
+                                : "-"}
                             </td>
                             <td className="p-2 text-right text-xs border-r">
                               {formatMoney(Number(product.costPrice ?? 0))}
                             </td>
                             <td className="p-2 text-right text-xs border-r">
                               {formatMoney(Number(product.retailPrice ?? 0))}
+                            </td>
+                            <td
+                              className={`p-2 text-right text-xs border-r font-semibold ${
+                                lowMargin ? "text-red-600" : "text-emerald-600"
+                              }`}
+                            >
+                              {margin.toFixed(2)}%
                             </td>
                             <td className="p-2 text-right text-xs border-r">
                               {formatMoney(Number(product.wholesalePrice ?? 0))}
@@ -399,16 +456,27 @@ export function ProductsModule() {
                             </td>
                             <td className="p-2 text-center text-xs border-r">
                               <div className="flex items-center justify-center gap-1">
-                                {product.priceReviewPending && <Badge variant="secondary">Precio</Badge>}
-                                {product.costReviewPending && <Badge variant="secondary">Costo</Badge>}
-                                {!product.priceReviewPending && !product.costReviewPending && (
-                                  <span className="text-muted-foreground">-</span>
+                                {product.priceReviewPending && (
+                                  <Badge variant="secondary">Precio</Badge>
                                 )}
+                                {product.costReviewPending && (
+                                  <Badge variant="secondary">Costo</Badge>
+                                )}
+                                {!product.priceReviewPending &&
+                                  !product.costReviewPending && (
+                                    <span className="text-muted-foreground">
+                                      -
+                                    </span>
+                                  )}
                               </div>
                             </td>
                             <td className="p-2 text-center text-xs">
                               <div className="flex justify-center gap-2">
-                                <Button size="sm" variant="outline" onClick={() => handleEdit(product)}>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleEdit(product)}
+                                >
                                   Editar
                                 </Button>
                                 <Button
@@ -440,7 +508,9 @@ export function ProductsModule() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                      onClick={() =>
+                        setCurrentPage((prev) => Math.max(1, prev - 1))
+                      }
                       disabled={currentPageSafe <= 1}
                     >
                       Anterior
@@ -451,7 +521,9 @@ export function ProductsModule() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setCurrentPage((prev) => Math.min(totalPages, prev + 1))}
+                      onClick={() =>
+                        setCurrentPage((prev) => Math.min(totalPages, prev + 1))
+                      }
                       disabled={!hasMore || currentPageSafe >= totalPages}
                     >
                       Siguiente
@@ -475,36 +547,62 @@ export function ProductsModule() {
                 <table className="w-full min-w-[720px]">
                   <thead className="bg-muted/40">
                     <tr>
-                      <th className="p-2 text-left text-xs font-semibold">Producto</th>
-                      <th className="p-2 text-left text-xs font-semibold">SKU</th>
-                      <th className="p-2 text-left text-xs font-semibold">PLU</th>
-                      <th className="p-2 text-left text-xs font-semibold">Pendiente</th>
-                      <th className="p-2 text-right text-xs font-semibold">Accion</th>
+                      <th className="p-2 text-left text-xs font-semibold">
+                        Producto
+                      </th>
+                      <th className="p-2 text-left text-xs font-semibold">
+                        SKU
+                      </th>
+                      <th className="p-2 text-left text-xs font-semibold">
+                        PLU
+                      </th>
+                      <th className="p-2 text-left text-xs font-semibold">
+                        Pendiente
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold">
+                        Accion
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoadingPending ? (
                       <tr>
-                        <td colSpan={5} className="p-6 text-center text-sm text-muted-foreground">
+                        <td
+                          colSpan={5}
+                          className="p-6 text-center text-sm text-muted-foreground"
+                        >
                           Cargando pendientes...
                         </td>
                       </tr>
                     ) : pendingRows.length === 0 ? (
                       <tr>
-                        <td colSpan={5} className="p-6 text-center text-sm text-muted-foreground">
+                        <td
+                          colSpan={5}
+                          className="p-6 text-center text-sm text-muted-foreground"
+                        >
                           No hay productos pendientes.
                         </td>
                       </tr>
                     ) : (
                       pendingRows.map((product) => (
                         <tr key={product.id} className="border-t">
-                          <td className="p-2 text-sm font-medium">{product.name}</td>
-                          <td className="p-2 text-xs font-mono">{product.sku}</td>
-                          <td className="p-2 text-xs">{product.pluCode ?? "-"}</td>
+                          <td className="p-2 text-sm font-medium">
+                            {product.name}
+                          </td>
+                          <td className="p-2 text-xs font-mono">
+                            {product.sku}
+                          </td>
+                          <td className="p-2 text-xs">
+                            {product.pluCode ?? "-"}
+                          </td>
                           <td className="p-2 text-xs">
                             <div className="flex gap-1">
-                              {product.priceReviewPending && <Badge variant="secondary">Precio</Badge>}
-                              {product.costReviewPending && <Badge variant="secondary">Costo</Badge>}
+                              {product.priceReviewPending && (
+                                <Badge variant="secondary">Precio</Badge>
+                              )}
+                              {product.costReviewPending && (
+                                <Badge variant="secondary">Costo</Badge>
+                              )}
                             </div>
                           </td>
                           <td className="p-2 text-right">
@@ -532,7 +630,9 @@ export function ProductsModule() {
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setPendingPage((prev) => Math.max(1, prev - 1))}
+                      onClick={() =>
+                        setPendingPage((prev) => Math.max(1, prev - 1))
+                      }
                       disabled={pendingPage <= 1}
                     >
                       Anterior
@@ -564,26 +664,48 @@ export function ProductsModule() {
                 <table className="w-full min-w-[960px]">
                   <thead className="bg-muted/40">
                     <tr>
-                      <th className="p-2 text-left text-xs font-semibold">Fecha</th>
-                      <th className="p-2 text-left text-xs font-semibold">Producto</th>
-                      <th className="p-2 text-right text-xs font-semibold">Costo (antes)</th>
-                      <th className="p-2 text-right text-xs font-semibold">Costo (despues)</th>
-                      <th className="p-2 text-right text-xs font-semibold">Minorista (antes)</th>
-                      <th className="p-2 text-right text-xs font-semibold">Minorista (despues)</th>
-                      <th className="p-2 text-right text-xs font-semibold">Mayorista (antes)</th>
-                      <th className="p-2 text-right text-xs font-semibold">Mayorista (despues)</th>
+                      <th className="p-2 text-left text-xs font-semibold">
+                        Fecha
+                      </th>
+                      <th className="p-2 text-left text-xs font-semibold">
+                        Producto
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold">
+                        Costo (antes)
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold">
+                        Costo (despues)
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold">
+                        Minorista (antes)
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold">
+                        Minorista (despues)
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold">
+                        Mayorista (antes)
+                      </th>
+                      <th className="p-2 text-right text-xs font-semibold">
+                        Mayorista (despues)
+                      </th>
                     </tr>
                   </thead>
                   <tbody>
                     {isLoadingHistory ? (
                       <tr>
-                        <td colSpan={8} className="p-6 text-center text-sm text-muted-foreground">
+                        <td
+                          colSpan={8}
+                          className="p-6 text-center text-sm text-muted-foreground"
+                        >
                           Cargando historial...
                         </td>
                       </tr>
                     ) : historyRows.length === 0 ? (
                       <tr>
-                        <td colSpan={8} className="p-6 text-center text-sm text-muted-foreground">
+                        <td
+                          colSpan={8}
+                          className="p-6 text-center text-sm text-muted-foreground"
+                        >
                           Sin historial de cambios.
                         </td>
                       </tr>
@@ -591,17 +713,31 @@ export function ProductsModule() {
                       historyRows.map((row) => (
                         <tr key={row.id} className="border-t">
                           <td className="p-2 text-xs">
-                            {row.createdAt ? new Date(row.createdAt).toLocaleString() : "-"}
+                            {row.createdAt
+                              ? new Date(row.createdAt).toLocaleString()
+                              : "-"}
                           </td>
                           <td className="p-2 text-xs">
-                            {row.product?.name ?? row.productId}
+                            {row.product?.name ?? row.product?.name}
                           </td>
-                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.oldCostPrice ?? 0))}</td>
-                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.newCostPrice ?? 0))}</td>
-                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.oldRetailPrice ?? 0))}</td>
-                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.newRetailPrice ?? 0))}</td>
-                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.oldWholesalePrice ?? 0))}</td>
-                          <td className="p-2 text-right text-xs">{formatMoney(Number(row.newWholesalePrice ?? 0))}</td>
+                          <td className="p-2 text-right text-xs">
+                            {formatMoney(Number(row.oldCostPrice ?? 0))}
+                          </td>
+                          <td className="p-2 text-right text-xs">
+                            {formatMoney(Number(row.newCostPrice ?? 0))}
+                          </td>
+                          <td className="p-2 text-right text-xs">
+                            {formatMoney(Number(row.oldRetailPrice ?? 0))}
+                          </td>
+                          <td className="p-2 text-right text-xs">
+                            {formatMoney(Number(row.newRetailPrice ?? 0))}
+                          </td>
+                          <td className="p-2 text-right text-xs">
+                            {formatMoney(Number(row.oldWholesalePrice ?? 0))}
+                          </td>
+                          <td className="p-2 text-right text-xs">
+                            {formatMoney(Number(row.newWholesalePrice ?? 0))}
+                          </td>
                         </tr>
                       ))
                     )}
@@ -611,12 +747,16 @@ export function ProductsModule() {
 
               {!isLoadingHistory && historyTotal > 0 && (
                 <div className="mt-4 flex items-center justify-between">
-                  <p className="text-xs text-muted-foreground">{historyTotal} registros</p>
+                  <p className="text-xs text-muted-foreground">
+                    {historyTotal} registros
+                  </p>
                   <div className="flex items-center gap-2">
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => setHistoryPage((prev) => Math.max(1, prev - 1))}
+                      onClick={() =>
+                        setHistoryPage((prev) => Math.max(1, prev - 1))
+                      }
                       disabled={historyPage <= 1}
                     >
                       Anterior

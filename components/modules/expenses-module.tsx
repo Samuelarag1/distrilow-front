@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -34,12 +34,18 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Label } from "@/components/ui/label";
 import {
+  AlertTriangle,
+  ArrowDownRight,
+  ArrowUpRight,
   Plus,
   Search,
+  RefreshCcw,
   Receipt,
+  ShieldCheck,
   TrendingUp,
   PieChart,
   Trash2,
+  Eye,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -61,6 +67,10 @@ import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 
 const PAGE_SIZE = 15;
+const SEARCH_DEBOUNCE_MS = 350;
+const MAX_EXPENSE_AMOUNT = 9_999_999.99;
+const MAX_EXPENSE_DESCRIPTION_LENGTH = 180;
+const WINDOW_REFRESH_COOLDOWN_MS = 20_000;
 
 type ContextFilter = ExpenseContext | "ALL";
 
@@ -71,6 +81,12 @@ const CONTEXT_LABELS: Record<ContextFilter, string> = {
   WHOLESALE: "Mayorista",
 };
 
+type ExpenseSituation = {
+  label: string;
+  detail: string;
+  badgeClassName: string;
+};
+
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
     style: "currency",
@@ -78,20 +94,54 @@ function formatMoney(value: number) {
   });
 }
 
+function toFiniteNumber(value: unknown, fallback = 0) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getExpenseSituation(amount: number, referenceAmount: number): ExpenseSituation {
+  const safeReference = referenceAmount > 0 ? referenceAmount : 1;
+  const ratio = amount / safeReference;
+
+  if (ratio >= 1.8) {
+    return {
+      label: "Critico",
+      detail: "Impacto alto en el periodo",
+      badgeClassName: "bg-red-100 text-red-800",
+    };
+  }
+  if (ratio >= 1.1) {
+    return {
+      label: "Atencion",
+      detail: "Por encima del promedio",
+      badgeClassName: "bg-amber-100 text-amber-800",
+    };
+  }
+  return {
+    label: "Controlado",
+    detail: "Dentro del rango esperado",
+    badgeClassName: "bg-emerald-100 text-emerald-800",
+  };
+}
+
 export function ExpensesModule() {
   const { addExpense } = useTransactions();
   const { branches, branchId } = useUser();
   const { toast } = useToast();
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInput, setSearchInput] = useState("");
+  const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
   const [contextFilter, setContextFilter] = useState<ContextFilter>("ALL");
   const [analyticsPeriod, setAnalyticsPeriod] =
     useState<SnapshotPeriod>("monthly");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
   const [isLoadingList, setIsLoadingList] = useState(false);
   const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [lastSyncedAt, setLastSyncedAt] = useState<string | null>(null);
   const [listMeta, setListMeta] = useState({
     total: 0,
     offset: 0,
@@ -102,7 +152,11 @@ export function ExpensesModule() {
     null
   );
   const [deleteTarget, setDeleteTarget] = useState<Expense | null>(null);
+  const [detailTarget, setDetailTarget] = useState<Expense | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const listRequestIdRef = useRef(0);
+  const analyticsRequestIdRef = useRef(0);
+  const lastAutoRefreshAtRef = useRef(0);
 
   const [newExpense, setNewExpense] = useState({
     amount: "",
@@ -110,9 +164,24 @@ export function ExpensesModule() {
     description: "",
     context: "GENERAL" as ExpenseContext,
   });
+  const allowedCategories = useMemo(
+    () => new Set(EXPENSE_CATEGORY_OPTIONS.map((category) => category.value)),
+    []
+  );
+
+  useEffect(() => {
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedSearchQuery(searchInput.trim());
+    }, SEARCH_DEBOUNCE_MS);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [searchInput]);
 
   const loadExpenses = useCallback(async () => {
+    const requestId = ++listRequestIdRef.current;
     if (!branchId) {
+      if (requestId !== listRequestIdRef.current) return;
+      setIsLoadingList(false);
       setExpenses([]);
       setListMeta({
         total: 0,
@@ -120,6 +189,7 @@ export function ExpensesModule() {
         limit: PAGE_SIZE,
         hasMore: false,
       });
+      setLastSyncedAt(null);
       return;
     }
 
@@ -130,12 +200,15 @@ export function ExpensesModule() {
         {
           skip: offset,
           take: PAGE_SIZE,
-          search: searchQuery.trim() || undefined,
+          search: debouncedSearchQuery || undefined,
           category: categoryFilter === "all" ? undefined : categoryFilter,
           context: contextFilter === "ALL" ? undefined : contextFilter,
         },
         branchId
       );
+
+      if (requestId !== listRequestIdRef.current) return;
+
       setExpenses(payload.items);
       setListMeta({
         total: payload.meta.total,
@@ -143,26 +216,32 @@ export function ExpensesModule() {
         limit: payload.meta.limit,
         hasMore: payload.meta.hasMore,
       });
+      setLastSyncedAt(new Date().toISOString());
     } catch (error: any) {
+      if (requestId !== listRequestIdRef.current) return;
       toast({
         variant: "destructive",
         title: "Error al cargar gastos",
         description: error?.message ?? "Intenta nuevamente.",
       });
     } finally {
+      if (requestId !== listRequestIdRef.current) return;
       setIsLoadingList(false);
     }
   }, [
     branchId,
     currentPage,
-    searchQuery,
+    debouncedSearchQuery,
     categoryFilter,
     contextFilter,
     toast,
   ]);
 
   const loadAnalytics = useCallback(async () => {
+    const requestId = ++analyticsRequestIdRef.current;
     if (!branchId) {
+      if (requestId !== analyticsRequestIdRef.current) return;
+      setIsLoadingAnalytics(false);
       setAnalytics(null);
       return;
     }
@@ -176,8 +255,13 @@ export function ExpensesModule() {
         },
         branchId
       );
+
+      if (requestId !== analyticsRequestIdRef.current) return;
+
       setAnalytics(response);
+      setLastSyncedAt(new Date().toISOString());
     } catch (error: any) {
+      if (requestId !== analyticsRequestIdRef.current) return;
       setAnalytics(null);
       toast({
         variant: "destructive",
@@ -185,9 +269,24 @@ export function ExpensesModule() {
         description: error?.message ?? "No se pudieron cargar las metricas.",
       });
     } finally {
+      if (requestId !== analyticsRequestIdRef.current) return;
       setIsLoadingAnalytics(false);
     }
   }, [branchId, analyticsPeriod, contextFilter, toast]);
+
+  const refreshAll = useCallback(
+    async (origin: "manual" | "focus" | "mutation" = "manual") => {
+      if (!branchId) return;
+      if (origin === "manual") setIsRefreshing(true);
+
+      try {
+        await Promise.all([loadExpenses(), loadAnalytics()]);
+      } finally {
+        if (origin === "manual") setIsRefreshing(false);
+      }
+    },
+    [branchId, loadExpenses, loadAnalytics]
+  );
 
   useEffect(() => {
     void loadExpenses();
@@ -196,6 +295,29 @@ export function ExpensesModule() {
   useEffect(() => {
     void loadAnalytics();
   }, [loadAnalytics]);
+
+  useEffect(() => {
+    if (!branchId) return;
+
+    const refreshOnFocus = () => {
+      const now = Date.now();
+      if (now - lastAutoRefreshAtRef.current < WINDOW_REFRESH_COOLDOWN_MS) return;
+      lastAutoRefreshAtRef.current = now;
+      void refreshAll("focus");
+    };
+
+    const onVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      refreshOnFocus();
+    };
+
+    window.addEventListener("focus", refreshOnFocus);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("focus", refreshOnFocus);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+    };
+  }, [branchId, refreshAll]);
 
   const totalPages = Math.max(
     1,
@@ -207,31 +329,97 @@ export function ExpensesModule() {
     return rows.slice(0, 4);
   }, [analytics]);
 
+  const topCategory = useMemo(() => topCategories[0] ?? null, [topCategories]);
+
+  const averageVisibleExpense = useMemo(() => {
+    if (expenses.length === 0) return 0;
+    return (
+      expenses.reduce((sum, expense) => sum + toFiniteNumber(expense.amount, 0), 0) /
+      expenses.length
+    );
+  }, [expenses]);
+
+  const evolutionSummary = useMemo(() => {
+    const points = analytics?.evolution ?? [];
+    if (points.length < 2) {
+      return {
+        trend: "STABLE" as const,
+        deltaPercent: 0,
+      };
+    }
+
+    const current = toFiniteNumber(points[points.length - 1]?.total, 0);
+    const previous = toFiniteNumber(points[points.length - 2]?.total, 0);
+    const deltaPercent =
+      previous === 0 ? (current > 0 ? 100 : 0) : ((current - previous) / previous) * 100;
+
+    if (deltaPercent > 5) return { trend: "UP" as const, deltaPercent };
+    if (deltaPercent < -5) return { trend: "DOWN" as const, deltaPercent };
+    return { trend: "STABLE" as const, deltaPercent };
+  }, [analytics]);
+
+  const maxEvolutionTotal = useMemo(() => {
+    const values = (analytics?.evolution ?? []).map((entry) =>
+      toFiniteNumber(entry.total, 0)
+    );
+    return Math.max(...values, 1);
+  }, [analytics]);
+
+  const detailSituation = useMemo(() => {
+    if (!detailTarget) return null;
+    return getExpenseSituation(
+      toFiniteNumber(detailTarget.amount, 0),
+      averageVisibleExpense
+    );
+  }, [detailTarget, averageVisibleExpense]);
+
   const handleAddExpense = async (event: React.FormEvent) => {
     event.preventDefault();
+    if (isSubmittingExpense) return;
+
     const amount = Number(newExpense.amount);
-    if (!Number.isFinite(amount) || amount <= 0) {
+    if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_EXPENSE_AMOUNT) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
-        description: "Ingresa un monto mayor a 0.",
+        description: `Ingresa un monto entre 0.01 y ${MAX_EXPENSE_AMOUNT}.`,
       });
       return;
     }
-    if (!newExpense.category || !newExpense.description.trim()) {
+
+    if (!allowedCategories.has(newExpense.category)) {
       toast({
         variant: "destructive",
-        title: "Datos incompletos",
-        description: "Completa categoria y descripcion.",
+        title: "Categoria invalida",
+        description: "Selecciona una categoria valida.",
+      });
+      return;
+    }
+
+    const normalizedDescription = newExpense.description.trim();
+    if (!normalizedDescription) {
+      toast({
+        variant: "destructive",
+        title: "Descripcion requerida",
+        description: "Completa la descripcion del gasto.",
+      });
+      return;
+    }
+    if (normalizedDescription.length > MAX_EXPENSE_DESCRIPTION_LENGTH) {
+      toast({
+        variant: "destructive",
+        title: "Descripcion muy larga",
+        description: `Usa hasta ${MAX_EXPENSE_DESCRIPTION_LENGTH} caracteres.`,
       });
       return;
     }
 
     try {
+      setIsSubmittingExpense(true);
       await addExpense({
         amount,
         category: newExpense.category as any,
-        description: newExpense.description.trim(),
+        description: normalizedDescription,
         context: newExpense.context,
       });
       toast({
@@ -246,13 +434,15 @@ export function ExpensesModule() {
       });
       setIsDialogOpen(false);
       setCurrentPage(1);
-      await Promise.all([loadExpenses(), loadAnalytics()]);
+      await refreshAll("mutation");
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "No se pudo guardar",
         description: error?.message ?? "Intenta nuevamente.",
       });
+    } finally {
+      setIsSubmittingExpense(false);
     }
   };
 
@@ -266,7 +456,7 @@ export function ExpensesModule() {
         description: "El registro fue eliminado correctamente.",
       });
       setDeleteTarget(null);
-      await Promise.all([loadExpenses(), loadAnalytics()]);
+      await refreshAll("mutation");
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -280,35 +470,52 @@ export function ExpensesModule() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
-        <div>
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="space-y-1">
           <div className="flex items-center gap-3">
             <BrandMark className="h-8 w-8 rounded-lg" />
-            <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
-              Gastos
-            </h1>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Gastos</h1>
           </div>
           <p className="text-muted-foreground">
-            Contexto y analytics por periodo
+            Panel operativo con desglose por situacion, categoria y contexto.
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Ultima sincronizacion:{" "}
+            {lastSyncedAt ? format(new Date(lastSyncedAt), "dd/MM/yyyy HH:mm:ss") : "Sin datos"}
           </p>
         </div>
 
-        <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
-          <DialogTrigger asChild>
-            <Button className="w-full sm:w-auto">
-              <Plus className="mr-2 h-4 w-4" />
-              Nuevo Gasto
-            </Button>
-          </DialogTrigger>
-          <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-[470px]">
-            <form onSubmit={handleAddExpense}>
-              <DialogHeader>
-                <DialogTitle>Registrar Gasto</DialogTitle>
-                <DialogDescription>
-                  El gasto se registrara en la sucursal activa.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-4 py-4">
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <Button
+            variant="outline"
+            className="w-full sm:w-auto"
+            onClick={() => void refreshAll("manual")}
+            disabled={isRefreshing || isLoadingList || isLoadingAnalytics}
+          >
+            <RefreshCcw
+              className={`mr-2 h-4 w-4 ${
+                isRefreshing || isLoadingList || isLoadingAnalytics ? "animate-spin" : ""
+              }`}
+            />
+            Actualizar
+          </Button>
+
+          <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
+            <DialogTrigger asChild>
+              <Button className="w-full sm:w-auto">
+                <Plus className="mr-2 h-4 w-4" />
+                Nuevo Gasto
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-[calc(100vw-2rem)] sm:max-w-[470px]">
+              <form onSubmit={handleAddExpense}>
+                <DialogHeader>
+                  <DialogTitle>Registrar Gasto</DialogTitle>
+                  <DialogDescription>
+                    El gasto se registrara en la sucursal activa.
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="grid gap-4 py-4">
                 <div className="grid gap-2">
                   <Label htmlFor="amount">Monto</Label>
                   <Input
@@ -367,6 +574,7 @@ export function ExpensesModule() {
                   <Label htmlFor="description">Descripcion</Label>
                   <Input
                     id="description"
+                    maxLength={MAX_EXPENSE_DESCRIPTION_LENGTH}
                     value={newExpense.description}
                     onChange={(event) =>
                       setNewExpense((prev) => ({
@@ -377,29 +585,33 @@ export function ExpensesModule() {
                     required
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Sucursal activa:{" "}
-                  {branches.find((branch) => branch.id === branchId)?.name ??
-                    "Sin sucursal"}
-                </p>
-              </div>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setIsDialogOpen(false)}
-                >
-                  Cancelar
-                </Button>
-                <Button type="submit">Guardar</Button>
-              </DialogFooter>
-            </form>
-          </DialogContent>
-        </Dialog>
+                  <p className="text-xs text-muted-foreground">
+                    Sucursal activa:{" "}
+                    {branches.find((branch) => branch.id === branchId)?.name ??
+                      "Sin sucursal"}
+                  </p>
+                </div>
+                <DialogFooter>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    onClick={() => setIsDialogOpen(false)}
+                    disabled={isSubmittingExpense}
+                  >
+                    Cancelar
+                  </Button>
+                  <Button type="submit" disabled={isSubmittingExpense}>
+                    {isSubmittingExpense ? "Guardando..." : "Guardar"}
+                  </Button>
+                </DialogFooter>
+              </form>
+            </DialogContent>
+          </Dialog>
+        </div>
       </div>
 
       <div className="grid gap-4 md:grid-cols-4">
-        <Card className="bg-primary/5 border-primary/20">
+        <Card className="border-primary/20 bg-primary/5">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Total periodo</CardTitle>
             <Receipt className="h-4 w-4 text-primary" />
@@ -409,10 +621,8 @@ export function ExpensesModule() {
               <BrandSpinner size="sm" label="Cargando..." layout="inline" />
             ) : (
               <>
-                <div className="text-2xl font-bold">
-                  {formatMoney(analytics?.total ?? 0)}
-                </div>
-                <p className="text-xs text-muted-foreground mt-1">
+                <div className="text-2xl font-bold">{formatMoney(analytics?.total ?? 0)}</div>
+                <p className="mt-1 text-xs text-muted-foreground">
                   {analyticsPeriod} - {CONTEXT_LABELS[contextFilter]}
                 </p>
               </>
@@ -422,45 +632,66 @@ export function ExpensesModule() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Categorias</CardTitle>
+            <CardTitle className="text-sm font-medium">Categorias activas</CardTitle>
             <PieChart className="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">
-              {analytics?.byCategory?.length ?? 0}
-            </div>
-            <p className="text-xs text-muted-foreground mt-1">Con movimiento</p>
+            <div className="text-2xl font-bold">{analytics?.byCategory?.length ?? 0}</div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Top actual:{" "}
+              {topCategory ? getExpenseCategoryLabel(topCategory.category) : "Sin categoria dominante"}
+            </p>
           </CardContent>
         </Card>
 
         <Card className="md:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Participacion por categoria
-            </CardTitle>
-            <TrendingUp className="h-4 w-4 text-blue-500" />
-          </CardHeader>
-          <CardContent className="space-y-2">
-            {topCategories.length === 0 ? (
-              <p className="text-xs text-muted-foreground">Sin datos</p>
+            <CardTitle className="text-sm font-medium">Situacion del gasto</CardTitle>
+            {evolutionSummary.trend === "UP" ? (
+              <ArrowUpRight className="h-4 w-4 text-red-500" />
+            ) : evolutionSummary.trend === "DOWN" ? (
+              <ArrowDownRight className="h-4 w-4 text-emerald-500" />
             ) : (
-              topCategories.map((row) => (
-                <div key={row.category} className="space-y-1">
-                  <div className="flex items-center justify-between text-xs">
-                    <span className="font-medium">
-                      {getExpenseCategoryLabel(row.category)}
-                    </span>
-                    <span>{row?.sharePercent?.toFixed(1)}%</span>
-                  </div>
-                  <div className="h-1.5 rounded bg-muted overflow-hidden">
-                    <div
-                      className="h-full bg-primary"
-                      style={{ width: `${Math.min(100, row.sharePercent)}%` }}
-                    />
-                  </div>
-                </div>
-              ))
+              <TrendingUp className="h-4 w-4 text-blue-500" />
             )}
+          </CardHeader>
+          <CardContent className="grid gap-3 sm:grid-cols-3">
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Ritmo</p>
+              <p className="text-lg font-bold">
+                {evolutionSummary.trend === "UP"
+                  ? "En alza"
+                  : evolutionSummary.trend === "DOWN"
+                  ? "En baja"
+                  : "Estable"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {evolutionSummary.deltaPercent >= 0 ? "+" : ""}
+                {evolutionSummary.deltaPercent.toFixed(1)}% vs periodo previo
+              </p>
+            </div>
+
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Concentracion</p>
+              <p className="text-lg font-bold">
+                {topCategory?.sharePercent !== undefined
+                  ? `${topCategory.sharePercent.toFixed(1)}%`
+                  : "Sin datos"}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {topCategory
+                  ? `Principal: ${getExpenseCategoryLabel(topCategory.category)}`
+                  : "No se identifica categoria dominante"}
+              </p>
+            </div>
+
+            <div className="rounded-md border bg-background p-3">
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Control</p>
+              <p className="text-lg font-bold">{formatMoney(averageVisibleExpense)}</p>
+              <p className="text-xs text-muted-foreground">
+                Promedio de la pagina actual ({expenses.length} registros)
+              </p>
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -469,7 +700,7 @@ export function ExpensesModule() {
         <CardHeader className="space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <CardTitle>Listado de gastos</CardTitle>
-            <div className="flex flex-wrap gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <select
                 value={analyticsPeriod}
                 onChange={(event) =>
@@ -511,20 +742,34 @@ export function ExpensesModule() {
                   </option>
                 ))}
               </select>
+              <Badge variant="secondary" className="h-9 px-3 text-xs">
+                <ShieldCheck className="mr-1 h-3 w-3" />
+                Refresh seguro activo
+              </Badge>
             </div>
           </div>
 
-          <div className="relative w-full sm:w-80">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input
-              placeholder="Buscar gastos..."
-              className="pl-8"
-              value={searchQuery}
-              onChange={(event) => {
-                setSearchQuery(event.target.value);
-                setCurrentPage(1);
-              }}
-            />
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="relative w-full sm:w-80">
+              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+              <Input
+                placeholder="Buscar gastos..."
+                className="pl-8"
+                value={searchInput}
+                maxLength={120}
+                onChange={(event) => {
+                  setSearchInput(event.target.value);
+                  setCurrentPage(1);
+                }}
+              />
+            </div>
+
+            {searchInput.trim() !== debouncedSearchQuery && (
+              <div className="flex items-center gap-1 text-xs text-muted-foreground">
+                <RefreshCcw className="h-3 w-3 animate-spin" />
+                Aplicando filtros...
+              </div>
+            )}
           </div>
         </CardHeader>
         <CardContent>
@@ -536,6 +781,7 @@ export function ExpensesModule() {
                   <TableHead>Descripcion</TableHead>
                   <TableHead>Categoria</TableHead>
                   <TableHead>Contexto</TableHead>
+                  <TableHead>Situacion</TableHead>
                   <TableHead className="text-right">Monto</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
@@ -543,7 +789,7 @@ export function ExpensesModule() {
               <TableBody>
                 {isLoadingList ? (
                   <TableRow>
-                    <TableCell colSpan={6} className="h-24 text-center">
+                    <TableCell colSpan={7} className="h-24 text-center">
                       <BrandSpinner
                         size="sm"
                         label="Cargando gastos..."
@@ -554,53 +800,78 @@ export function ExpensesModule() {
                 ) : expenses.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={6}
+                      colSpan={7}
                       className="h-24 text-center text-muted-foreground"
                     >
                       No hay gastos para los filtros actuales.
                     </TableCell>
                   </TableRow>
                 ) : (
-                  expenses.map((expense) => (
-                    <TableRow key={expense.id}>
-                      <TableCell className="whitespace-nowrap">
-                        {format(
-                          new Date(
-                            expense.createdAt ?? expense.updatedAt ?? new Date()
-                          ),
-                          "dd/MM/yyyy HH:mm",
+                  expenses.map((expense) => {
+                    const situation = getExpenseSituation(
+                      toFiniteNumber(expense.amount, 0),
+                      averageVisibleExpense
+                    );
+
+                    return (
+                      <TableRow key={expense.id}>
+                        <TableCell className="whitespace-nowrap">
+                          {format(
+                            new Date(expense.createdAt ?? expense.updatedAt ?? new Date()),
+                            "dd/MM/yyyy HH:mm",
+                            {
+                              locale: es,
+                            }
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          <div className="max-w-[260px]">
+                            <p className="truncate font-medium">{expense.description}</p>
+                            <p className="truncate text-xs text-muted-foreground">{expense.id}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell>
+                          <Badge variant="secondary">
+                            {getExpenseCategoryLabel(expense.category)}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
                           {
-                            locale: es,
+                            CONTEXT_LABELS[
+                              (expense.context ?? "GENERAL") as ContextFilter
+                            ]
                           }
-                        )}
-                      </TableCell>
-                      <TableCell>{expense.description}</TableCell>
-                      <TableCell>
-                        <Badge variant="secondary">
-                          {getExpenseCategoryLabel(expense.category)}
-                        </Badge>
-                      </TableCell>
-                      <TableCell>
-                        {
-                          CONTEXT_LABELS[
-                            (expense.context ?? "GENERAL") as ContextFilter
-                          ]
-                        }
-                      </TableCell>
-                      <TableCell className="text-right font-semibold">
-                        {formatMoney(expense.amount)}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setDeleteTarget(expense)}
-                        >
-                          <Trash2 className="h-4 w-4 text-destructive" />
-                        </Button>
-                      </TableCell>
-                    </TableRow>
-                  ))
+                        </TableCell>
+                        <TableCell>
+                          <div className="space-y-1">
+                            <Badge className={situation.badgeClassName}>{situation.label}</Badge>
+                            <p className="text-[11px] text-muted-foreground">{situation.detail}</p>
+                          </div>
+                        </TableCell>
+                        <TableCell className="text-right font-semibold">
+                          {formatMoney(expense.amount)}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <div className="flex justify-end gap-1">
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDetailTarget(expense)}
+                            >
+                              <Eye className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setDeleteTarget(expense)}
+                            >
+                              <Trash2 className="h-4 w-4 text-destructive" />
+                            </Button>
+                          </div>
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
                 )}
               </TableBody>
             </Table>
@@ -639,7 +910,24 @@ export function ExpensesModule() {
             </div>
           )}
 
-          <div className="mt-6 space-y-2">
+          <div className="mt-6 rounded-md border bg-muted/20 p-3 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <ShieldCheck className="h-4 w-4 text-emerald-600" />
+              <span className="font-semibold">Integridad operativa:</span>
+              <span className="text-muted-foreground">
+                Se evita duplicar por doble submit y se refresca al volver a la pantalla.
+              </span>
+            </div>
+            {topCategory?.sharePercent !== undefined && topCategory.sharePercent > 60 && (
+              <div className="mt-2 flex items-center gap-2 text-amber-700">
+                <AlertTriangle className="h-4 w-4" />
+                Alta concentracion en {getExpenseCategoryLabel(topCategory.category)} (
+                {topCategory.sharePercent.toFixed(1)}%).
+              </div>
+            )}
+          </div>
+
+          <div className="mt-4 space-y-2">
             <p className="text-sm font-semibold">Evolucion</p>
             {isLoadingAnalytics ? (
               <BrandSpinner
@@ -667,13 +955,7 @@ export function ExpensesModule() {
                         style={{
                           width: `${Math.min(
                             100,
-                            (point.total /
-                              Math.max(
-                                ...((analytics?.evolution ?? []).map(
-                                  (entry) => entry.total
-                                ) || [1]),
-                                1
-                              )) *
+                            (toFiniteNumber(point.total, 0) / maxEvolutionTotal) *
                               100
                           )}%`,
                         }}
@@ -687,6 +969,59 @@ export function ExpensesModule() {
           </div>
         </CardContent>
       </Card>
+
+      <Dialog
+        open={Boolean(detailTarget)}
+        onOpenChange={(open) => {
+          if (!open) setDetailTarget(null);
+        }}
+      >
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Detalle de gasto</DialogTitle>
+            <DialogDescription>ID: {detailTarget?.id}</DialogDescription>
+          </DialogHeader>
+          {detailTarget && (
+            <div className="space-y-3 text-sm">
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <p className="text-muted-foreground">Monto</p>
+                  <p className="font-semibold">{formatMoney(detailTarget.amount)}</p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Contexto</p>
+                  <p className="font-semibold">
+                    {CONTEXT_LABELS[(detailTarget.context ?? "GENERAL") as ContextFilter]}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Categoria</p>
+                  <p className="font-semibold">
+                    {getExpenseCategoryLabel(detailTarget.category)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-muted-foreground">Situacion</p>
+                  {detailSituation && (
+                    <Badge className={detailSituation.badgeClassName}>
+                      {detailSituation.label}
+                    </Badge>
+                  )}
+                </div>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="font-semibold">Descripcion</p>
+                <p className="mt-1 text-muted-foreground">{detailTarget.description}</p>
+              </div>
+            </div>
+          )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDetailTarget(null)}>
+              Cerrar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AlertDialog
         open={Boolean(deleteTarget)}

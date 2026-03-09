@@ -76,7 +76,9 @@ export function DailySales() {
           </CardHeader>
           <CardContent>
             {isLoading && (
-              <div className="text-sm text-muted-foreground">Cargando ventas de hoy...</div>
+              <div className="text-sm text-muted-foreground">
+                Cargando ventas de hoy...
+              </div>
             )}
             <div className="space-y-3">
               {todaySales.map((sale) => (
@@ -87,17 +89,20 @@ export function DailySales() {
                   <div className="flex items-center gap-3">
                     <div className="text-center">
                       <p className="text-sm font-medium">{sale.time}</p>
-                      <p className="text-xs text-muted-foreground">#{sale.id}</p>
                     </div>
                     <div>
                       <p className="font-medium">{sale.customer}</p>
-                      <p className="text-sm text-muted-foreground">{sale.items} productos</p>
+                      <p className="text-sm text-muted-foreground">
+                        {sale.items} productos
+                      </p>
                     </div>
                   </div>
                   <div className="flex items-center gap-3">
                     <div className="text-right">
                       <p className="font-bold">${sale.total.toFixed(2)}</p>
-                      <p className="text-xs text-muted-foreground">{sale.method}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {sale.method}
+                      </p>
                     </div>
                     <Badge className={getStatusColor(sale.status)}>
                       {sale.status === "paid"
@@ -122,7 +127,9 @@ export function DailySales() {
             <div className="text-center space-y-2">
               <DollarSign className="h-8 w-8 mx-auto text-green-500" />
               <p className="text-sm text-muted-foreground">Total del Dia</p>
-              <p className="text-3xl font-bold text-green-600">${totalSales.toFixed(2)}</p>
+              <p className="text-3xl font-bold text-green-600">
+                ${totalSales.toFixed(2)}
+              </p>
             </div>
           </CardContent>
         </Card>
@@ -131,7 +138,9 @@ export function DailySales() {
           <CardContent className="p-6">
             <div className="text-center space-y-2">
               <ShoppingCart className="h-8 w-8 mx-auto text-blue-500" />
-              <p className="text-sm text-muted-foreground">Ordenes Completadas</p>
+              <p className="text-sm text-muted-foreground">
+                Ordenes Completadas
+              </p>
               <p className="text-3xl font-bold text-blue-600">{totalOrders}</p>
             </div>
           </CardContent>
@@ -144,7 +153,9 @@ export function DailySales() {
                 <span className="text-purple-600 font-bold">O</span>
               </div>
               <p className="text-sm text-muted-foreground">Ticket Promedio</p>
-              <p className="text-3xl font-bold text-purple-600">${avgOrder.toFixed(2)}</p>
+              <p className="text-3xl font-bold text-purple-600">
+                ${avgOrder.toFixed(2)}
+              </p>
             </div>
           </CardContent>
         </Card>

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useCallback, useContext, useEffect, useState } from "react";
+import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { useBusiness } from "./business-provider";
 import { useAudit } from "./audit-provider";
 import { useUser } from "./user-provider";
@@ -108,6 +108,8 @@ const TransactionsContext = createContext<TransactionsContextType | undefined>(
 const MAX_NUMERIC_10_2 = 99_999_999.99;
 const MAX_QUANTITY = 99_999_999;
 const MAX_UNIT_PRICE = 9_999_999.999999;
+const MAX_EXPENSE_AMOUNT = 9_999_999.99;
+const MAX_EXPENSE_DESCRIPTION_LENGTH = 180;
 
 function toFiniteNumber(value: unknown, fallback = 0) {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -124,6 +126,20 @@ function normalizeQuantity(value: unknown) {
   const rounded = Math.round(toFiniteNumber(value, NaN) * 1_000) / 1_000;
   if (!Number.isFinite(rounded) || rounded < 0) return null;
   return rounded;
+}
+
+function dedupeById<T extends { id: string }>(rows: T[]) {
+  const seen = new Set<string>();
+  const deduped: T[] = [];
+
+  rows.forEach((row) => {
+    const id = String(row.id ?? "").trim();
+    if (!id || seen.has(id)) return;
+    seen.add(id);
+    deduped.push(row);
+  });
+
+  return deduped;
 }
 
 function deriveContextFromBusinessType(type: BusinessType): ExpenseContext {
@@ -229,13 +245,27 @@ async function collectAllPages<T>(
   maxPages = 8
 ) {
   const result: T[] = [];
+  const seenIds = new Set<string>();
   let skip = 0;
 
   for (let page = 0; page < maxPages; page += 1) {
     const payload = await fetchPage(skip, pageSize);
-    result.push(...payload.items);
+    let appendedCount = 0;
+    payload.items.forEach((item) => {
+      const id = String((item as any)?.id ?? "").trim();
+      if (id && seenIds.has(id)) return;
+      if (id) seenIds.add(id);
+      result.push(item);
+      appendedCount += 1;
+    });
+
+    if (payload.meta.hasMore && appendedCount === 0) {
+      break;
+    }
     if (!payload.meta.hasMore) break;
-    skip += payload.meta.limit || pageSize;
+
+    const safeLimit = Math.max(1, toFiniteNumber(payload.meta.limit, pageSize));
+    skip += safeLimit;
   }
 
   return result;
@@ -249,6 +279,7 @@ export function TransactionsProvider({
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const refreshRequestIdRef = useRef(0);
   const { logEvent } = useAudit();
   const { token, branchId } = useUser();
   const { businessType } = useBusiness();
@@ -265,8 +296,23 @@ export function TransactionsProvider({
     [setSales]
   );
 
+  const upsertExpense = useCallback(
+    (incoming: Expense) => {
+      setExpenses((prev) => {
+        const next = prev.filter((expense) => expense.id !== incoming.id);
+        return [incoming, ...next].sort(
+          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+        );
+      });
+    },
+    [setExpenses]
+  );
+
   const refreshTransactions = useCallback(async () => {
+    const requestId = ++refreshRequestIdRef.current;
+
     if (!token || !branchId) {
+      if (requestId !== refreshRequestIdRef.current) return;
       setSales([]);
       setExpenses([]);
       setIsLoading(false);
@@ -280,19 +326,27 @@ export function TransactionsProvider({
         collectAllPages((skip, take) => backendApi.expenses.list({ skip, take }, branchId)),
       ]);
 
+      if (requestId !== refreshRequestIdRef.current) return;
+
       setSales(
-        apiSales
-          .map((sale) => normalizeSale(sale, businessType))
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        dedupeById(
+          apiSales
+            .map((sale) => normalizeSale(sale, businessType))
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        )
       );
       setExpenses(
-        apiExpenses
-          .map((expense) => normalizeExpense(expense, businessType))
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        dedupeById(
+          apiExpenses
+            .map((expense) => normalizeExpense(expense, businessType))
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        )
       );
     } catch (e) {
+      if (requestId !== refreshRequestIdRef.current) return;
       console.error("Error loading transactions data", e);
     } finally {
+      if (requestId !== refreshRequestIdRef.current) return;
       setIsLoading(false);
     }
   }, [token, branchId, businessType]);
@@ -308,6 +362,23 @@ export function TransactionsProvider({
         throw new Error("No hay sucursal activa para registrar el gasto.");
       }
 
+      const amount = toFiniteNumber(newExpense.amount, NaN);
+      if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_EXPENSE_AMOUNT) {
+        throw new Error(
+          `El monto debe ser mayor a 0 y menor o igual a ${MAX_EXPENSE_AMOUNT}.`
+        );
+      }
+
+      const normalizedDescription = String(newExpense.description ?? "").trim();
+      if (!normalizedDescription) {
+        throw new Error("La descripcion del gasto es obligatoria.");
+      }
+      if (normalizedDescription.length > MAX_EXPENSE_DESCRIPTION_LENGTH) {
+        throw new Error(
+          `La descripcion no puede superar ${MAX_EXPENSE_DESCRIPTION_LENGTH} caracteres.`
+        );
+      }
+
       const resolvedContext =
         newExpense.context ??
         (newExpense.businessType
@@ -316,19 +387,14 @@ export function TransactionsProvider({
 
       const savedExpense = await backendApi.expenses.create({
         branchId: resolvedBranchId,
-        amount: Number(newExpense.amount),
+        amount,
         category: newExpense.category as ExpenseCategory,
-        description: newExpense.description,
+        description: normalizedDescription,
         context: resolvedContext,
       });
 
       const normalized = normalizeExpense(savedExpense, businessType);
-
-      setExpenses((prev) =>
-        [normalized, ...prev].sort(
-          (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-        )
-      );
+      upsertExpense(normalized);
 
       logEvent(
         "create",
@@ -337,7 +403,7 @@ export function TransactionsProvider({
         normalized.id
       );
     },
-    [branchId, businessType, logEvent]
+    [branchId, businessType, logEvent, upsertExpense]
   );
 
   const addSale = useCallback(

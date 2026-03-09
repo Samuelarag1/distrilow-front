@@ -123,15 +123,17 @@ export function POSModule() {
     take,
     isLoading,
     mutateProducts,
-  } =
-    useProducts({
+  } = useProducts({
     skip: (currentPage - 1) * pageSize,
     take: pageSize,
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     branchId: branchId ?? null,
   });
-  const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
+  const { data: categoriesData } = useSWR<Category[]>(
+    "/categories",
+    swrFetcher
+  );
 
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -141,12 +143,10 @@ export function POSModule() {
     return map;
   }, [categoriesData]);
 
-  const moneyFormatter = useMemo(
-    () => new Intl.NumberFormat("es-AR"),
-    []
-  );
+  const moneyFormatter = useMemo(() => new Intl.NumberFormat("es-AR"), []);
 
-  const formatMoney = (value: unknown) => moneyFormatter.format(toSafeNumber(value, 0));
+  const formatMoney = (value: unknown) =>
+    moneyFormatter.format(toSafeNumber(value, 0));
 
   const isWeighableProduct = (product: Product) =>
     Boolean(product.isWeighable) ||
@@ -219,7 +219,9 @@ export function POSModule() {
       return categoryNameById.get(product.categoryId) ?? product.categoryId;
     }
 
-    return getLooseCategoryLabel((product as Product & { category?: unknown }).category);
+    return getLooseCategoryLabel(
+      (product as Product & { category?: unknown }).category
+    );
   };
 
   const getStockBadgeClassName = (product: Product) => {
@@ -303,9 +305,7 @@ export function POSModule() {
         }
 
         return prev.map((item) =>
-          item.id === product.id
-            ? { ...item, quantity: nextQuantity }
-            : item
+          item.id === product.id ? { ...item, quantity: nextQuantity } : item
         );
       }
 
@@ -393,7 +393,13 @@ export function POSModule() {
         ) ?? null;
 
       const resolved = localMatch
-        ? { product: localMatch, quantity: undefined, unitPrice: undefined, subtotal: undefined, barcodeType: "STANDARD" }
+        ? {
+            product: localMatch,
+            quantity: undefined,
+            unitPrice: undefined,
+            subtotal: undefined,
+            barcodeType: "STANDARD",
+          }
         : await backendApi.products.resolveBarcode(code);
       const scanned = resolved?.product ?? null;
 
@@ -453,10 +459,16 @@ export function POSModule() {
   const total = cart.reduce((sum, item) => sum + getCartLineTotal(item), 0);
   const itemCount = cart.length;
   const cashPaymentPreview = Math.max(0, Number(cashPaymentAmount || 0));
-  const transferPaymentPreview = Math.max(0, Number(transferPaymentAmount || 0));
+  const transferPaymentPreview = Math.max(
+    0,
+    Number(transferPaymentAmount || 0)
+  );
   const totalInitialPayments = cashPaymentPreview + transferPaymentPreview;
   const pendingAfterInitialPayments = Math.max(0, total - totalInitialPayments);
-  const totalPages = Math.max(1, Math.ceil((productsTotal || 0) / Math.max(take, 1)));
+  const totalPages = Math.max(
+    1,
+    Math.ceil((productsTotal || 0) / Math.max(take, 1))
+  );
   const showingFrom = productsTotal === 0 ? 0 : skip + 1;
   const showingTo = productsTotal === 0 ? 0 : skip + filteredProducts.length;
 
@@ -559,7 +571,9 @@ export function POSModule() {
         lineItems: cart.map((item) => {
           const quantity = toSafeNumber(item.quantity, 0);
           const computedUnitPrice =
-            item.customLineTotal !== null && item.customLineTotal > 0 && quantity > 0
+            item.customLineTotal !== null &&
+            item.customLineTotal > 0 &&
+            quantity > 0
               ? item.customLineTotal / quantity
               : toSafeNumber(item.unitPrice, 0);
 
@@ -579,7 +593,9 @@ export function POSModule() {
         title: "Venta exitosa",
         description:
           outstandingAmount > 0
-            ? `Venta por $${formatMoney(total)} registrada. Pagado: $${formatMoney(
+            ? `Venta por $${formatMoney(
+                total
+              )} registrada. Pagado: $${formatMoney(
                 paidAmount
               )}. Saldo pendiente: $${formatMoney(outstandingAmount)}.`
             : `Venta por $${formatMoney(total)} registrada y pagada.`,
@@ -654,8 +670,8 @@ export function POSModule() {
                       placeholder="Buscar productos..."
                       value={searchQuery}
                       onChange={(event) => {
-                        setSearchQuery(event.target.value)
-                        setCurrentPage(1)
+                        setSearchQuery(event.target.value);
+                        setCurrentPage(1);
                       }}
                       className="pl-8"
                     />
@@ -663,8 +679,8 @@ export function POSModule() {
                   <select
                     value={selectedCategory}
                     onChange={(event) => {
-                      setSelectedCategory(event.target.value)
-                      setCurrentPage(1)
+                      setSelectedCategory(event.target.value);
+                      setCurrentPage(1);
                     }}
                     className="rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
                   >
@@ -724,18 +740,18 @@ export function POSModule() {
                               <h3 className="truncate text-sm font-bold transition-colors group-hover:text-primary">
                                 {product.name}
                               </h3>
+                              <p className="truncate text-[10px] font-bold uppercase text-muted-foreground">
+                                {getProductCategoryLabel(product)}
+                              </p>
                               <div className="flex items-center gap-2">
                                 <Badge
                                   variant="outline"
-                                  className={`h-5 min-w-[82px] justify-center px-1.5 py-0 text-[10px] font-black uppercase ${getStockBadgeClassName(
+                                  className={`h-5 min-w-[82px] justify-center p-2 text-[10px] font-black uppercase ${getStockBadgeClassName(
                                     product
                                   )}`}
                                 >
                                   stock {product.stock ?? 0}
                                 </Badge>
-                                <p className="truncate text-[10px] font-bold uppercase text-muted-foreground">
-                                  {getProductCategoryLabel(product)}
-                                </p>
                               </div>
                               <p className="text-sm font-black text-primary">
                                 ${formatMoney(activePrice)}
@@ -763,13 +779,16 @@ export function POSModule() {
               </div>
               <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
                 <div className="text-xs text-muted-foreground">
-                  Mostrando {showingFrom}-{showingTo} de {productsTotal} productos.
+                  Mostrando {showingFrom}-{showingTo} de {productsTotal}{" "}
+                  productos.
                 </div>
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"
                     variant="outline"
-                    onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                    onClick={() =>
+                      setCurrentPage((prev) => Math.max(1, prev - 1))
+                    }
                     disabled={currentPage <= 1}
                   >
                     Anterior
@@ -808,10 +827,7 @@ export function POSModule() {
                 <>
                   <div className="max-h-64 space-y-3 overflow-y-auto">
                     {cart.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex items-start space-x-2"
-                      >
+                      <div key={item.id} className="flex items-start space-x-2">
                         <img
                           src={resolveProductImageUrl(item)}
                           alt={item.name}
@@ -863,7 +879,10 @@ export function POSModule() {
                                   )}
                                   value={item.customLineTotal ?? ""}
                                   onChange={(event) =>
-                                    updateManualLineTotal(item.id, event.target.value)
+                                    updateManualLineTotal(
+                                      item.id,
+                                      event.target.value
+                                    )
                                   }
                                   className="h-8 text-xs"
                                 />
@@ -871,7 +890,8 @@ export function POSModule() {
                             </div>
                           )}
                           <p className="mt-1 text-xs font-semibold">
-                            Subtotal: ${roundTo(getCartLineTotal(item), 2).toFixed(2)}
+                            Subtotal: $
+                            {roundTo(getCartLineTotal(item), 2).toFixed(2)}
                           </p>
                         </div>
                         <div className="flex items-center space-x-1 pt-0.5">
@@ -881,7 +901,10 @@ export function POSModule() {
                             onClick={() =>
                               updateQuantity(
                                 item.id,
-                                roundTo(item.quantity - getQuantityStep(item), 3)
+                                roundTo(
+                                  item.quantity - getQuantityStep(item),
+                                  3
+                                )
                               )
                             }
                           >
@@ -898,7 +921,10 @@ export function POSModule() {
                             onClick={() =>
                               updateQuantity(
                                 item.id,
-                                roundTo(item.quantity + getQuantityStep(item), 3)
+                                roundTo(
+                                  item.quantity + getQuantityStep(item),
+                                  3
+                                )
                               )
                             }
                           >
@@ -943,7 +969,9 @@ export function POSModule() {
                             min="0"
                             placeholder="0.00"
                             value={cashPaymentAmount}
-                            onChange={(event) => setCashPaymentAmount(event.target.value)}
+                            onChange={(event) =>
+                              setCashPaymentAmount(event.target.value)
+                            }
                             className="h-8"
                           />
                         </div>
@@ -957,7 +985,9 @@ export function POSModule() {
                             min="0"
                             placeholder="0.00"
                             value={transferPaymentAmount}
-                            onChange={(event) => setTransferPaymentAmount(event.target.value)}
+                            onChange={(event) =>
+                              setTransferPaymentAmount(event.target.value)
+                            }
                             className="h-8"
                           />
                         </div>
@@ -969,7 +999,9 @@ export function POSModule() {
                         <Input
                           placeholder="Alias, CBU, comprobante"
                           value={transferReference}
-                          onChange={(event) => setTransferReference(event.target.value)}
+                          onChange={(event) =>
+                            setTransferReference(event.target.value)
+                          }
                           className="h-8"
                         />
                       </div>
@@ -1028,8 +1060,9 @@ export function POSModule() {
           <AlertDialogHeader>
             <AlertDialogTitle>Confirmar Pago</AlertDialogTitle>
             <AlertDialogDescription>
-              Total venta: <strong>${formatMoney(total)}</strong>. Pagos iniciales:{" "}
-              <strong>${formatMoney(totalInitialPayments)}</strong>. Saldo pendiente:{" "}
+              Total venta: <strong>${formatMoney(total)}</strong>. Pagos
+              iniciales: <strong>${formatMoney(totalInitialPayments)}</strong>.
+              Saldo pendiente:{" "}
               <strong>${formatMoney(pendingAfterInitialPayments)}</strong>.
             </AlertDialogDescription>
           </AlertDialogHeader>

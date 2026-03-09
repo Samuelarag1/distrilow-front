@@ -66,7 +66,10 @@ export function ProductDialog({
   isSaving = false,
 }: ProductDialogProps) {
   const { activeBranchId } = useBranch();
-  const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
+  const { data: categoriesData } = useSWR<Category[]>(
+    "/categories",
+    swrFetcher
+  );
 
   const categoryOptions = useMemo(() => {
     return (categoriesData ?? [])
@@ -99,7 +102,9 @@ export function ProductDialog({
     imageUrl: "",
   });
   const [imageFile, setImageFile] = useState<File | null>(null);
-  const [localImagePreview, setLocalImagePreview] = useState<string | null>(null);
+  const [localImagePreview, setLocalImagePreview] = useState<string | null>(
+    null
+  );
 
   // Si tu Product del front NO tiene algunos campos (sku, etc), ajustÃ¡ el mapeo.
   useEffect(() => {
@@ -120,7 +125,9 @@ export function ProductDialog({
         wholesalePrice: Number(product.wholesalePrice ?? 0),
         retailPrice: Number((product as any).retailPrice ?? 0),
         marginPercent: Number((product as any).marginPercent ?? 0),
-        priceReviewPending: Boolean((product as any).priceReviewPending ?? false),
+        priceReviewPending: Boolean(
+          (product as any).priceReviewPending ?? false
+        ),
         costReviewPending: Boolean((product as any).costReviewPending ?? false),
         categoryId: productCategoryId,
         brand: (product as any).brand ?? "",
@@ -254,8 +261,19 @@ export function ProductDialog({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid gap-4">
-            {/* Category */}
-            <div className="grid grid-cols-1 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+              <div className="space-y-2">
+                <Label>Nombre *</Label>
+                <Input
+                  value={formData.name}
+                  onChange={(e) =>
+                    setFormData((p) => ({ ...p, name: e.target.value }))
+                  }
+                  placeholder="Ej. Cerveza IPA 500ml"
+                  required
+                  disabled={disableForm}
+                />
+              </div>
               <div className="space-y-2">
                 <Label>Categoria</Label>
                 <Select
@@ -281,67 +299,15 @@ export function ProductDialog({
                   </SelectContent>
                 </Select>
               </div>
-            </div>
-
-            <div className="space-y-2">
-              <Label>Foto del producto</Label>
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center">
-                <div className="h-24 w-24 overflow-hidden rounded-md border bg-muted">
-                  <img
-                    src={previewSrc}
-                    alt={formData.name || "Imagen de producto"}
-                    className="h-full w-full object-cover"
-                  />
-                </div>
-                <div className="flex-1 space-y-2">
-                  <Input
-                    type="file"
-                    accept="image/png,image/jpeg,image/webp"
-                    onChange={handleImageChange}
-                    disabled={disableForm}
-                  />
-                  <p className="text-xs text-muted-foreground">
-                    Se envia al backend para alojarla en Supabase Storage.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            {/* SKU + Barcode + PLU */}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
-                <Label>SKU *</Label>
-                <Input
-                  value={formData.sku}
-                  onChange={(e) =>
-                    setFormData((p) => ({ ...p, sku: e.target.value }))
-                  }
-                  placeholder="Ej. ABC-123"
-                  required
-                  disabled={disableForm}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>CÃ³digo de barras</Label>
-                <Input
-                  value={formData.barcode}
-                  onChange={(e) =>
-                    setFormData((p) => ({ ...p, barcode: e.target.value }))
-                  }
-                  placeholder="Opcional"
-                  disabled={disableForm}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Codigo PLU</Label>
+                <Label>Código PLU</Label>
                 <Input
                   value={formData.pluCode}
                   onChange={(e) =>
                     setFormData((p) => ({ ...p, pluCode: e.target.value }))
                   }
-                  placeholder="Opcional"
+                  required
+                  placeholder="Ej. 00011"
                   maxLength={5}
                   pattern="\d{5}"
                   title="El PLU debe tener exactamente 5 digitos"
@@ -350,35 +316,6 @@ export function ProductDialog({
               </div>
             </div>
 
-            {/* Name */}
-            <div className="space-y-2">
-              <Label>Nombre *</Label>
-              <Input
-                value={formData.name}
-                onChange={(e) =>
-                  setFormData((p) => ({ ...p, name: e.target.value }))
-                }
-                placeholder="Ej. Cerveza IPA 500ml"
-                required
-                disabled={disableForm}
-              />
-            </div>
-
-            {/* Description */}
-            <div className="space-y-2">
-              <Label>DescripciÃ³n</Label>
-              <Textarea
-                value={formData.description}
-                onChange={(e) =>
-                  setFormData((p) => ({ ...p, description: e.target.value }))
-                }
-                placeholder="Detalles adicionales..."
-                rows={2}
-                disabled={disableForm}
-              />
-            </div>
-
-            {/* Prices */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="space-y-2">
                 <Label>Costo *</Label>
@@ -403,31 +340,6 @@ export function ProductDialog({
                   />
                 </div>
               </div>
-
-              <div className="space-y-2">
-                <Label>Precio Mayorista *</Label>
-                <div className="relative">
-                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-                    $
-                  </span>
-                  <Input
-                    type="number"
-                    step="0.01"
-                    min="0"
-                    className="pl-7"
-                    value={formData.wholesalePrice}
-                    onChange={(e) =>
-                      setFormData((p) => ({
-                        ...p,
-                        wholesalePrice: Number.parseFloat(e.target.value) || 0,
-                      }))
-                    }
-                    required
-                    disabled={disableForm}
-                  />
-                </div>
-              </div>
-
               <div className="space-y-2">
                 <Label>Precio Minorista *</Label>
                 <div className="relative">
@@ -451,24 +363,46 @@ export function ProductDialog({
                   />
                 </div>
               </div>
+              <div className="space-y-2">
+                <Label>Precio Mayorista *</Label>
+                <div className="relative">
+                  <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                    $
+                  </span>
+                  <Input
+                    type="number"
+                    step="0.01"
+                    min="0"
+                    className="pl-7"
+                    value={formData.wholesalePrice}
+                    onChange={(e) =>
+                      setFormData((p) => ({
+                        ...p,
+                        wholesalePrice: Number.parseFloat(e.target.value) || 0,
+                      }))
+                    }
+                    required
+                    disabled={disableForm}
+                  />
+                </div>
+              </div>
+            </div>
+            <div className="space-y-2">
+              <Label>Descripción</Label>
+              <Textarea
+                value={formData.description}
+                onChange={(e) =>
+                  setFormData((p) => ({ ...p, description: e.target.value }))
+                }
+                placeholder="Detalles adicionales..."
+                rows={2}
+                disabled={disableForm}
+              />
             </div>
 
-            {/* Brand + Measurement */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div className="space-y-2">
-                <Label>Marca</Label>
-                <Input
-                  value={formData.brand}
-                  onChange={(e) =>
-                    setFormData((p) => ({ ...p, brand: e.target.value }))
-                  }
-                  placeholder="Opcional"
-                  disabled={disableForm}
-                />
-              </div>
-
-              <div className="space-y-2">
-                <Label>Tipo de medida *</Label>
+                <Label>Tipo de medida</Label>
                 <Select
                   value={formData.measurementType}
                   onValueChange={(value) =>
@@ -497,38 +431,6 @@ export function ProductDialog({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
                 <div className="flex flex-col gap-1">
-                  <Label className="font-bold">Rastrear stock</Label>
-                  <span className="text-xs text-muted-foreground">
-                    Si el producto debe afectar existencias
-                  </span>
-                </div>
-                <Switch
-                  checked={formData.trackStock}
-                  onCheckedChange={(checked) =>
-                    setFormData((p) => ({ ...p, trackStock: checked }))
-                  }
-                  disabled={disableForm}
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
-                <div className="flex flex-col gap-1">
-                  <Label className="font-bold">Permitir stock negativo</Label>
-                  <span className="text-xs text-muted-foreground">
-                    Solo si tu negocio lo permite
-                  </span>
-                </div>
-                <Switch
-                  checked={formData.allowNegativeStock}
-                  onCheckedChange={(checked) =>
-                    setFormData((p) => ({ ...p, allowNegativeStock: checked }))
-                  }
-                  disabled={disableForm || !formData.trackStock}
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
-                <div className="flex flex-col gap-1">
                   <Label className="font-bold">Producto pesable</Label>
                   <span className="text-xs text-muted-foreground">
                     Habilita PLU/peso para balanza
@@ -547,7 +449,9 @@ export function ProductDialog({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
                 <div className="flex flex-col gap-1">
-                  <Label className="font-bold">Revision de precio pendiente</Label>
+                  <Label className="font-bold">
+                    Revision de precio pendiente
+                  </Label>
                   <span className="text-xs text-muted-foreground">
                     Marca el producto para revisar precio
                   </span>
@@ -563,7 +467,9 @@ export function ProductDialog({
 
               <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
                 <div className="flex flex-col gap-1">
-                  <Label className="font-bold">Revision de costo pendiente</Label>
+                  <Label className="font-bold">
+                    Revision de costo pendiente
+                  </Label>
                   <span className="text-xs text-muted-foreground">
                     Marca el producto para revisar costo
                   </span>
@@ -621,5 +527,3 @@ export function ProductDialog({
     </Dialog>
   );
 }
-
-

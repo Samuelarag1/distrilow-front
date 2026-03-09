@@ -565,9 +565,9 @@ export const backendApi = {
           : undefined
       );
       return toPaginatedResponse(
-        payload,
-        Number(query.skip ?? query.offset ?? 0),
-        Number(query.take ?? query.limit ?? 20)
+        payload
+        // Number(query.skip ?? query.offset ?? 0),
+        // Number(query.take ?? query.limit ?? 20)
       );
     },
     remove: (id: string) => apiClientFetch.delete<boolean>(`/products/${id}`),
@@ -729,10 +729,9 @@ export const backendApi = {
           "x-branch-id": effectiveBranchId,
         },
       };
-      const payload = await apiClientFetch.get<PaginatedResponse<Sale> | Sale[]>(
-        `/sales${buildOffsetQuery(normalizedQuery)}`,
-        requestOptions
-      );
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<Sale> | Sale[]
+      >(`/sales${buildOffsetQuery(normalizedQuery)}`, requestOptions);
 
       return toPaginatedResponse(
         payload,

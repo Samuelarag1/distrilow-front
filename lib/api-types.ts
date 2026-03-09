@@ -335,8 +335,8 @@ export interface ProductPriceCostHistoryRow {
 }
 
 export interface ProductPriceCostHistoryQuery {
-  skip?: number;
-  take?: number;
+  // skip?: number;
+  // take?: number;
   offset?: number;
   limit?: number;
   productId?: string;
