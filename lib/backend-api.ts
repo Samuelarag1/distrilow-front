@@ -359,6 +359,12 @@ function toOptionalText(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function toOptionalFiniteNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = toFiniteNumber(value, Number.NaN);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function normalizeCashBookEntry(row: unknown, index: number): CashBookEntry {
   const source = asRecord(row);
   const sourceType = toOptionalText(source.sourceType);
@@ -861,8 +867,10 @@ export const backendApi = {
   },
   expenses: {
     create: (body: CreateExpenseRequest) => {
+      const { context: ignoredContext, ...restBody } = body;
+      void ignoredContext;
       const payload: CreateExpenseRequest = {
-        ...body,
+        ...restBody,
         branchId: body.branchId ?? requireActiveBranchId(),
       };
       return apiClientFetch.post<Expense>("/expenses", payload);
@@ -1030,43 +1038,70 @@ export const backendApi = {
 
       const summarySource = asRecord(payload.summary ?? payload);
       const incomeSource = asRecord(summarySource.income);
+      const outflowSource = asRecord(summarySource.outflow);
       const breakdownSource = asRecord(
         payload.breakdown ?? payload.paymentBreakdown ?? payload.byMethod ?? {}
       );
 
+      const openingFloat = toFiniteNumber(
+        summarySource.openingFloat ?? summarySource.opening,
+        0
+      );
+      const expectedCash = toFiniteNumber(
+        summarySource.expectedCash ?? summarySource.expected,
+        0
+      );
+      const countedCash = toOptionalFiniteNumber(
+        summarySource.countedCash ?? summarySource.counted
+      );
+      const difference = toOptionalFiniteNumber(summarySource.difference);
+      const cashFromPayments = toFiniteNumber(
+        incomeSource.cashFromPayments ??
+          summarySource.cashFromPayments ??
+          breakdownSource.cash ??
+          breakdownSource.efectivo,
+        0
+      );
+      const transferFromPayments = toFiniteNumber(
+        incomeSource.transferFromPayments ??
+          summarySource.transferFromPayments ??
+          breakdownSource.transfer ??
+          breakdownSource.transfers ??
+          breakdownSource.transferencia,
+        0
+      );
+      const movementIn = toFiniteNumber(
+        incomeSource.movementIn ?? summarySource.movementIn,
+        0
+      );
+      const movementOut = toFiniteNumber(
+        outflowSource.movementOut ?? summarySource.movementOut,
+        0
+      );
+      const movementBalance = toFiniteNumber(
+        summarySource.movementBalance,
+        movementIn - movementOut
+      );
+      const differenceSource =
+        toOptionalText(summarySource.differenceSource) ?? undefined;
+
       return {
         date: String(payload.date ?? new Date().toISOString().slice(0, 10)),
         summary: {
-          opening: toFiniteNumber(
-            summarySource.opening ?? summarySource.openingFloat,
-            0
-          ),
-          expected: toFiniteNumber(
-            summarySource.expected ?? summarySource.expectedCash,
-            0
-          ),
-          counted: toFiniteNumber(
-            summarySource.counted ?? summarySource.countedCash,
-            0
-          ),
-          difference: toFiniteNumber(summarySource.difference, 0),
-        },
-        breakdown: {
-          cash: toFiniteNumber(
-            breakdownSource.cash ??
-              breakdownSource.efectivo ??
-              incomeSource.cashFromPayments ??
-              summarySource.cashFromPayments,
-            0
-          ),
-          transfer: toFiniteNumber(
-            breakdownSource.transfer ??
-              breakdownSource.transfers ??
-              breakdownSource.transferencia ??
-              incomeSource.transferFromPayments ??
-              summarySource.transferFromPayments,
-            0
-          ),
+          openingFloat,
+          expectedCash,
+          countedCash,
+          difference,
+          differenceSource,
+          movementBalance,
+          income: {
+            cashFromPayments,
+            transferFromPayments,
+            movementIn,
+          },
+          outflow: {
+            movementOut,
+          },
         },
         entries,
       } satisfies CashBookDailyResponse;

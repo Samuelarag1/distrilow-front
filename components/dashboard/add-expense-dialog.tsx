@@ -78,8 +78,6 @@ export function AddExpenseDialog({
         amount: Number(formData.amount),
         category: formData.category as any,
         description: formData.description,
-        branchId,
-        context: "GENERAL",
       });
 
       toast({

@@ -4,21 +4,12 @@ import { MetricsCards } from "./metrics-cards";
 import { SalesChart } from "./sales-chart";
 import { RecentActivity } from "./recent-activity";
 import { QuickActions } from "./quick-actions";
-import { InventoryKpisCards } from "./inventory-kpis-cards";
 import { useBranch } from "../providers/business-provider";
 import { useUser } from "../providers/user-provider";
 import type { DashboardMetrics } from "@/lib/data-service";
 import useSWR from "swr";
 import { backendApi } from "@/lib/backend-api";
-import type { StockSummaryResponse } from "@/lib/api-types";
 import { normalizeSnapshotMetrics } from "@/lib/snapshot-metrics";
-
-const emptyInventorySummary: StockSummaryResponse = {
-  products: { total: 0, lowStock: 0 },
-  inventoryValue: { cost: 0, retail: 0, wholesale: 0 },
-  quantity: { total: 0 },
-  categories: { total: 0, withProducts: 0, withStock: 0 },
-};
 
 interface DashboardProps {
   retailData: DashboardMetrics;
@@ -46,18 +37,7 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
     }
   );
 
-  const { data: inventorySummary } = useSWR<StockSummaryResponse>(
-    branchId ? ["inventory-summary", branchId, 5] : null,
-    () => backendApi.stocks.summary({ lowStockThreshold: 5 }, branchId),
-    {
-      revalidateOnFocus: false,
-      revalidateOnReconnect: true,
-      keepPreviousData: true,
-    }
-  );
-
   const currentData = branchMetrics ?? fallbackData;
-  const currentInventorySummary = inventorySummary ?? emptyInventorySummary;
 
   return (
     <div className="space-y-6">

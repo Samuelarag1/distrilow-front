@@ -4,6 +4,12 @@ export interface NormalizedSnapshotMetrics {
   activeCustomers: number;
   lowStockItems: number;
   dailyCashbox?: number;
+  dailyCashBreakdown?: {
+    openingFloat: number;
+    cashFromPayments: number;
+    movementIn: number;
+    movementOut: number;
+  };
   walkInCustomers?: number;
   pendingBulkOrders?: number;
   creditUtilized?: number;
@@ -82,7 +88,33 @@ export function normalizeSnapshotMetrics(
   const dailyCashbox = toOptionalNumber(
     source.dailyCashbox ?? source.dailyCash ?? summary.dailyCash
   );
-  if (dailyCashbox !== undefined) normalized.dailyCashbox = dailyCashbox;
+  const dailyCashBreakdown = asRecord(summary.dailyCashBreakdown);
+  const openingFloat = toOptionalNumber(dailyCashBreakdown.openingFloat);
+  const cashFromPayments = toOptionalNumber(dailyCashBreakdown.cashFromPayments);
+  const movementIn = toOptionalNumber(dailyCashBreakdown.movementIn);
+  const movementOut = toOptionalNumber(dailyCashBreakdown.movementOut);
+  const hasCompleteBreakdown =
+    openingFloat !== undefined &&
+    cashFromPayments !== undefined &&
+    movementIn !== undefined &&
+    movementOut !== undefined;
+  const computedDailyCash = hasCompleteBreakdown
+    ? openingFloat + cashFromPayments + movementIn - movementOut
+    : undefined;
+
+  if (hasCompleteBreakdown) {
+    normalized.dailyCashBreakdown = {
+      openingFloat,
+      cashFromPayments,
+      movementIn,
+      movementOut,
+    };
+  }
+  if (dailyCashbox !== undefined) {
+    normalized.dailyCashbox = dailyCashbox;
+  } else if (computedDailyCash !== undefined) {
+    normalized.dailyCashbox = computedDailyCash;
+  }
 
   const walkInCustomers = toOptionalNumber(source.walkInCustomers);
   if (walkInCustomers !== undefined) normalized.walkInCustomers = walkInCustomers;

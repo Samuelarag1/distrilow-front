@@ -18,7 +18,6 @@ import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
 import { useBranches } from "@/components/providers/branch-provider";
 import { useTransactions } from "@/components/providers/transactions-provider";
-import { useBusiness } from "@/components/providers/business-provider";
 import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
 import type {
@@ -31,7 +30,6 @@ export function CashModule() {
   const { currentUser, branchId } = useUser();
   const { branches } = useBranches();
   const { addExpense } = useTransactions();
-  const { businessType } = useBusiness();
   const { logEvent } = useAudit();
   const { toast } = useToast();
 
@@ -63,7 +61,10 @@ export function CashModule() {
     () => branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal",
     [branches, branchId]
   );
-  const allDailyEntries = dailyBook?.entries.items ?? [];
+  const allDailyEntries = useMemo(
+    () => dailyBook?.entries.items ?? [],
+    [dailyBook?.entries.items]
+  );
   const paginatedDailyEntries = useMemo(() => {
     const start = (dailyBookPage - 1) * dailyBookPageSize;
     return allDailyEntries.slice(start, start + dailyBookPageSize);
@@ -219,7 +220,6 @@ export function CashModule() {
             category: "OTHER",
             description: `Egreso de caja: ${reason}`,
             branchId: cashSession.branchId ?? branchId ?? undefined,
-            businessType,
           });
         } catch (expenseError: any) {
           toast({
@@ -499,19 +499,13 @@ export function CashModule() {
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">Apertura</p>
                   <p className="text-lg font-semibold">
-                    ${Number(dailyBook.summary.opening ?? 0).toLocaleString()}
+                    ${Number(dailyBook.summary.openingFloat ?? 0).toLocaleString()}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">Esperado</p>
                   <p className="text-lg font-semibold">
-                    ${Number(dailyBook.summary.expected ?? 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Contado</p>
-                  <p className="text-lg font-semibold">
-                    ${Number(dailyBook.summary.counted ?? 0).toLocaleString()}
+                    ${Number(dailyBook.summary.expectedCash ?? 0).toLocaleString()}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
@@ -523,25 +517,66 @@ export function CashModule() {
                         : "text-emerald-600"
                     }`}
                   >
-                    ${Number(dailyBook.summary.difference ?? 0).toLocaleString()}
+                    {dailyBook.summary.difference === null
+                      ? "-"
+                      : `$${Number(dailyBook.summary.difference ?? 0).toLocaleString()}`}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Balance movimientos</p>
+                  <p className="text-lg font-semibold">
+                    ${Number(dailyBook.summary.movementBalance ?? 0).toLocaleString()}
                   </p>
                 </div>
               </div>
 
-              <div className="grid gap-3 sm:grid-cols-2">
+              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Pagos en efectivo</p>
+                  <p className="text-xs text-muted-foreground">Cobros en efectivo</p>
                   <p className="text-base font-semibold">
-                    ${Number(dailyBook.breakdown.cash ?? 0).toLocaleString()}
+                    ${Number(
+                      dailyBook.summary.income?.cashFromPayments ?? 0
+                    ).toLocaleString()}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Pagos transferencia</p>
+                  <p className="text-xs text-muted-foreground">Cobros transferencia</p>
                   <p className="text-base font-semibold">
-                    ${Number(dailyBook.breakdown.transfer ?? 0).toLocaleString()}
+                    ${Number(
+                      dailyBook.summary.income?.transferFromPayments ?? 0
+                    ).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Ingresos manuales</p>
+                  <p className="text-base font-semibold">
+                    ${Number(
+                      dailyBook.summary.income?.movementIn ?? 0
+                    ).toLocaleString()}
+                  </p>
+                </div>
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Egresos manuales</p>
+                  <p className="text-base font-semibold">
+                    ${Number(
+                      dailyBook.summary.outflow?.movementOut ?? 0
+                    ).toLocaleString()}
                   </p>
                 </div>
               </div>
+
+              {dailyBook.summary.differenceSource && (
+                <div className="rounded-md border p-3">
+                  <p className="text-xs text-muted-foreground">Tipo de diferencia</p>
+                  <Badge variant="secondary" className="mt-1">
+                    {dailyBook.summary.differenceSource === "RUNNING"
+                      ? "diferencia en tiempo real"
+                      : dailyBook.summary.differenceSource === "CLOSED_SESSION"
+                      ? "diferencia de cierre"
+                      : dailyBook.summary.differenceSource}
+                  </Badge>
+                </div>
+              )}
 
               <div className="rounded-md border overflow-x-auto">
                 <table className="w-full min-w-[640px]">

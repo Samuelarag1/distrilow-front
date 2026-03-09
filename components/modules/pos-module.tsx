@@ -630,6 +630,12 @@ export function POSModule() {
 
   const processPayment = async () => {
     const saleBranchId = branchId;
+    let rollbackState: {
+      cart: CartItem[];
+      cashPaymentAmount: string;
+      transferPaymentAmount: string;
+      transferReference: string;
+    } | null = null;
 
     try {
       if (!saleBranchId) {
@@ -686,9 +692,20 @@ export function POSModule() {
         });
       }
 
+      const cartSnapshot = [...cart];
+      rollbackState = {
+        cart: cartSnapshot,
+        cashPaymentAmount,
+        transferPaymentAmount,
+        transferReference,
+      };
+
+      setIsPaymentConfirmOpen(false);
+      clearCart({ silent: true });
+
       const createdSale = await addSale({
         customerName: "Consumidor Final",
-        lineItems: cart.map((item) => {
+        lineItems: cartSnapshot.map((item) => {
           const quantity = toSafeNumber(item.quantity, 0);
 
           return {
@@ -709,38 +726,6 @@ export function POSModule() {
         branchId: saleBranchId,
       });
 
-      const backendLineByProductId = new Map(
-        (createdSale.lineItems ?? []).map((line) => [line.productId, line])
-      );
-
-      setCart((prev) =>
-        prev.map((item) => {
-          const backendLine = backendLineByProductId.get(item.id);
-          if (!backendLine) return item;
-
-          return {
-            ...item,
-            backendPriceType: backendLine.priceType,
-            backendPricingSource: backendLine.pricingSource,
-            backendUnitPrice: toSafeNumber(backendLine.price, NaN),
-            backendSubtotal: toSafeNumber(backendLine.subtotal, NaN),
-            backendBaseRetailPrice: toSafeNumber(
-              backendLine.baseRetailPrice,
-              NaN
-            ),
-            backendBaseWholesalePrice: toSafeNumber(
-              backendLine.baseWholesalePrice,
-              NaN
-            ),
-            backendPricingRuleSnapshot: backendLine.pricingRuleSnapshot,
-            backendManualOverrideReason:
-              backendLine.manualOverrideReason ?? null,
-            visualPriceType: backendLine.priceType ?? item.visualPriceType,
-          };
-        })
-      );
-      setIsSaleCommitted(true);
-
       const paidAmount = Number(createdSale.paidAmount ?? 0);
       const outstandingAmount = Number(createdSale.outstandingAmount ?? 0);
       const backendTotal = Number(createdSale.totalAmount ?? total);
@@ -757,8 +742,13 @@ export function POSModule() {
             : `Venta por $${formatMoney(backendTotal)} registrada y pagada.`,
       });
       await mutateProducts();
-      setIsPaymentConfirmOpen(false);
     } catch (error: any) {
+      if (rollbackState) {
+        setCart(rollbackState.cart);
+        setCashPaymentAmount(rollbackState.cashPaymentAmount);
+        setTransferPaymentAmount(rollbackState.transferPaymentAmount);
+        setTransferReference(rollbackState.transferReference);
+      }
       toast({
         variant: "destructive",
         title: "Error al registrar venta",
@@ -769,16 +759,18 @@ export function POSModule() {
     }
   };
 
-  const clearCart = () => {
+  const clearCart = (options?: { silent?: boolean }) => {
     setCart([]);
     setIsSaleCommitted(false);
     setCashPaymentAmount("");
     setTransferPaymentAmount("");
     setTransferReference("");
-    toast({
-      title: "Carrito vaciado",
-      description: "Se quitaron todos los productos del carrito.",
-    });
+    if (!options?.silent) {
+      toast({
+        title: "Carrito vaciado",
+        description: "Se quitaron todos los productos del carrito.",
+      });
+    }
   };
 
   return (

@@ -40,13 +40,21 @@ function formatMoney(value: number) {
   });
 }
 
-function getMarginPercent(product: Product) {
+function getMarginPercentForPrice(costPrice: unknown, sellPrice: unknown) {
+  const cost = Number(costPrice ?? 0);
+  const sell = Number(sellPrice ?? 0);
+  if (cost <= 0) return 0;
+  return ((sell - cost) / cost) * 100;
+}
+
+function getRetailMarginPercent(product: Product) {
   const explicitMargin = Number(product.marginPercent ?? NaN);
   if (Number.isFinite(explicitMargin)) return explicitMargin;
-  const cost = Number(product.costPrice ?? 0);
-  const retail = Number(product.retailPrice ?? 0);
-  if (cost <= 0) return 0;
-  return ((retail - cost) / cost) * 100;
+  return getMarginPercentForPrice(product.costPrice, product.retailPrice);
+}
+
+function getWholesaleMarginPercent(product: Product) {
+  return getMarginPercentForPrice(product.costPrice, product.wholesalePrice);
 }
 
 export function ProductsModule() {
@@ -128,7 +136,7 @@ export function ProductsModule() {
         return (Number(a.retailPrice) - Number(b.retailPrice)) * factor;
       if (sortKey === "wholesale")
         return (Number(a.wholesalePrice) - Number(b.wholesalePrice)) * factor;
-      return (getMarginPercent(a) - getMarginPercent(b)) * factor;
+      return (getRetailMarginPercent(a) - getRetailMarginPercent(b)) * factor;
     });
   }, [products, sortKey, sortOrder]);
 
@@ -407,8 +415,10 @@ export function ProductsModule() {
                       </tr>
                     ) : (
                       sortedProducts.map((product) => {
-                        const margin = getMarginPercent(product);
-                        const lowMargin = margin < 20;
+                        const retailMargin = getRetailMarginPercent(product);
+                        const wholesaleMargin = getWholesaleMarginPercent(product);
+                        const lowRetailMargin = retailMargin < 20;
+                        const lowWholesaleMargin = wholesaleMargin < 20;
                         return (
                           <tr
                             key={product.id}
@@ -434,20 +444,20 @@ export function ProductsModule() {
                             </td>
                             <td
                               className={`p-2 text-right text-xs border-r font-semibold ${
-                                lowMargin ? "text-red-600" : "text-emerald-600"
+                                lowRetailMargin ? "text-red-600" : "text-emerald-600"
                               }`}
                             >
-                              {margin.toFixed(2)}%
+                              {retailMargin.toFixed(2)}%
                             </td>
                             <td className="p-2 text-right text-xs border-r">
                               {formatMoney(Number(product.wholesalePrice ?? 0))}
                             </td>
                             <td
                               className={`p-2 text-right text-xs border-r font-semibold ${
-                                lowMargin ? "text-red-600" : "text-emerald-600"
+                                lowWholesaleMargin ? "text-red-600" : "text-emerald-600"
                               }`}
                             >
-                              {margin.toFixed(2)}%
+                              {wholesaleMargin.toFixed(2)}%
                             </td>
                             <td className="p-2 text-center text-xs border-r">
                               <div className="flex items-center justify-center gap-1">
@@ -713,7 +723,7 @@ export function ProductsModule() {
                               : "-"}
                           </td>
                           <td className="p-2 text-xs">
-                            {row.product?.name ?? row.product?.name}
+                            {row.name ?? row.product?.name ?? "Producto eliminado"}
                           </td>
                           <td className="p-2 text-right text-xs">
                             {formatMoney(Number(row.oldCostPrice ?? 0))}

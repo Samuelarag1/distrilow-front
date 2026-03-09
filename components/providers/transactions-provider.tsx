@@ -79,8 +79,6 @@ export interface AddExpenseInput {
   amount: number;
   category: ExpenseCategory;
   description: string;
-  context?: ExpenseContext;
-  businessType?: BusinessType;
 }
 
 export interface AddSaleInput {
@@ -160,10 +158,6 @@ function dedupeById<T extends { id: string }>(rows: T[]) {
   });
 
   return deduped;
-}
-
-function deriveContextFromBusinessType(type: BusinessType): ExpenseContext {
-  return type === "wholesale" ? "WHOLESALE" : "RETAIL";
 }
 
 function deriveBusinessTypeFromContext(
@@ -412,18 +406,11 @@ export function TransactionsProvider({
         );
       }
 
-      const resolvedContext =
-        newExpense.context ??
-        (newExpense.businessType
-          ? deriveContextFromBusinessType(newExpense.businessType)
-          : deriveContextFromBusinessType(businessType));
-
       const savedExpense = await backendApi.expenses.create({
         branchId: resolvedBranchId,
         amount,
         category: newExpense.category as ExpenseCategory,
         description: normalizedDescription,
-        context: resolvedContext,
       });
 
       const normalized = normalizeExpense(savedExpense, businessType);

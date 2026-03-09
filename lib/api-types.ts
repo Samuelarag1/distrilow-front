@@ -326,6 +326,7 @@ export interface ProductReviewPendingQuery {
 export interface ProductPriceCostHistoryRow {
   id: string;
   productId: string;
+  name?: string | null;
   changedByUserId?: string | null;
   oldCostPrice?: number | null;
   newCostPrice?: number | null;
@@ -554,6 +555,12 @@ export interface SnapshotMetricsResponse {
     totalCostOfGoods?: number;
     netProfit?: number;
     dailyCash?: number;
+    dailyCashBreakdown?: {
+      openingFloat?: number;
+      cashFromPayments?: number;
+      movementIn?: number;
+      movementOut?: number;
+    };
   };
   inventory?: {
     lowStockProducts?: number;
@@ -658,15 +665,20 @@ export interface CloseCashSessionRequest {
 }
 
 export interface CashBookDailySummary {
-  opening: number;
-  expected: number;
-  counted: number;
-  difference: number;
-}
-
-export interface CashBookDailyBreakdown {
-  cash: number;
-  transfer: number;
+  openingFloat: number;
+  expectedCash: number;
+  countedCash: number | null;
+  difference: number | null;
+  differenceSource?: "RUNNING" | "CLOSED_SESSION" | string;
+  movementBalance: number;
+  income: {
+    cashFromPayments: number;
+    transferFromPayments: number;
+    movementIn: number;
+  };
+  outflow: {
+    movementOut: number;
+  };
 }
 
 export interface CashBookEntry {
@@ -691,7 +703,6 @@ export interface CashBookDailyQuery {
 export interface CashBookDailyResponse {
   date: string;
   summary: CashBookDailySummary;
-  breakdown: CashBookDailyBreakdown;
   entries: PaginatedResponse<CashBookEntry>;
 }
 

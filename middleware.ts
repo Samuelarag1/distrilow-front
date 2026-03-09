@@ -26,6 +26,11 @@ export function middleware(request: NextRequest) {
     request.cookies.get("accessToken")?.value ??
     request.cookies.get("token")?.value ??
     request.cookies.get("access_token")?.value;
+  const refreshToken =
+    request.cookies.get("refreshToken")?.value ??
+    request.cookies.get("refresh_token")?.value ??
+    request.cookies.get("__Host-refreshToken")?.value;
+  const hasSession = Boolean(token || refreshToken);
   const user = parseCookieJson<SessionUser>(request.cookies.get("user")?.value);
   const branches = parseCookieJson<Array<{ id: string }>>(
     request.cookies.get("branches")?.value
@@ -35,14 +40,14 @@ export function middleware(request: NextRequest) {
 
   // Permitir siempre login
   if (pathname.startsWith("/login")) {
-    if (token) {
+    if (hasSession) {
       return NextResponse.redirect(new URL(restrictedUser ? "/pos" : "/", request.url));
     }
     return NextResponse.next();
   }
 
   // Rutas protegidas
-  if (!token) {
+  if (!hasSession) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 

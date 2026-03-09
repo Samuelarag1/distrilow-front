@@ -53,7 +53,6 @@ import { es } from "date-fns/locale";
 import { backendApi } from "@/lib/backend-api";
 import type {
   Expense,
-  ExpenseContext,
   SnapshotPeriod,
   ExpenseAnalyticsResponse,
 } from "@/lib/api-types";
@@ -71,15 +70,6 @@ const SEARCH_DEBOUNCE_MS = 350;
 const MAX_EXPENSE_AMOUNT = 9_999_999.99;
 const MAX_EXPENSE_DESCRIPTION_LENGTH = 180;
 const WINDOW_REFRESH_COOLDOWN_MS = 20_000;
-
-type ContextFilter = ExpenseContext | "ALL";
-
-const CONTEXT_LABELS: Record<ContextFilter, string> = {
-  ALL: "Todos",
-  GENERAL: "General",
-  RETAIL: "Minorista",
-  WHOLESALE: "Mayorista",
-};
 
 type ExpenseSituation = {
   label: string;
@@ -131,7 +121,6 @@ export function ExpensesModule() {
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [contextFilter, setContextFilter] = useState<ContextFilter>("ALL");
   const [analyticsPeriod, setAnalyticsPeriod] =
     useState<SnapshotPeriod>("monthly");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
@@ -162,7 +151,6 @@ export function ExpensesModule() {
     amount: "",
     category: "",
     description: "",
-    context: "GENERAL" as ExpenseContext,
   });
   const allowedCategories = useMemo(
     () => new Set(EXPENSE_CATEGORY_OPTIONS.map((category) => category.value)),
@@ -202,7 +190,6 @@ export function ExpensesModule() {
           take: PAGE_SIZE,
           search: debouncedSearchQuery || undefined,
           category: categoryFilter === "all" ? undefined : categoryFilter,
-          context: contextFilter === "ALL" ? undefined : contextFilter,
         },
         branchId
       );
@@ -233,7 +220,6 @@ export function ExpensesModule() {
     currentPage,
     debouncedSearchQuery,
     categoryFilter,
-    contextFilter,
     toast,
   ]);
 
@@ -251,7 +237,6 @@ export function ExpensesModule() {
       const response = await backendApi.expenses.analytics(
         {
           period: analyticsPeriod,
-          context: contextFilter === "ALL" ? undefined : contextFilter,
         },
         branchId
       );
@@ -272,7 +257,7 @@ export function ExpensesModule() {
       if (requestId !== analyticsRequestIdRef.current) return;
       setIsLoadingAnalytics(false);
     }
-  }, [branchId, analyticsPeriod, contextFilter, toast]);
+  }, [branchId, analyticsPeriod, toast]);
 
   const refreshAll = useCallback(
     async (origin: "manual" | "focus" | "mutation" = "manual") => {
@@ -420,7 +405,6 @@ export function ExpensesModule() {
         amount,
         category: newExpense.category as any,
         description: normalizedDescription,
-        context: newExpense.context,
       });
       toast({
         title: "Gasto registrado",
@@ -430,7 +414,6 @@ export function ExpensesModule() {
         amount: "",
         category: "",
         description: "",
-        context: "GENERAL",
       });
       setIsDialogOpen(false);
       setCurrentPage(1);
@@ -477,7 +460,7 @@ export function ExpensesModule() {
             <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Gastos</h1>
           </div>
           <p className="text-muted-foreground">
-            Panel operativo con desglose por situacion, categoria y contexto.
+            Panel operativo con desglose por situacion y categoria.
           </p>
           <p className="text-xs text-muted-foreground">
             Ultima sincronizacion:{" "}
@@ -531,23 +514,6 @@ export function ExpensesModule() {
                     }
                     required
                   />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Contexto</Label>
-                  <select
-                    value={newExpense.context}
-                    onChange={(event) =>
-                      setNewExpense((prev) => ({
-                        ...prev,
-                        context: event.target.value as ExpenseContext,
-                      }))
-                    }
-                    className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  >
-                    <option value="GENERAL">General</option>
-                    <option value="RETAIL">Minorista</option>
-                    <option value="WHOLESALE">Mayorista</option>
-                  </select>
                 </div>
                 <div className="grid gap-2">
                   <Label>Categoria</Label>
@@ -623,7 +589,7 @@ export function ExpensesModule() {
               <>
                 <div className="text-2xl font-bold">{formatMoney(analytics?.total ?? 0)}</div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {analyticsPeriod} - {CONTEXT_LABELS[contextFilter]}
+                  {analyticsPeriod}
                 </p>
               </>
             )}
@@ -714,20 +680,6 @@ export function ExpensesModule() {
                 <option value="annual">Anual</option>
               </select>
               <select
-                value={contextFilter}
-                onChange={(event) => {
-                  setContextFilter(event.target.value as ContextFilter);
-                  setCurrentPage(1);
-                }}
-                className="px-3 py-2 border border-input bg-background rounded-md text-sm"
-              >
-                {Object.entries(CONTEXT_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-              <select
                 value={categoryFilter}
                 onChange={(event) => {
                   setCategoryFilter(event.target.value);
@@ -780,7 +732,6 @@ export function ExpensesModule() {
                   <TableHead>Fecha</TableHead>
                   <TableHead>Descripcion</TableHead>
                   <TableHead>Categoria</TableHead>
-                  <TableHead>Contexto</TableHead>
                   <TableHead>Situacion</TableHead>
                   <TableHead className="text-right">Monto</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
@@ -789,7 +740,7 @@ export function ExpensesModule() {
               <TableBody>
                 {isLoadingList ? (
                   <TableRow>
-                    <TableCell colSpan={7} className="h-24 text-center">
+                    <TableCell colSpan={6} className="h-24 text-center">
                       <BrandSpinner
                         size="sm"
                         label="Cargando gastos..."
@@ -800,7 +751,7 @@ export function ExpensesModule() {
                 ) : expenses.length === 0 ? (
                   <TableRow>
                     <TableCell
-                      colSpan={7}
+                      colSpan={6}
                       className="h-24 text-center text-muted-foreground"
                     >
                       No hay gastos para los filtros actuales.
@@ -834,13 +785,6 @@ export function ExpensesModule() {
                           <Badge variant="secondary">
                             {getExpenseCategoryLabel(expense.category)}
                           </Badge>
-                        </TableCell>
-                        <TableCell>
-                          {
-                            CONTEXT_LABELS[
-                              (expense.context ?? "GENERAL") as ContextFilter
-                            ]
-                          }
                         </TableCell>
                         <TableCell>
                           <div className="space-y-1">
@@ -987,12 +931,6 @@ export function ExpensesModule() {
                 <div>
                   <p className="text-muted-foreground">Monto</p>
                   <p className="font-semibold">{formatMoney(detailTarget.amount)}</p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Contexto</p>
-                  <p className="font-semibold">
-                    {CONTEXT_LABELS[(detailTarget.context ?? "GENERAL") as ContextFilter]}
-                  </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Categoria</p>
