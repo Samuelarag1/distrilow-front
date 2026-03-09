@@ -72,6 +72,17 @@ function getLooseCategoryLabel(category: unknown): string {
   return "Sin categoria";
 }
 
+function getWholesaleUnitPrice(item: Product): number {
+  const wholesale = Number(item.wholesalePrice ?? NaN);
+  if (Number.isFinite(wholesale) && wholesale > 0) return wholesale;
+
+  const retail = Number(item.retailPrice ?? NaN);
+  if (Number.isFinite(retail) && retail > 0) return retail;
+
+  const fallback = Number(item.price ?? item.costPrice ?? 0);
+  return Number.isFinite(fallback) ? fallback : 0;
+}
+
 function AdjustStockDialog({
   item,
   branches,
@@ -135,11 +146,14 @@ function AdjustStockDialog({
     }
   };
 
-  const outgoing = operation === "adjust_out" || operation === "loss" || operation === "expired" || operation === "transfer";
-  const currentTotal =
-    outgoing
-      ? Math.max(0, item.stock - (parseInt(amount) || 0))
-      : item.stock + (parseInt(amount) || 0);
+  const outgoing =
+    operation === "adjust_out" ||
+    operation === "loss" ||
+    operation === "expired" ||
+    operation === "transfer";
+  const currentTotal = outgoing
+    ? Math.max(0, item.stock - (parseInt(amount) || 0))
+    : item.stock + (parseInt(amount) || 0);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -288,7 +302,9 @@ function AdjustStockDialog({
             <Button
               type="submit"
               className={`font-bold px-8 ${
-                outgoing ? "bg-red-600 hover:bg-red-700" : "bg-green-600 hover:bg-green-700"
+                outgoing
+                  ? "bg-red-600 hover:bg-red-700"
+                  : "bg-green-600 hover:bg-green-700"
               }`}
               disabled={isSubmitting}
             >
@@ -346,7 +362,10 @@ export function InventoryModule() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
   const { toast } = useToast();
-  const { data: categoriesData } = useSWR<Category[]>("/categories", swrFetcher);
+  const { data: categoriesData } = useSWR<Category[]>(
+    "/categories",
+    swrFetcher
+  );
 
   const {
     products: inventory,
@@ -364,11 +383,7 @@ export function InventoryModule() {
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     branchId: branchId ?? null,
     sortBy:
-      sortKey === "name"
-        ? "name"
-        : sortKey === "price"
-        ? "price"
-        : undefined,
+      sortKey === "name" ? "name" : sortKey === "price" ? "price" : undefined,
     sortOrder,
   });
 
@@ -392,7 +407,9 @@ export function InventoryModule() {
 
       return "Sin categoria";
     }
-    return getLooseCategoryLabel((item as Product & { category?: unknown }).category);
+    return getLooseCategoryLabel(
+      (item as Product & { category?: unknown }).category
+    );
   };
 
   const handleSort = (key: SortKey) => {
@@ -406,17 +423,17 @@ export function InventoryModule() {
   };
 
   const filteredInventory = inventory.slice().sort((a: Product, b: Product) => {
-      const factor = sortOrder === "asc" ? 1 : -1;
-      if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
-      if (sortKey === "category") {
-        return (
-          getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) *
-          factor
-        );
-      }
-      if (sortKey === "stock") return ((a.stock || 0) - (b.stock || 0)) * factor;
-      return ((a.price || 0) - (b.price || 0)) * factor;
-    });
+    const factor = sortOrder === "asc" ? 1 : -1;
+    if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
+    if (sortKey === "category") {
+      return (
+        getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) *
+        factor
+      );
+    }
+    if (sortKey === "stock") return ((a.stock || 0) - (b.stock || 0)) * factor;
+    return (getWholesaleUnitPrice(a) - getWholesaleUnitPrice(b)) * factor;
+  });
 
   const categories = useMemo(() => {
     return (categoriesData ?? [])
@@ -425,9 +442,7 @@ export function InventoryModule() {
         value: category.id,
         label: category.name,
       }))
-      .sort((a, b) =>
-      a.label.localeCompare(b.label)
-    );
+      .sort((a, b) => a.label.localeCompare(b.label));
   }, [categoriesData]);
 
   const lowStockItems = inventory.filter(
@@ -435,10 +450,14 @@ export function InventoryModule() {
   );
 
   const totalValue = inventory.reduce(
-    (sum: number, item: Product) => sum + item.stock * item.price,
+    (sum: number, item: Product) =>
+      sum + item.stock * getWholesaleUnitPrice(item),
     0
   );
-  const totalPages = Math.max(1, Math.ceil((inventoryTotal || 0) / Math.max(take, 1)));
+  const totalPages = Math.max(
+    1,
+    Math.ceil((inventoryTotal || 0) / Math.max(take, 1))
+  );
   const showingFrom = inventoryTotal === 0 ? 0 : skip + 1;
   const showingTo = inventoryTotal === 0 ? 0 : skip + filteredInventory.length;
 
@@ -467,6 +486,8 @@ export function InventoryModule() {
   function InventoryItemCard({ item }: { item: Product }) {
     const status = getStockStatus(item);
     const progressValue = getProgressValue(item);
+    const wholesaleUnitPrice = getWholesaleUnitPrice(item);
+    const inventoryValue = item.stock * wholesaleUnitPrice;
 
     const handleMovementSubmit = async (input: {
       type: MovementType;
@@ -490,7 +511,9 @@ export function InventoryModule() {
 
         toast({
           title: "Movimiento registrado",
-          description: `Se registro ${input.type} para ${item.name} (${input.quantity} ${item.unit || "unidades"}).`,
+          description: `Se registro ${input.type} para ${item.name} (${
+            input.quantity
+          } ${item.unit || "unidades"}).`,
         });
       } catch (error: any) {
         toast({
@@ -586,10 +609,10 @@ export function InventoryModule() {
                 Valorización
               </span>
               <span className="text-xl font-black text-primary">
-                ${(item.stock * item.price).toLocaleString()}
+                ${inventoryValue.toLocaleString()}
               </span>
               <span className="text-[10px] text-muted-foreground font-medium italic mt-0.5">
-                (Calc. a ${item.price}/u)
+                (Calc. a ${wholesaleUnitPrice.toLocaleString()}/u mayorista)
               </span>
             </div>
           </div>
@@ -620,7 +643,8 @@ export function InventoryModule() {
           <p className="text-xs text-muted-foreground">
             Sucursal activa:{" "}
             <span className="font-semibold text-foreground">
-              {branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal"}
+              {branches.find((branch) => branch.id === branchId)?.name ??
+                "Sin sucursal"}
             </span>
           </p>
         </div>
@@ -717,14 +741,6 @@ export function InventoryModule() {
               </span>
             </p>
           </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="border-red-200 text-red-700 hover:bg-red-100 font-bold"
-            onClick={() => setSelectedCategory("all")}
-          >
-            Ver Todo
-          </Button>
         </div>
       )}
 
@@ -759,7 +775,6 @@ export function InventoryModule() {
                   </option>
                 ))}
               </select>
-
             </div>
 
             <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
@@ -832,14 +847,16 @@ export function InventoryModule() {
           {!isLoading && inventoryTotal > 0 && (
             <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted-foreground">
-                Mostrando {showingFrom}-{showingTo} de {inventoryTotal} productos.
-                Pagina {currentPage} de {totalPages}.
+                Mostrando {showingFrom}-{showingTo} de {inventoryTotal}{" "}
+                productos. Pagina {currentPage} de {totalPages}.
               </p>
               <div className="flex items-center gap-2">
                 <Button
                   size="sm"
                   variant="outline"
-                  onClick={() => setCurrentPage((prev) => Math.max(1, prev - 1))}
+                  onClick={() =>
+                    setCurrentPage((prev) => Math.max(1, prev - 1))
+                  }
                   disabled={currentPage <= 1}
                 >
                   Anterior

@@ -350,6 +350,7 @@ export function ProductDialog({
                     type="number"
                     step="0.01"
                     min="0"
+                    placeholder="0.00"
                     className="pl-7"
                     value={formData.retailPrice}
                     onChange={(e) =>
@@ -460,24 +461,6 @@ export function ProductDialog({
                   checked={formData.priceReviewPending}
                   onCheckedChange={(checked) =>
                     setFormData((p) => ({ ...p, priceReviewPending: checked }))
-                  }
-                  disabled={disableForm}
-                />
-              </div>
-
-              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
-                <div className="flex flex-col gap-1">
-                  <Label className="font-bold">
-                    Revision de costo pendiente
-                  </Label>
-                  <span className="text-xs text-muted-foreground">
-                    Marca el producto para revisar costo
-                  </span>
-                </div>
-                <Switch
-                  checked={formData.costReviewPending}
-                  onCheckedChange={(checked) =>
-                    setFormData((p) => ({ ...p, costReviewPending: checked }))
                   }
                   disabled={disableForm}
                 />

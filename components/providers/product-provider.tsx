@@ -4,7 +4,6 @@ import React, { createContext, useContext } from "react";
 import { mutate } from "swr";
 import { useAudit } from "./audit-provider";
 import { useUser } from "./user-provider";
-import { apiClientFetch } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
 import { productsApi, Product } from "@/lib/products";
 import {
@@ -73,6 +72,29 @@ const OUTBOUND_TYPES = new Set<MovementType>([
   "EXPIRED",
 ]);
 
+type ProductUiCacheEntry = Partial<Product> & {
+  id?: string;
+  category?: string;
+  unit?: string;
+};
+
+function normalizeProductForUi<T extends ProductUiCacheEntry>(item: T) {
+  const retail = Number(item.retailPrice ?? NaN);
+  const cost = Number(item.costPrice ?? NaN);
+  const price = Number.isFinite(retail)
+    ? retail
+    : Number.isFinite(cost)
+    ? cost
+    : 0;
+
+  return {
+    ...item,
+    price,
+    category: item.categoryId ?? item.category ?? "Sin categoria",
+    unit: item.measurementType ?? item.unit ?? "unit",
+  };
+}
+
 export function ProductProvider({ children }: { children: React.ReactNode }) {
   const { logEvent } = useAudit();
   const { branchId: sessionBranchId } = useUser();
@@ -95,6 +117,52 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       },
       undefined,
       { revalidate: true }
+    );
+
+  const patchProductInProductsCaches = (product: Product) =>
+    mutate(
+      (key) =>
+        Array.isArray(key) && typeof key[0] === "string" && key[0] === "products",
+      (current: unknown) => {
+        const page = current as
+          | { items?: ProductUiCacheEntry[]; total?: number }
+          | undefined;
+        if (!page || !Array.isArray(page.items)) return current;
+
+        let changed = false;
+        const nextItems = page.items.map((item) => {
+          if (String(item?.id ?? "") !== product.id) return item;
+          changed = true;
+          return normalizeProductForUi({ ...item, ...product });
+        });
+
+        return changed ? { ...page, items: nextItems } : current;
+      },
+      { revalidate: false }
+    );
+
+  const removeProductFromProductsCaches = (productId: string) =>
+    mutate(
+      (key) =>
+        Array.isArray(key) && typeof key[0] === "string" && key[0] === "products",
+      (current: unknown) => {
+        const page = current as
+          | { items?: ProductUiCacheEntry[]; total?: number }
+          | undefined;
+        if (!page || !Array.isArray(page.items)) return current;
+        const nextItems = page.items.filter(
+          (item) => String(item?.id ?? "") !== productId
+        );
+        if (nextItems.length === page.items.length) return current;
+
+        const nextTotal = Number(page.total ?? nextItems.length);
+        return {
+          ...page,
+          items: nextItems,
+          total: Math.max(0, nextTotal - 1),
+        };
+      },
+      { revalidate: false }
     );
 
   const resolveBranchId = (candidate?: string) => {
@@ -302,6 +370,9 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
 
     logEvent("create", "product", "Agrego nuevo producto", created.id);
 
+    await mutate(["product", created.id], normalizeProductForUi(created), {
+      revalidate: false,
+    });
     await invalidateProducts();
 
     return created;
@@ -314,6 +385,13 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       logEvent("update", "product", "Modifico producto", id, {
         productData,
       });
+
+      await Promise.all([
+        patchProductInProductsCaches(updated),
+        mutate(["product", id], normalizeProductForUi(updated), {
+          revalidate: false,
+        }),
+      ]);
     }
 
     await Promise.all([
@@ -329,6 +407,10 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
 
     logEvent("delete", "product", "Elimino producto", id);
 
+    await Promise.all([
+      removeProductFromProductsCaches(id),
+      mutate(["product", id], undefined, { revalidate: false }),
+    ]);
     await invalidateProducts();
   };
 

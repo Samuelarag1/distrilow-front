@@ -1,4 +1,3 @@
-
 "use client";
 
 import React, { createContext, useContext, useEffect } from "react";
@@ -7,64 +6,44 @@ import { syncPendingActions } from "@/lib/sync-manager";
 import { useToast } from "@/hooks/use-toast";
 
 interface OfflineContextType {
-    isOnline: boolean;
+  isOnline: boolean;
 }
 
 const OfflineContext = createContext<OfflineContextType>({ isOnline: true });
 
 export function OfflineProvider({ children }: { children: React.ReactNode }) {
-    const isOnline = useNetworkStatus();
-    const { toast } = useToast();
-    const [isMounted, setIsMounted] = React.useState(false);
+  const isOnline = useNetworkStatus();
+  const { toast } = useToast();
+  const [isMounted, setIsMounted] = React.useState(false);
 
-    React.useEffect(() => {
-        setIsMounted(true);
-    }, []);
+  React.useEffect(() => {
+    setIsMounted(true);
+  }, []);
 
-    useEffect(() => {
-        if (isOnline && isMounted) {
-            syncPendingActions().then(() => {
-                // Optionally toast "Sync complete"
-            });
+  useEffect(() => {
+    if (isOnline && isMounted) {
+      syncPendingActions().then(() => {
+        // Optionally toast "Sync complete"
+      });
 
-            const interval = setInterval(() => {
-                syncPendingActions();
-            }, 30000); // Try sync every 30s
+      const interval = setInterval(() => {
+        syncPendingActions();
+      }, 30000); // Try sync every 30s
 
-            return () => clearInterval(interval);
-        }
-    }, [isOnline, isMounted]);
+      return () => clearInterval(interval);
+    }
+  }, [isOnline, isMounted]);
 
-    useEffect(() => {
-        if (!isMounted) return;
-
-        if (!isOnline) {
-            toast({
-                title: "Estás Offline",
-                description: "Tus cambios se guardarán localmente y se sincronizarán cuando vuelva la conexión.",
-                variant: "default",
-                duration: 5000,
-            });
-        } else {
-            toast({
-                title: "Conexión Restaurada",
-                description: "Sincronizando datos...",
-                variant: "default",
-                duration: 3000,
-            });
-        }
-    }, [isOnline, toast, isMounted]);
-
-    return (
-        <OfflineContext.Provider value={{ isOnline }}>
-            {children}
-            {isMounted && !isOnline && (
-                <div className="fixed bottom-4 right-4 z-50 bg-yellow-500 text-white px-4 py-2 rounded-full shadow-lg text-sm font-medium animate-pulse">
-                    Modo Offline
-                </div>
-            )}
-        </OfflineContext.Provider>
-    );
+  return (
+    <OfflineContext.Provider value={{ isOnline }}>
+      {children}
+      {isMounted && !isOnline && (
+        <div className="fixed bottom-4 right-4 z-50 bg-yellow-500 text-white px-4 py-2 rounded-full shadow-lg text-sm font-medium animate-pulse">
+          Modo Offline
+        </div>
+      )}
+    </OfflineContext.Provider>
+  );
 }
 
 export const useOffline = () => useContext(OfflineContext);

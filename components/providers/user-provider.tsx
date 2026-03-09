@@ -1,6 +1,11 @@
 "use client";
 
-import { setApiSession } from "@/lib/api-client";
+import {
+  getLastRefreshPayload,
+  getApiSession,
+  refreshSessionIfNeeded,
+  setApiSession,
+} from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
 import { clearSessionCookies, setClientCookie } from "@/lib/client-cookies";
 import { isManagementRole } from "@/lib/permissions";
@@ -128,15 +133,10 @@ function writeAvatarStore(store: Record<string, string>) {
 }
 
 function writeSessionCookies(payload: {
-  accessToken?: string | null;
   branches?: Branch[];
   activeBranchId?: string | null;
   needsOnboarding?: boolean;
 }) {
-  if (payload.accessToken !== undefined && payload.accessToken !== null) {
-    setClientCookie("accessToken", payload.accessToken);
-  }
-
   if (payload.branches) {
     setClientCookie("branches", JSON.stringify(payload.branches));
   }
@@ -249,11 +249,66 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     if (tokenCookie) {
       setToken(tokenCookie);
       setApiSession({ accessToken: tokenCookie, branchId: resolvedBranchId ?? undefined });
+      return;
     }
 
     if (!activeBranchCookie && resolvedBranchId) {
       setClientCookie("activeBranchId", resolvedBranchId);
     }
+
+    let cancelled = false;
+
+    const bootstrapFromRefresh = async () => {
+      const refreshed = await refreshSessionIfNeeded(0);
+      if (!refreshed || cancelled) return;
+
+      const payload = getLastRefreshPayload();
+      const session = getApiSession();
+      const refreshedToken = session.accessToken ?? payload?.accessToken ?? null;
+      const refreshedBranches = normalizeSessionBranches(
+        payload?.session?.availableBranches ?? parsedBranches
+      );
+      const refreshedBranchId =
+        payload?.session?.activeBranchId ??
+        session.branchId ??
+        resolvedBranchId ??
+        refreshedBranches[0]?.id ??
+        null;
+      const refreshedNeedsOnboarding =
+        payload?.session?.needsOnboarding ??
+        (onboardingCookie ? onboardingCookie === "true" : false);
+
+      if (payload?.user) {
+        const hydratedUser = hydrateUserAvatar({
+          ...payload.user,
+          name: payload.user.email,
+        });
+        setCurrentUserState(hydratedUser);
+        setClientCookie("user", JSON.stringify(hydratedUser));
+      }
+
+      setToken(refreshedToken);
+      setBranches(refreshedBranches);
+      setBranchId(refreshedBranchId);
+      setNeedsOnboarding(refreshedNeedsOnboarding);
+
+      setApiSession({
+        accessToken: refreshedToken,
+        branchId: refreshedBranchId ?? undefined,
+      });
+
+      writeSessionCookies({
+        branches: refreshedBranches,
+        activeBranchId: refreshedBranchId,
+        needsOnboarding: refreshedNeedsOnboarding,
+      });
+    };
+
+    void bootstrapFromRefresh();
+
+    return () => {
+      cancelled = true;
+    };
   }, [hydrateUserAvatar]);
 
   useEffect(() => {
@@ -277,7 +332,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         branchId: nextBranchId,
       });
       writeSessionCookies({
-        accessToken: token,
         branches,
         activeBranchId: nextBranchId,
         needsOnboarding,
@@ -314,12 +368,82 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     });
 
     writeSessionCookies({
-      accessToken: nextToken,
       branches: nextBranches,
       activeBranchId: nextBranchId,
       needsOnboarding: nextNeedsOnboarding,
     });
   }, [branchId, token, branches, needsOnboarding, currentUser?.role]);
+
+  useEffect(() => {
+    if (!currentUser) return;
+    if (typeof window === "undefined") return;
+
+    const refreshIntervalMs = 11 * 60 * 1000;
+    const activeWindowMs = 2 * 60 * 1000;
+    let destroyed = false;
+    let lastActivityAt = Date.now();
+
+    const markActivity = () => {
+      lastActivityAt = Date.now();
+    };
+
+    const maybeRefresh = async () => {
+      if (destroyed) return;
+      if (Date.now() - lastActivityAt > activeWindowMs) return;
+
+      const refreshed = await refreshSessionIfNeeded(refreshIntervalMs);
+      if (!refreshed || destroyed) return;
+
+      const session = getApiSession();
+      if (session.accessToken && session.accessToken !== token) {
+        setToken(session.accessToken);
+      }
+      if (session.branchId && session.branchId !== branchId) {
+        setBranchId(session.branchId);
+      }
+    };
+
+    const handleFocus = () => {
+      markActivity();
+      void maybeRefresh();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState !== "visible") return;
+      markActivity();
+      void maybeRefresh();
+    };
+
+    const activityEvents: Array<keyof WindowEventMap> = [
+      "pointerdown",
+      "mousemove",
+      "keydown",
+      "scroll",
+      "touchstart",
+    ];
+
+    activityEvents.forEach((eventName) => {
+      window.addEventListener(eventName, markActivity, { passive: true });
+    });
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    const intervalId = window.setInterval(() => {
+      void maybeRefresh();
+    }, 60_000);
+
+    void maybeRefresh();
+
+    return () => {
+      destroyed = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+      activityEvents.forEach((eventName) => {
+        window.removeEventListener(eventName, markActivity);
+      });
+    };
+  }, [currentUser, token, branchId]);
 
   const logout = async () => {
     try {

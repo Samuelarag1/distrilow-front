@@ -271,9 +271,6 @@ export function ProductsModule() {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
             Productos
           </h1>
-          <p className="text-muted-foreground">
-            Vista tipo Excel con costos, precios y control de margen.
-          </p>
         </div>
         <Button onClick={handleCreate} disabled={!activeBranchId}>
           Nuevo producto
@@ -320,8 +317,6 @@ export function ProductsModule() {
                   [
                     ["name", "Nombre"],
                     ["cost", "Costo"],
-                    ["retail", "Minorista"],
-                    ["wholesale", "Mayorista"],
                     ["margin", "Margen"],
                   ] as Array<[SortKey, string]>
                 ).map(([key, label]) => (

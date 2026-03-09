@@ -1,11 +1,11 @@
 // components/products/components/ProductCard/ProductCardImage.tsx
 import { Badge } from "@/components/ui/badge";
 import { Category } from "@/lib/api-types";
-import { resolveProductImageUrl } from "@/lib/media-utils";
 import { Product } from "@/lib/products";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import { useMemo } from "react";
 import useSWR from "swr";
+import { ProductCategoryIcon } from "../ProductCategoryIcon";
 const CATEGORY_COLORS: Record<string, string> = {
   Cervezas: "bg-amber-100 text-amber-700 border-amber-200",
   Vinos: "bg-purple-100 text-purple-700 border-purple-200",
@@ -15,7 +15,6 @@ const CATEGORY_COLORS: Record<string, string> = {
   Otros: "bg-slate-100 text-slate-700 border-slate-200",
 };
 export function ProductCardImage({ product }: { product: Product }) {
-  const imageSrc = resolveProductImageUrl(product);
   const stock = Number(product.stock ?? 0);
   const minStock = Number(product.minStock ?? 0);
   const isLowStock = stock <= minStock;
@@ -55,12 +54,14 @@ export function ProductCardImage({ product }: { product: Product }) {
     );
   };
   return (
-    <div className="aspect-video bg-muted relative overflow-hidden">
-      <img
-        src={imageSrc}
-        alt={product.name}
-        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500 bg-muted"
-      />
+    <div className="relative aspect-video overflow-hidden bg-muted">
+      <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-muted via-muted/80 to-muted/60">
+        <ProductCategoryIcon
+          category={getProductCategoryLabel(product)}
+          className="h-20 w-20 rounded-xl shadow-sm"
+          iconClassName="h-10 w-10"
+        />
+      </div>
 
       <div className="absolute top-2 right-2 flex flex-col gap-2">
         <Badge

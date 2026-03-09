@@ -4,33 +4,16 @@ import { Header } from "@/components/layout/header";
 import { Dashboard } from "@/components/dashboard/dashboard";
 import type { DashboardMetrics } from "@/lib/data-service";
 import { serverApi } from "@/lib/server-api";
+import { normalizeSnapshotMetrics } from "@/lib/snapshot-metrics";
 
 export const dynamic = "force-dynamic";
-
-function mapSnapshotToDashboardMetrics(snapshot: any): DashboardMetrics {
-  return {
-    totalRevenue: Number(snapshot?.totalRevenue ?? 0),
-    totalOrders: Number(snapshot?.totalOrders ?? 0),
-    activeCustomers: Number(snapshot?.activeCustomers ?? 0),
-    lowStockItems: Number(snapshot?.lowStockItems ?? 0),
-    dailyCashbox: Number(snapshot?.dailyCashbox ?? 0),
-    walkInCustomers: Number(snapshot?.walkInCustomers ?? 0),
-    pendingBulkOrders: Number(snapshot?.pendingBulkOrders ?? 0),
-    creditUtilized: Number(snapshot?.creditUtilized ?? 0),
-  };
-}
 
 async function getMetrics(): Promise<DashboardMetrics> {
   try {
     const snapshot = await serverApi.get("/snapshots/metrics?period=monthly");
-    return mapSnapshotToDashboardMetrics(snapshot);
+    return normalizeSnapshotMetrics(snapshot);
   } catch {
-    return {
-      totalRevenue: 0,
-      totalOrders: 0,
-      activeCustomers: 0,
-      lowStockItems: 0,
-    };
+    return normalizeSnapshotMetrics({});
   }
 }
 

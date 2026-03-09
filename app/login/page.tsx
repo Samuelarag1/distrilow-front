@@ -85,7 +85,6 @@ export default function LoginPage() {
         branchId: activeBranchId ?? undefined,
       });
 
-      setClientCookie("accessToken", data.accessToken);
       setClientCookie("branches", JSON.stringify(availableBranches));
       setClientCookie("activeBranchId", activeBranchId ?? "");
       setClientCookie("needsOnboarding", needsOnboarding);

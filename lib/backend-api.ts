@@ -8,6 +8,7 @@ import type {
   BarcodeLookupResponse,
   BootstrapBranchResponse,
   Branch,
+  CashBookEntry,
   CashBookDailyQuery,
   CashBookDailyResponse,
   CashSession,
@@ -51,6 +52,7 @@ import type {
   SnapshotPeriod,
   SnapshotMetricsResponse,
   Stock,
+  StockSummaryResponse,
   StockQuery,
   SwitchBranchRequest,
   TransferMovementRequest,
@@ -344,6 +346,82 @@ function normalizeBarcodePayload(
   };
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function toOptionalText(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeCashBookEntry(row: unknown, index: number): CashBookEntry {
+  const source = asRecord(row);
+  const sourceType = toOptionalText(source.sourceType);
+  const direction = toOptionalText(source.direction);
+  const legacyType = toOptionalText(source.type);
+
+  const idCandidate = toOptionalText(source.id);
+  const id = idCandidate ?? `cash-entry-${index}`;
+
+  const combinedType = [sourceType, direction]
+    .filter((value): value is string => Boolean(value))
+    .join(" / ");
+  const typeLabel =
+    legacyType ?? (combinedType.length > 0 ? combinedType : "MOVEMENT");
+
+  const description =
+    toOptionalText(source.description) ??
+    toOptionalText(source.notes) ??
+    toOptionalText(source.reference) ??
+    direction ??
+    sourceType ??
+    null;
+
+  return {
+    id,
+    type: typeLabel,
+    amount: toFiniteNumber(source.amount, 0),
+    method: toOptionalText(source.method),
+    description,
+    saleId: toOptionalText(source.saleId),
+    sessionId: toOptionalText(source.sessionId),
+    createdAt: toOptionalText(source.createdAt) ?? undefined,
+  };
+}
+
+function normalizeStockSummary(payload: unknown): StockSummaryResponse {
+  const source = asRecord(payload);
+  const products = asRecord(source.products);
+  const inventoryValue = asRecord(source.inventoryValue);
+  const quantity = asRecord(source.quantity);
+  const categories = asRecord(source.categories);
+
+  return {
+    products: {
+      total: toFiniteNumber(products.total, 0),
+      lowStock: toFiniteNumber(products.lowStock, 0),
+    },
+    inventoryValue: {
+      cost: toFiniteNumber(inventoryValue.cost, 0),
+      retail: toFiniteNumber(inventoryValue.retail, 0),
+      wholesale: toFiniteNumber(inventoryValue.wholesale, 0),
+    },
+    quantity: {
+      total: toFiniteNumber(quantity.total, 0),
+    },
+    categories: {
+      total: toFiniteNumber(categories.total, 0),
+      withProducts: toFiniteNumber(categories.withProducts, 0),
+      withStock: toFiniteNumber(categories.withStock, 0),
+    },
+  };
+}
+
 async function getCachedStocksForBranch(branchId: string) {
   const cached = stockCacheByBranch.get(branchId);
   const now = Date.now();
@@ -624,6 +702,26 @@ export const backendApi = {
       apiClientFetch.get<Stock>(
         `/stocks/branch/${branchId}/product/${productId}`
       ),
+    summary: async (
+      query: { lowStockThreshold?: number } = {},
+      branchIdOverride?: string | null
+    ): Promise<StockSummaryResponse> => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      const payload = await apiClientFetch.get<unknown>(
+        `/stocks/summary${buildQuery({
+          lowStockThreshold: query.lowStockThreshold ?? 5,
+        })}`,
+        {
+          headers: {
+            "x-branch-id": effectiveBranchId,
+          },
+        }
+      );
+      return normalizeStockSummary(payload);
+    },
   },
   stockMovements: {
     list: async (query: MovementQuery = {}) => {
@@ -894,44 +992,79 @@ export const backendApi = {
           : undefined
       );
 
-      const entriesPayload =
-        (payload.entries as PaginatedResponse<any> | any[] | undefined) ??
-        (payload.items as any[] | undefined) ??
-        [];
-      const entries = toPaginatedResponse(
-        Array.isArray(entriesPayload)
-          ? entriesPayload
-          : (entriesPayload as PaginatedResponse<any>),
-        Number(query.skip ?? query.offset ?? 0),
-        Number(query.take ?? query.limit ?? 30)
-      );
+      const fallbackOffset = Number(query.skip ?? query.offset ?? 0);
+      const fallbackLimit = Number(query.take ?? query.limit ?? 30);
 
-      const summarySource = (payload.summary ?? payload) as Record<
-        string,
-        unknown
-      >;
-      const breakdownSource = (payload.breakdown ??
-        payload.paymentBreakdown ??
-        payload.byMethod ??
-        {}) as Record<string, unknown>;
+      const entriesPayload = payload.entries ?? payload.items ?? [];
+      let entries: PaginatedResponse<CashBookEntry>;
+
+      if (Array.isArray(entriesPayload)) {
+        const normalizedItems = entriesPayload.map((entry, index) =>
+          normalizeCashBookEntry(entry, index)
+        );
+        entries = {
+          items: normalizedItems,
+          meta: normalizeOffsetMeta(
+            payload.meta,
+            fallbackOffset,
+            fallbackLimit,
+            normalizedItems.length
+          ),
+        };
+      } else {
+        const paginatedEntries = toPaginatedResponse(
+          entriesPayload as
+            | PaginatedResponse<Record<string, unknown>>
+            | Record<string, unknown>[],
+          fallbackOffset,
+          fallbackLimit
+        );
+
+        entries = {
+          ...paginatedEntries,
+          items: paginatedEntries.items.map((entry, index) =>
+            normalizeCashBookEntry(entry, index)
+          ),
+        };
+      }
+
+      const summarySource = asRecord(payload.summary ?? payload);
+      const incomeSource = asRecord(summarySource.income);
+      const breakdownSource = asRecord(
+        payload.breakdown ?? payload.paymentBreakdown ?? payload.byMethod ?? {}
+      );
 
       return {
         date: String(payload.date ?? new Date().toISOString().slice(0, 10)),
         summary: {
-          opening: toFiniteNumber(summarySource.opening, 0),
-          expected: toFiniteNumber(summarySource.expected, 0),
-          counted: toFiniteNumber(summarySource.counted, 0),
+          opening: toFiniteNumber(
+            summarySource.opening ?? summarySource.openingFloat,
+            0
+          ),
+          expected: toFiniteNumber(
+            summarySource.expected ?? summarySource.expectedCash,
+            0
+          ),
+          counted: toFiniteNumber(
+            summarySource.counted ?? summarySource.countedCash,
+            0
+          ),
           difference: toFiniteNumber(summarySource.difference, 0),
         },
         breakdown: {
           cash: toFiniteNumber(
-            breakdownSource.cash ?? breakdownSource.efectivo,
+            breakdownSource.cash ??
+              breakdownSource.efectivo ??
+              incomeSource.cashFromPayments ??
+              summarySource.cashFromPayments,
             0
           ),
           transfer: toFiniteNumber(
             breakdownSource.transfer ??
               breakdownSource.transfers ??
-              breakdownSource.transferencia,
+              breakdownSource.transferencia ??
+              incomeSource.transferFromPayments ??
+              summarySource.transferFromPayments,
             0
           ),
         },

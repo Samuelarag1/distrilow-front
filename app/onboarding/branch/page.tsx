@@ -50,6 +50,7 @@ export default function OnboardingBranchesPage() {
   const { toast } = useToast();
   const {
     token,
+    currentUser,
     branchId,
     needsOnboarding,
     setBranches,
@@ -71,19 +72,17 @@ export default function OnboardingBranchesPage() {
   });
 
   useEffect(() => {
-    if (!token) router.replace("/login");
-  }, [token, router]);
+    if (!token && !currentUser) router.replace("/login");
+  }, [token, currentUser, router]);
 
   useEffect(() => {
     if (branchId) router.replace("/");
   }, [branchId, router]);
 
-  const show = !!token && !branchId;
+  const show = !!(token || currentUser) && !branchId;
 
   const handleCreateBootstrap = async (e: React.FormEvent) => {
     e.preventDefault();
-
-    if (!token) return;
 
     if (
       !formData.name.trim() ||
@@ -118,7 +117,7 @@ export default function OnboardingBranchesPage() {
       setBranchId(activeBranchId);
       setNeedsOnboarding(false);
       setApiSession({
-        accessToken: token,
+        accessToken: token ?? undefined,
         branchId: activeBranchId,
       });
 

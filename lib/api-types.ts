@@ -42,6 +42,8 @@ export type AnalyticsMetric = "revenue" | "count" | "avgTicket" | "profit";
 export type SnapshotPeriod = "monthly" | "quarterly" | "semiannual" | "annual";
 export type SaleChargeStatus = "PENDING" | "PARTIALLY_PAID" | "PAID";
 export type SaleLifecycleStatus = "ACTIVE" | "CANCELLED";
+export type PricingMode = "AUTO" | "MANUAL";
+export type PriceType = "RETAIL" | "WHOLESALE";
 export type PaymentMethod =
   | "CASH"
   | "TRANSFER"
@@ -232,6 +234,7 @@ export interface Product {
   barcode?: string | null;
   pluCode?: string | null;
   isWeighable?: boolean;
+  wholesaleMinQuantity?: number | null;
   name: string;
   description?: string | null;
   costPrice: number;
@@ -260,6 +263,7 @@ export interface CreateProductRequest {
   barcode?: string;
   pluCode?: string;
   isWeighable?: boolean;
+  wholesaleMinQuantity?: number;
   name: string;
   description?: string;
   costPrice: number;
@@ -380,6 +384,27 @@ export interface StockQuery {
   productId?: string;
 }
 
+export interface StockSummaryResponse {
+  products: {
+    total: number;
+    lowStock: number;
+  };
+  inventoryValue: {
+    cost: number;
+    retail: number;
+    wholesale: number;
+  };
+  quantity: {
+    total: number;
+  };
+  categories: {
+    total: number;
+    withProducts: number;
+    withStock: number;
+  };
+  [key: string]: unknown;
+}
+
 export interface Movement {
   id: string;
   branchId: string;
@@ -421,7 +446,10 @@ export interface MovementQuery {
 export interface SaleItemInput {
   productId: string;
   quantity: number;
-  unitPrice: number;
+  unitPrice?: number;
+  pricingMode?: PricingMode;
+  requestedPriceType?: PriceType;
+  manualOverrideReason?: string;
 }
 
 export interface SalePaymentInput {
@@ -466,6 +494,14 @@ export interface Sale {
     quantity: number;
     unitPrice: number;
     subtotal?: number;
+    pricingMode?: PricingMode;
+    requestedPriceType?: PriceType;
+    priceType?: PriceType;
+    pricingSource?: PricingMode;
+    baseRetailPrice?: number;
+    baseWholesalePrice?: number;
+    pricingRuleSnapshot?: unknown;
+    manualOverrideReason?: string | null;
   }>;
   payments?: SalePayment[];
 }
@@ -494,13 +530,40 @@ export interface SalePaymentsListQuery {
 
 export interface SnapshotMetricsResponse {
   totalRevenue?: number;
+  totalIncome?: number;
   totalOrders?: number;
+  totalSales?: number;
   activeCustomers?: number;
+  uniqueClients?: number;
   lowStockItems?: number;
+  lowStockProducts?: number;
   dailyCashbox?: number;
+  dailyCash?: number;
   walkInCustomers?: number;
   pendingBulkOrders?: number;
   creditUtilized?: number;
+  operationalExpenses?: number;
+  totalCostOfGoods?: number;
+  netProfit?: number;
+  averageTicket?: number;
+  growthTrend?: string;
+  retentionRate?: string;
+  summary?: {
+    totalIncome?: number;
+    operationalExpenses?: number;
+    totalCostOfGoods?: number;
+    netProfit?: number;
+    dailyCash?: number;
+  };
+  inventory?: {
+    lowStockProducts?: number;
+  };
+  salesAnalysis?: {
+    totalSales?: number;
+    uniqueClients?: number;
+    averageTicket?: number;
+    growthTrend?: string;
+  };
   [key: string]: unknown;
 }
 

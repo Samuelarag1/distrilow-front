@@ -34,8 +34,14 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
   const totalRevenue = hasLiveTransactions
     ? liveRevenue
     : Number(metrics.totalRevenue ?? 0);
-  const totalExpenses = hasLiveTransactions ? liveExpenses : 0;
-  const netProfit = totalRevenue - totalExpenses;
+  const totalExpenses = hasLiveTransactions
+    ? liveExpenses
+    : Number(metrics.operationalExpenses ?? 0);
+  const netProfit = hasLiveTransactions
+    ? totalRevenue - totalExpenses
+    : Number(metrics.netProfit ?? totalRevenue - totalExpenses);
+  const revenueTrend = metrics.growthTrend ?? "+0%";
+  const netProfitTrend = netProfit >= 0 ? "up" : "down";
 
   // const lowStockCount = products.filter(p => p.stock <= (p.minStock || 0)).length
 
@@ -46,8 +52,8 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
         style: "currency",
         currency: "ARS",
       }).format(totalRevenue),
-      change: "+12.5%",
-      trend: "up",
+      change: revenueTrend,
+      trend: revenueTrend.trim().startsWith("-") ? "down" : "up",
       icon: DollarSign,
       description: "vs mes anterior",
       color: "text-blue-500",
@@ -73,7 +79,7 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
         currency: "ARS",
       }).format(netProfit),
       change: "+8.4%",
-      trend: "up",
+      trend: netProfitTrend,
       icon: PiggyBank,
       description: "margen proyectado",
       color: "text-green-500",

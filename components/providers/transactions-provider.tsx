@@ -9,6 +9,8 @@ import type {
   ExpenseCategory,
   ExpenseContext,
   PaymentMethod,
+  PriceType,
+  PricingMode,
   Sale as ApiSale,
   SaleChargeStatus,
   SaleLifecycleStatus,
@@ -37,6 +39,21 @@ export interface SalePayment {
   date: string;
 }
 
+export interface SaleLineItem {
+  productId: string;
+  quantity: number;
+  price: number;
+  subtotal?: number;
+  pricingMode?: PricingMode;
+  requestedPriceType?: PriceType;
+  priceType?: PriceType;
+  pricingSource?: PricingMode;
+  baseRetailPrice?: number;
+  baseWholesalePrice?: number;
+  pricingRuleSnapshot?: unknown;
+  manualOverrideReason?: string | null;
+}
+
 export interface Sale {
   id: string;
   amount: number;
@@ -47,7 +64,7 @@ export interface Sale {
   lifecycleStatus: SaleLifecycleStatus;
   customerName: string;
   items: number;
-  lineItems?: Array<{ productId: string; quantity: number; price: number }>;
+  lineItems?: SaleLineItem[];
   payments: SalePayment[];
   date: string;
   businessType: BusinessType;
@@ -69,7 +86,13 @@ export interface AddExpenseInput {
 export interface AddSaleInput {
   branchId?: string;
   customerName?: string;
-  lineItems: Array<{ productId: string; quantity: number; price: number }>;
+  lineItems: Array<{
+    productId: string;
+    quantity: number;
+    pricingMode?: PricingMode;
+    requestedPriceType?: PriceType;
+    manualOverrideReason?: string;
+  }>;
   payments?: Array<{
     amount: number;
     method: PaymentMethod;
@@ -105,9 +128,7 @@ const TransactionsContext = createContext<TransactionsContextType | undefined>(
   undefined
 );
 
-const MAX_NUMERIC_10_2 = 99_999_999.99;
 const MAX_QUANTITY = 99_999_999;
-const MAX_UNIT_PRICE = 9_999_999.999999;
 const MAX_EXPENSE_AMOUNT = 9_999_999.99;
 const MAX_EXPENSE_DESCRIPTION_LENGTH = 180;
 
@@ -116,10 +137,9 @@ function toFiniteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function normalizeUnitPrice(value: unknown) {
-  const rounded = Math.round(toFiniteNumber(value, NaN) * 1_000_000) / 1_000_000;
-  if (!Number.isFinite(rounded) || rounded < 0) return null;
-  return rounded;
+function toOptionalFiniteNumber(value: unknown): number | undefined {
+  const parsed = toFiniteNumber(value, Number.NaN);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
 function normalizeQuantity(value: unknown) {
@@ -170,17 +190,30 @@ function normalizeExpense(row: any, fallbackBusinessType: BusinessType): Expense
 }
 
 function normalizeSale(row: ApiSale, businessType: BusinessType): Sale {
-  const lineItems: Array<{ productId: string; quantity: number; price: number }> =
+  const lineItems: SaleLineItem[] =
     Array.isArray(row.items)
       ? row.items.map((item) => ({
           productId: item.productId,
           quantity: toFiniteNumber(item.quantity, 0),
           price: toFiniteNumber(item.unitPrice, 0),
+          subtotal: toOptionalFiniteNumber(item.subtotal),
+          pricingMode: item.pricingMode,
+          requestedPriceType: item.requestedPriceType,
+          priceType: item.priceType,
+          pricingSource: item.pricingSource,
+          baseRetailPrice: toOptionalFiniteNumber(item.baseRetailPrice),
+          baseWholesalePrice: toOptionalFiniteNumber(item.baseWholesalePrice),
+          pricingRuleSnapshot: item.pricingRuleSnapshot,
+          manualOverrideReason: item.manualOverrideReason ?? null,
         }))
       : [];
 
   const computedTotal = lineItems.reduce(
-    (sum, item) => sum + item.quantity * item.price,
+    (sum, item) =>
+      sum +
+      (Number.isFinite(item.subtotal ?? NaN)
+        ? Number(item.subtotal)
+        : item.quantity * item.price),
     0
   );
   const totalAmount = toFiniteNumber(row.totalAmount ?? row.total, computedTotal);
@@ -415,7 +448,15 @@ export function TransactionsProvider({
 
       const saleItems = (newSale.lineItems ?? []).map((item, index) => {
         const quantity = normalizeQuantity(item.quantity);
-        const unitPrice = normalizeUnitPrice(item.price);
+        const pricingMode: PricingMode =
+          item.pricingMode === "MANUAL" ? "MANUAL" : "AUTO";
+        const requestedPriceType =
+          item.requestedPriceType === "WHOLESALE"
+            ? "WHOLESALE"
+            : item.requestedPriceType === "RETAIL"
+            ? "RETAIL"
+            : undefined;
+        const manualOverrideReason = item.manualOverrideReason?.trim() || undefined;
 
         if (quantity === null || quantity <= 0 || quantity > MAX_QUANTITY) {
           throw new Error(
@@ -423,23 +464,18 @@ export function TransactionsProvider({
           );
         }
 
-        if (unitPrice === null || unitPrice <= 0 || unitPrice > MAX_UNIT_PRICE) {
+        if (pricingMode === "MANUAL" && !requestedPriceType) {
           throw new Error(
-            `Precio invalido en item ${index + 1}. Debe ser mayor a 0 y menor o igual a ${MAX_UNIT_PRICE}.`
-          );
-        }
-
-        const lineTotal = quantity * unitPrice;
-        if (lineTotal > MAX_NUMERIC_10_2) {
-          throw new Error(
-            `El subtotal del item ${index + 1} excede el limite permitido (${MAX_NUMERIC_10_2}).`
+            `Debes seleccionar tipo de precio manual en item ${index + 1}.`
           );
         }
 
         return {
           productId: item.productId,
           quantity,
-          unitPrice,
+          pricingMode,
+          requestedPriceType,
+          manualOverrideReason,
         };
       });
 

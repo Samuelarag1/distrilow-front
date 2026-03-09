@@ -31,6 +31,14 @@ export function useProducts(args: UseProductsArgs = {}) {
       ] as const)
     : null;
 
+  const normalizedSortBy =
+    args.sortBy === "createdAt" ||
+    args.sortBy === "name" ||
+    args.sortBy === "sku" ||
+    args.sortBy === "price"
+      ? args.sortBy
+      : undefined;
+
   const { data, error, isLoading, mutate } = useSWR<NormalizedProductsPage>(
     key,
     async () => {
@@ -42,7 +50,7 @@ export function useProducts(args: UseProductsArgs = {}) {
           q: args.search ?? undefined,
           search: args.search ?? undefined,
           categoryId: args.categoryId ?? undefined,
-          sortBy: (args.sortBy as any) ?? undefined,
+          sortBy: normalizedSortBy,
           sortOrder: args.sortOrder,
         },
         effectiveBranchId
@@ -59,8 +67,10 @@ export function useProducts(args: UseProductsArgs = {}) {
       };
     },
     {
-      revalidateOnFocus: false,
-      dedupingInterval: 15000,
+      revalidateOnFocus: true,
+      dedupingInterval: 2000,
+      refreshInterval: effectiveBranchId ? 8000 : 0,
+      refreshWhenHidden: false,
       keepPreviousData: true,
       shouldRetryOnError: false,
     }

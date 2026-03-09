@@ -17,6 +17,8 @@ type RequestOptions = RequestInit & {
 let authToken: string | null = null;
 let activeBranchId: string | null = null;
 let refreshPromise: Promise<boolean> | null = null;
+let lastSuccessfulRefreshAt = 0;
+let lastRefreshPayload: AuthResponse | null = null;
 
 const BRANCH_SCOPED_PREFIXES = [
   "/products",
@@ -195,15 +197,18 @@ async function refreshSession(): Promise<boolean> {
       const payload = (await parseResponse<AuthResponse>(
         res
       )) as AuthResponse | null;
+      lastRefreshPayload = payload ?? null;
       if (payload?.accessToken) {
         authToken = payload.accessToken;
       }
       if (payload?.session?.activeBranchId !== undefined) {
         activeBranchId = payload.session.activeBranchId ?? null;
       }
+      lastSuccessfulRefreshAt = Date.now();
 
       return true;
     } catch {
+      lastRefreshPayload = null;
       return false;
     } finally {
       refreshPromise = null;
@@ -213,15 +218,33 @@ async function refreshSession(): Promise<boolean> {
   return refreshPromise;
 }
 
+export async function refreshSessionIfNeeded(minIntervalMs = 10 * 60 * 1000) {
+  const elapsed = Date.now() - lastSuccessfulRefreshAt;
+  if (lastSuccessfulRefreshAt > 0 && elapsed < minIntervalMs) {
+    return true;
+  }
+  return refreshSession();
+}
+
+export function getLastRefreshPayload() {
+  return lastRefreshPayload;
+}
+
 export function setApiSession(token: ApiSessionInput, branchId?: string | null) {
   if (typeof token === "string" || token === null) {
     authToken = token;
+    if (token) {
+      lastSuccessfulRefreshAt = Date.now();
+    }
     activeBranchId = branchId === undefined ? activeBranchId : branchId;
     return;
   }
 
   authToken =
     token?.accessToken === undefined ? authToken : token?.accessToken ?? null;
+  if (token?.accessToken) {
+    lastSuccessfulRefreshAt = Date.now();
+  }
   activeBranchId =
     token?.branchId === undefined ? activeBranchId : token?.branchId ?? null;
 }
