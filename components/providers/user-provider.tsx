@@ -160,6 +160,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const [branchId, setBranchId] = useState<string | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean>(false);
+  const [sessionBootstrapped, setSessionBootstrapped] = useState(false);
 
   const hydrateUserAvatar = useCallback((input: User): User => {
     const normalized: User = {
@@ -213,6 +214,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
+    setSessionBootstrapped(false);
+
     const tokenCookie =
       getCookie("token") ?? getCookie("accessToken") ?? getCookie("access_token");
     const userCookie = getCookie("user");
@@ -250,67 +253,74 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const resolvedBranchId = activeBranchCookie || parsedBranches[0]?.id || null;
     setBranchId(resolvedBranchId);
 
+    if (!activeBranchCookie && resolvedBranchId) {
+      setPersistentSessionCookie("activeBranchId", resolvedBranchId);
+    }
+
     if (tokenCookie) {
       setToken(tokenCookie);
       setApiSession({ accessToken: tokenCookie, branchId: resolvedBranchId ?? undefined });
+      setSessionBootstrapped(true);
       return;
-    }
-
-    if (!activeBranchCookie && resolvedBranchId) {
-      setPersistentSessionCookie("activeBranchId", resolvedBranchId);
     }
 
     let cancelled = false;
 
     const bootstrapFromRefresh = async () => {
-      const refreshed = await refreshSessionIfNeeded(0);
-      if (!refreshed || cancelled) return;
+      try {
+        const refreshed = await refreshSessionIfNeeded(0);
+        if (!refreshed || cancelled) return;
 
-      const payload = getLastRefreshPayload();
-      const session = getApiSession();
-      const refreshedToken = session.accessToken ?? payload?.accessToken ?? null;
-      const refreshedBranches = normalizeSessionBranches(
-        payload?.session?.availableBranches ?? parsedBranches
-      );
-      const refreshedBranchId =
-        payload?.session?.activeBranchId ??
-        session.branchId ??
-        resolvedBranchId ??
-        refreshedBranches[0]?.id ??
-        null;
-      const refreshedNeedsOnboarding =
-        payload?.session?.needsOnboarding ??
-        (onboardingCookie ? onboardingCookie === "true" : false);
+        const payload = getLastRefreshPayload();
+        const session = getApiSession();
+        const refreshedToken = session.accessToken ?? payload?.accessToken ?? null;
+        const refreshedBranches = normalizeSessionBranches(
+          payload?.session?.availableBranches ?? parsedBranches
+        );
+        const refreshedBranchId =
+          payload?.session?.activeBranchId ??
+          session.branchId ??
+          resolvedBranchId ??
+          refreshedBranches[0]?.id ??
+          null;
+        const refreshedNeedsOnboarding =
+          payload?.session?.needsOnboarding ??
+          (onboardingCookie ? onboardingCookie === "true" : false);
 
-      syncClientAuthCookies({
-        accessToken: refreshedToken,
-        refreshToken: payload?.refreshToken,
-      });
-
-      if (payload?.user) {
-        const hydratedUser = hydrateUserAvatar({
-          ...payload.user,
-          name: payload.user.email,
+        syncClientAuthCookies({
+          accessToken: refreshedToken,
+          refreshToken: payload?.refreshToken,
         });
-        setCurrentUserState(hydratedUser);
-        setPersistentSessionCookie("user", JSON.stringify(hydratedUser));
+
+        if (payload?.user) {
+          const hydratedUser = hydrateUserAvatar({
+            ...payload.user,
+            name: payload.user.email,
+          });
+          setCurrentUserState(hydratedUser);
+          setPersistentSessionCookie("user", JSON.stringify(hydratedUser));
+        }
+
+        setToken(refreshedToken);
+        setBranches(refreshedBranches);
+        setBranchId(refreshedBranchId);
+        setNeedsOnboarding(refreshedNeedsOnboarding);
+
+        setApiSession({
+          accessToken: refreshedToken,
+          branchId: refreshedBranchId ?? undefined,
+        });
+
+        writeSessionCookies({
+          branches: refreshedBranches,
+          activeBranchId: refreshedBranchId,
+          needsOnboarding: refreshedNeedsOnboarding,
+        });
+      } finally {
+        if (!cancelled) {
+          setSessionBootstrapped(true);
+        }
       }
-
-      setToken(refreshedToken);
-      setBranches(refreshedBranches);
-      setBranchId(refreshedBranchId);
-      setNeedsOnboarding(refreshedNeedsOnboarding);
-
-      setApiSession({
-        accessToken: refreshedToken,
-        branchId: refreshedBranchId ?? undefined,
-      });
-
-      writeSessionCookies({
-        branches: refreshedBranches,
-        activeBranchId: refreshedBranchId,
-        needsOnboarding: refreshedNeedsOnboarding,
-      });
     };
 
     void bootstrapFromRefresh();
@@ -321,12 +331,14 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, [hydrateUserAvatar]);
 
   useEffect(() => {
+    if (!sessionBootstrapped) return;
+
     setApiSession({ accessToken: token, branchId: branchId ?? undefined });
     syncClientAuthCookies({ accessToken: token });
     if (branchId !== undefined) {
       setPersistentSessionCookie("activeBranchId", branchId ?? "");
     }
-  }, [token, branchId]);
+  }, [token, branchId, sessionBootstrapped]);
 
   const switchBranch = useCallback(async (id: string) => {
     if (!id) return;

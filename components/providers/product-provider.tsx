@@ -6,6 +6,7 @@ import { useAudit } from "./audit-provider";
 import { useUser } from "./user-provider";
 import { backendApi } from "@/lib/backend-api";
 import { productsApi, Product } from "@/lib/products";
+import { emitProductsSync } from "@/lib/products-live-sync";
 import {
   useProducts as useProductsHook,
   type UseProductsArgs,
@@ -292,6 +293,11 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       invalidateProducts(),
       mutate(["product", input.productId], undefined, { revalidate: true }),
     ]);
+
+    emitProductsSync(branchId);
+    if (input.type === "TRANSFER_OUT" && input.toBranchId) {
+      emitProductsSync(input.toBranchId);
+    }
   };
 
   const updateStock = async (
@@ -374,6 +380,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       revalidate: false,
     });
     await invalidateProducts();
+    emitProductsSync(created.branchId ?? sessionBranchId ?? null);
 
     return created;
   };
@@ -398,6 +405,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       invalidateProducts(),
       mutate(["product", id], undefined, { revalidate: true }),
     ]);
+    emitProductsSync(updated?.branchId ?? sessionBranchId ?? null);
 
     return updated;
   };
@@ -412,6 +420,7 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       mutate(["product", id], undefined, { revalidate: false }),
     ]);
     await invalidateProducts();
+    emitProductsSync(sessionBranchId ?? null);
   };
 
   return (

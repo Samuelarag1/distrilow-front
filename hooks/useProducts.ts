@@ -1,7 +1,9 @@
+import { useEffect } from "react";
 import useSWR from "swr";
 import { Product } from "@/lib/products";
 import { backendApi } from "@/lib/backend-api";
 import { getApiSession } from "@/lib/api-client";
+import { subscribeProductsSync } from "@/lib/products-live-sync";
 import type { NormalizedProductsPage } from "@/lib/backend-api";
 
 export type UseProductsArgs = {
@@ -69,12 +71,21 @@ export function useProducts(args: UseProductsArgs = {}) {
     {
       revalidateOnFocus: true,
       dedupingInterval: 2000,
-      refreshInterval: effectiveBranchId ? 8000 : 0,
-      refreshWhenHidden: false,
+      refreshInterval: effectiveBranchId ? 4000 : 0,
+      refreshWhenHidden: true,
       keepPreviousData: true,
       shouldRetryOnError: false,
     }
   );
+
+  useEffect(() => {
+    if (!effectiveBranchId) return;
+
+    return subscribeProductsSync((payload) => {
+      if (payload.branchId && payload.branchId !== effectiveBranchId) return;
+      void mutate();
+    });
+  }, [effectiveBranchId, mutate]);
 
   const fallbackPage: NormalizedProductsPage = {
     items: [],

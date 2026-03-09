@@ -5,6 +5,23 @@ type SessionUser = {
   role?: string;
 };
 
+function getFirstCookie(
+  request: NextRequest,
+  names: readonly string[]
+): string | undefined {
+  for (const name of names) {
+    const value = request.cookies.get(name)?.value;
+    if (value) return value;
+  }
+  return undefined;
+}
+
+function hasCookieValue(value?: string) {
+  if (!value) return false;
+  const normalized = value.trim().toLowerCase();
+  return normalized !== "" && normalized !== "undefined" && normalized !== "null";
+}
+
 function parseCookieJson<T>(value?: string): T | null {
   if (!value) return null;
   try {
@@ -22,15 +39,24 @@ function isRestrictedUser(role?: string, branchesCount = 0) {
 }
 
 export function middleware(request: NextRequest) {
-  const token =
-    request.cookies.get("accessToken")?.value ??
-    request.cookies.get("token")?.value ??
-    request.cookies.get("access_token")?.value;
-  const refreshToken =
-    request.cookies.get("refreshToken")?.value ??
-    request.cookies.get("refresh_token")?.value ??
-    request.cookies.get("__Host-refreshToken")?.value;
-  const hasSession = Boolean(token || refreshToken);
+  const token = getFirstCookie(request, [
+    "accessToken",
+    "token",
+    "access_token",
+    "__Host-accessToken",
+    "__Secure-accessToken",
+    "__Host-access_token",
+    "__Secure-access_token",
+  ]);
+  const refreshToken = getFirstCookie(request, [
+    "refreshToken",
+    "refresh_token",
+    "__Host-refreshToken",
+    "__Secure-refreshToken",
+    "__Host-refresh_token",
+    "__Secure-refresh_token",
+  ]);
+  const hasSession = hasCookieValue(token) || hasCookieValue(refreshToken);
   const user = parseCookieJson<SessionUser>(request.cookies.get("user")?.value);
   const branches = parseCookieJson<Array<{ id: string }>>(
     request.cookies.get("branches")?.value

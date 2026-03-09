@@ -35,6 +35,7 @@ import { Product } from "@/lib/products";
 import { useProducts } from "@/hooks/useProducts";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { backendApi } from "@/lib/backend-api";
+import { emitProductsSync } from "@/lib/products-live-sync";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import type { PaymentMethod, PriceType, PricingMode } from "@/lib/api-types";
@@ -56,10 +57,72 @@ interface CartItem extends Product {
   backendManualOverrideReason?: string | null;
 }
 
+type PersistedPosCart = {
+  version: 1;
+  updatedAt: number;
+  userId: string;
+  branchId: string;
+  cart: CartItem[];
+  cashPaymentAmount: string;
+  transferPaymentAmount: string;
+  transferReference: string;
+};
+
 type Category = {
   id: string;
   name: string;
 };
+
+const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
+const POS_CART_TTL_MS = 12 * 60 * 60 * 1000;
+
+function buildPosCartStorageKey(
+  userId: string | null | undefined,
+  branchId: string | null | undefined
+) {
+  if (!userId || !branchId) return null;
+  return `${POS_CART_STORAGE_PREFIX}:${userId}:${branchId}`;
+}
+
+function parsePersistedPosCart(raw: string | null): PersistedPosCart | null {
+  if (!raw) return null;
+
+  try {
+    const parsed = JSON.parse(raw) as Partial<PersistedPosCart>;
+    if (!parsed || typeof parsed !== "object") return null;
+    if (parsed.version !== 1) return null;
+    if (typeof parsed.userId !== "string" || !parsed.userId.trim()) return null;
+    if (typeof parsed.branchId !== "string" || !parsed.branchId.trim()) return null;
+
+    const updatedAt = Number(parsed.updatedAt ?? 0);
+    if (!Number.isFinite(updatedAt)) return null;
+    if (Date.now() - updatedAt > POS_CART_TTL_MS) return null;
+
+    const cart = Array.isArray(parsed.cart) ? (parsed.cart as CartItem[]) : [];
+
+    return {
+      version: 1,
+      updatedAt,
+      userId: parsed.userId,
+      branchId: parsed.branchId,
+      cart,
+      cashPaymentAmount:
+        typeof parsed.cashPaymentAmount === "string"
+          ? parsed.cashPaymentAmount
+          : "",
+      transferPaymentAmount:
+        typeof parsed.transferPaymentAmount === "string"
+          ? parsed.transferPaymentAmount
+          : "",
+      transferReference:
+        typeof parsed.transferReference === "string"
+          ? parsed.transferReference
+          : "",
+    };
+  } catch {
+    return null;
+  }
+}
 
 function toSafeNumber(value: unknown, fallback = 0): number {
   const parsed =
@@ -218,6 +281,11 @@ export function POSModule() {
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isSaleCommitted, setIsSaleCommitted] = useState(false);
   const previousBranchRef = useRef<string | null>(null);
+  const cartPersistenceReadyRef = useRef(false);
+  const posCartStorageKey = useMemo(
+    () => buildPosCartStorageKey(currentUser?.id ?? null, branchId ?? null),
+    [currentUser?.id, branchId]
+  );
 
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
 
@@ -266,6 +334,87 @@ export function POSModule() {
   };
 
   const getActivePrice = (product: Product) => getRetailPrice(product);
+
+  useEffect(() => {
+    cartPersistenceReadyRef.current = false;
+
+    if (typeof window === "undefined") return;
+    if (!posCartStorageKey || !branchId) {
+      cartPersistenceReadyRef.current = true;
+      return;
+    }
+
+    const persisted = parsePersistedPosCart(
+      window.localStorage.getItem(posCartStorageKey)
+    );
+
+    if (!persisted) {
+      window.localStorage.removeItem(posCartStorageKey);
+      cartPersistenceReadyRef.current = true;
+      return;
+    }
+
+    const restoredCart = persisted.cart.filter(
+      (item) => !item?.branchId || item.branchId === branchId
+    );
+
+    if (restoredCart.length > 0) {
+      setCart(restoredCart);
+      setCashPaymentAmount(persisted.cashPaymentAmount);
+      setTransferPaymentAmount(persisted.transferPaymentAmount);
+      setTransferReference(persisted.transferReference);
+      setIsSaleCommitted(false);
+
+      toast({
+        title: "Carrito recuperado",
+        description: `Se recuperaron ${restoredCart.length} productos del ultimo intento.`,
+      });
+    } else {
+      window.localStorage.removeItem(posCartStorageKey);
+    }
+
+    cartPersistenceReadyRef.current = true;
+  }, [posCartStorageKey, branchId, toast]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (!posCartStorageKey) return;
+    if (!cartPersistenceReadyRef.current) return;
+
+    const isEmptyState =
+      cart.length === 0 &&
+      !cashPaymentAmount.trim() &&
+      !transferPaymentAmount.trim() &&
+      !transferReference.trim();
+
+    if (isEmptyState) {
+      window.localStorage.removeItem(posCartStorageKey);
+      return;
+    }
+
+    if (!currentUser?.id || !branchId) return;
+
+    const payload: PersistedPosCart = {
+      version: 1,
+      updatedAt: Date.now(),
+      userId: currentUser.id,
+      branchId,
+      cart,
+      cashPaymentAmount,
+      transferPaymentAmount,
+      transferReference,
+    };
+
+    window.localStorage.setItem(posCartStorageKey, JSON.stringify(payload));
+  }, [
+    posCartStorageKey,
+    cart,
+    cashPaymentAmount,
+    transferPaymentAmount,
+    transferReference,
+    currentUser?.id,
+    branchId,
+  ]);
 
   useEffect(() => {
     if (cart.length === 0 || products.length === 0) return;
@@ -786,6 +935,7 @@ export function POSModule() {
             : `Venta por $${formatMoney(backendTotal)} registrada y pagada.`,
       });
       await mutateProducts();
+      emitProductsSync(saleBranchId);
     } catch (error: any) {
       if (rollbackState) {
         setCart(rollbackState.cart);
