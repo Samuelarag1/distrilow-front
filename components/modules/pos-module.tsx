@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Image from "next/image";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -16,7 +17,6 @@ import {
   Loader2,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
-import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -92,7 +92,8 @@ function parsePersistedPosCart(raw: string | null): PersistedPosCart | null {
     if (!parsed || typeof parsed !== "object") return null;
     if (parsed.version !== 1) return null;
     if (typeof parsed.userId !== "string" || !parsed.userId.trim()) return null;
-    if (typeof parsed.branchId !== "string" || !parsed.branchId.trim()) return null;
+    if (typeof parsed.branchId !== "string" || !parsed.branchId.trim())
+      return null;
 
     const updatedAt = Number(parsed.updatedAt ?? 0);
     if (!Number.isFinite(updatedAt)) return null;
@@ -334,8 +335,6 @@ export function POSModule() {
     return 1;
   };
 
-  const getActivePrice = (product: Product) => getRetailPrice(product);
-
   useEffect(() => {
     cartPersistenceReadyRef.current = false;
 
@@ -420,7 +419,9 @@ export function POSModule() {
   useEffect(() => {
     if (cart.length === 0 || products.length === 0) return;
 
-    const productById = new Map(products.map((product) => [product.id, product]));
+    const productById = new Map(
+      products.map((product) => [product.id, product])
+    );
     setCart((prev) => {
       let changed = false;
       const next = prev.map((item) => {
@@ -662,15 +663,6 @@ export function POSModule() {
           requestedPriceType: selection,
         };
       })
-    );
-    setIsSaleCommitted(false);
-  };
-
-  const updateManualOverrideReason = (id: string, reason: string) => {
-    setCart((prev) =>
-      prev.map((item) =>
-        item.id === id ? { ...item, manualOverrideReason: reason } : item
-      )
     );
     setIsSaleCommitted(false);
   };
@@ -1058,146 +1050,55 @@ export function POSModule() {
                 </p>
               </div>
             </CardHeader>
-            <CardContent>
-              <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-                {isLoading ? (
-                  Array.from({ length: 6 }).map((_, index) => (
-                    <Card key={index} className="overflow-hidden">
-                      <CardContent className="p-3">
-                        <div className="flex items-center space-x-3">
-                          <Skeleton className="h-12 w-12 shrink-0 rounded-md" />
-                          <div className="flex-1 space-y-2">
-                            <Skeleton className="h-4 w-3/4" />
-                            <Skeleton className="h-3 w-1/2" />
-                            <Skeleton className="h-4 w-1/4" />
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))
-                ) : filteredProducts.length > 0 ? (
-                  filteredProducts.map((product) => {
-                    const activePrice = getActivePrice(product);
-                    return (
-                      <Card
-                        key={product.id}
-                        className="group cursor-pointer overflow-hidden transition-shadow hover:shadow-md"
-                        onClick={() => {
-                          if (isSaleCommitted) return;
-                          addToCart(product);
-                        }}
-                      >
-                        <CardContent className="p-3">
-                          <div className="flex items-center space-x-3">
-                            <ProductCategoryIcon
-                              category={getProductCategoryLabel(product)}
-                              className="h-12 w-12 shrink-0 rounded-md"
-                              iconClassName="h-6 w-6"
-                            />
-                            <div className="min-w-0 flex-1">
-                              <h3 className="truncate text-sm font-bold transition-colors group-hover:text-primary">
-                                {product.name}
-                              </h3>
-                              <p className="truncate text-[10px] font-bold uppercase text-muted-foreground">
-                                {getProductCategoryLabel(product)}
-                              </p>
-                              <div className="flex items-center gap-2">
-                                <Badge
-                                  variant="outline"
-                                  className={`h-5 min-w-[82px] justify-center p-2 text-[10px] font-black uppercase ${getStockBadgeClassName(
-                                    product
-                                  )}`}
-                                >
-                                  stock {product.stock ?? 0}
-                                </Badge>
-                              </div>
-                              <p className="text-sm font-black text-primary">
-                                ${formatMoney(activePrice)}{" "}
-                                <span className="text-[10px] font-semibold text-muted-foreground">
-                                  Minorista
-                                </span>
-                              </p>
-                            </div>
-                            <Button
-                              size="sm"
-                              variant="ghost"
-                              className="h-8 w-8 p-0"
-                            >
-                              <Plus className="h-4 w-4" />
-                            </Button>
-                          </div>
-                        </CardContent>
-                      </Card>
-                    );
-                  })
-                ) : (
-                  <div className="col-span-full py-12 text-center">
-                    <p className="text-muted-foreground">
-                      No se encontraron productos.
-                    </p>
-                  </div>
-                )}
-              </div>
-              <div className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
-                <div className="text-xs text-muted-foreground">
-                  Mostrando {showingFrom}-{showingTo} de {productsTotal}{" "}
-                  productos.
-                </div>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.max(1, prev - 1))
-                    }
-                    disabled={currentPage <= 1}
-                  >
-                    Anterior
-                  </Button>
-                  <span className="text-xs text-muted-foreground">
-                    Pagina {currentPage} de {totalPages}
-                  </span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setCurrentPage((prev) => prev + 1)}
-                    disabled={!hasMore}
-                  >
-                    Siguiente
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
-
-        <div className="space-y-4">
-          <Card>
-            <CardHeader>
+            <CardHeader className="pb-3">
               <CardTitle className="flex items-center justify-between">
-                <span>Carrito</span>
+                <span>Productos agregados</span>
                 <Badge variant="secondary">{itemCount} items</Badge>
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-4">
+            <CardContent>
               {cart.length === 0 ? (
-                <p className="py-8 text-center text-muted-foreground">
-                  Carrito vacio
-                </p>
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-muted-foreground/40 bg-muted/20 px-6 py-10 text-center">
+                  <div className="relative mb-4 h-28 w-28 overflow-hidden rounded-2xl ring-1 ring-border/70">
+                    <Image
+                      src="/logo.png"
+                      alt="Logo Distri Low"
+                      fill
+                      sizes="112px"
+                      className="object-cover"
+                    />
+                  </div>
+                  <p className="text-sm font-semibold text-foreground">
+                    No hay productos agregados
+                  </p>
+                  <p className="mt-1 max-w-sm text-xs text-muted-foreground">
+                    Busca o escanea articulos para comenzar una venta y verlos
+                    aqui.
+                  </p>
+                </div>
               ) : (
-                <>
-                  <div className="max-h-64 space-y-3 overflow-y-auto">
-                    {cart.map((item) => (
-                      <div key={item.id} className="flex items-start space-x-2">
+                <div className="max-h-[430px] space-y-3 overflow-y-auto pr-1">
+                  {cart.map((item) => (
+                    <div
+                      key={item.id}
+                      className="rounded-lg border bg-card p-3 shadow-sm"
+                    >
+                      <div className="flex items-start gap-3">
                         <ProductCategoryIcon
                           category={getProductCategoryLabel(item)}
                           className="h-10 w-10 shrink-0 rounded"
                           iconClassName="h-5 w-5"
                         />
                         <div className="min-w-0 flex-1">
-                          <h4 className="truncate text-sm font-medium">
-                            {item.name}
-                          </h4>
+                          <div className="flex items-start justify-between gap-2">
+                            <h4 className="truncate text-sm font-medium">
+                              {item.name}
+                            </h4>
+                            <p className="whitespace-nowrap text-xs font-semibold">
+                              Subtotal: $
+                              {roundTo(getCartLineTotal(item), 2).toFixed(2)}
+                            </p>
+                          </div>
                           <p className="text-xs text-muted-foreground">
                             $
                             {toSafeNumber(getDisplayUnitPrice(item), 0).toFixed(
@@ -1220,7 +1121,7 @@ export function POSModule() {
                             </Badge>
                           </div>
 
-                          <div className="mt-2 flex  gap-2">
+                          <div className="mt-2 flex flex-wrap gap-2">
                             <Button
                               size="sm"
                               variant={
@@ -1267,13 +1168,11 @@ export function POSModule() {
                               Por mayor
                             </Button>
                           </div>
-
-                          <p className="mt-1 text-xs font-semibold">
-                            Subtotal: $
-                            {roundTo(getCartLineTotal(item), 2).toFixed(2)}
-                          </p>
                         </div>
-                        <div className="flex items-center space-x-1 pt-0.5">
+                      </div>
+
+                      <div className="mt-3 flex items-center justify-between">
+                        <div className="flex items-center space-x-1">
                           <Button
                             size="sm"
                             variant="outline"
@@ -1290,7 +1189,7 @@ export function POSModule() {
                           >
                             <Minus className="h-3 w-3" />
                           </Button>
-                          <span className="w-8 text-center text-sm">
+                          <span className="w-10 text-center text-sm">
                             {isWeighableProduct(item)
                               ? String(item.quantity)
                               : Math.trunc(item.quantity)}
@@ -1321,107 +1220,128 @@ export function POSModule() {
                           <Trash2 className="h-3 w-3" />
                         </Button>
                       </div>
-                    ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+
+        <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <span>Pagar</span>
+                <Badge variant="secondary">{itemCount} items</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Subtotal:</span>
+                  <span>${roundTo(total, 2).toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>Pagos iniciales:</span>
+                  <span>${roundTo(totalInitialPayments, 2).toFixed(2)}</span>
+                </div>
+                {changeDuePreview > 0 && (
+                  <div className="flex justify-between text-sm font-semibold text-emerald-700">
+                    <span>Vuelto a entregar:</span>
+                    <span>${roundTo(changeDuePreview, 2).toFixed(2)}</span>
                   </div>
-                  <Separator />
-                  <div className="space-y-2">
-                    <div className="flex justify-between text-sm">
-                      <span>Subtotal:</span>
-                      <span>${roundTo(total, 2).toFixed(2)}</span>
+                )}
+                <Separator />
+                <div className="flex justify-between font-bold">
+                  <span>Total:</span>
+                  <span>${roundTo(total, 2).toFixed(2)}</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="rounded-md border p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase text-muted-foreground">
+                    Pagos
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-md font-bold text-muted-foreground">
+                        Efectivo
+                      </label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={cashPaymentAmount}
+                        onChange={(event) =>
+                          setCashPaymentAmount(event.target.value)
+                        }
+                        className="h-10"
+                      />
                     </div>
-                    <div className="flex justify-between text-sm">
-                      <span>Pagos iniciales:</span>
-                      <span>${roundTo(totalInitialPayments, 2).toFixed(2)}</span>
-                    </div>
-                    {changeDuePreview > 0 && (
-                      <div className="flex justify-between text-sm font-semibold text-emerald-700">
-                        <span>Vuelto a entregar:</span>
-                        <span>${roundTo(changeDuePreview, 2).toFixed(2)}</span>
-                      </div>
-                    )}
-                    <Separator />
-                    <div className="flex justify-between font-bold">
-                      <span>Total:</span>
-                      <span>${roundTo(total, 2).toFixed(2)}</span>
+                    <div className="space-y-1">
+                      <label className="text-md font-bold text-muted-foreground">
+                        Transferencia
+                      </label>
+                      <Input
+                        type="number"
+                        step="0.01"
+                        min="0"
+                        placeholder="0.00"
+                        value={transferPaymentAmount}
+                        onChange={(event) =>
+                          setTransferPaymentAmount(event.target.value)
+                        }
+                        className="h-10"
+                      />
                     </div>
                   </div>
-                  <div className="space-y-2">
-                    <div className="rounded-md border p-3 space-y-2">
-                      <p className="text-xs font-semibold uppercase text-muted-foreground">
-                        Pagos
-                      </p>
-                      <div className="grid grid-cols-2 gap-2">
-                        <div className="space-y-1">
-                          <label className="text-md font-bold text-muted-foreground">
-                            Efectivo
-                          </label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="0.00"
-                            value={cashPaymentAmount}
-                            onChange={(event) =>
-                              setCashPaymentAmount(event.target.value)
-                            }
-                            className="h-10"
-                          />
-                        </div>
-                        <div className="space-y-1">
-                          <label className="text-md font-bold text-muted-foreground">
-                            Transferencia
-                          </label>
-                          <Input
-                            type="number"
-                            step="0.01"
-                            min="0"
-                            placeholder="0.00"
-                            value={transferPaymentAmount}
-                            onChange={(event) =>
-                              setTransferPaymentAmount(event.target.value)
-                            }
-                            className="h-10"
-                          />
-                        </div>
-                      </div>
-                    </div>
+                </div>
+                {cart.length === 0 ? (
+                  <p className="text-center text-xs text-muted-foreground">
+                    Agrega productos para habilitar el cobro.
+                  </p>
+                ) : null}
+                <Button
+                  className="w-full"
+                  onClick={() => handlePayment()}
+                  disabled={isProcessingPayment || cart.length === 0}
+                >
+                  <Banknote className="mr-2 h-4 w-4" />
+                  {isSaleCommitted ? "Nueva venta" : "Registrar Venta"}
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
                     <Button
                       className="w-full"
-                      onClick={() => handlePayment()}
-                      disabled={isProcessingPayment}
+                      variant="ghost"
+                      disabled={cart.length === 0}
                     >
-                      <Banknote className="mr-2 h-4 w-4" />
-                      {isSaleCommitted ? "Nueva venta" : "Registrar Venta"}
+                      Limpiar Carrito
                     </Button>
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button className="w-full" variant="ghost">
-                          Limpiar Carrito
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>
-                            Limpiar el carrito?
-                          </AlertDialogTitle>
-                          <AlertDialogDescription>
-                            Se quitaran todos los productos seleccionados.
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                          <AlertDialogAction
-                            onClick={clearCart}
-                            className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                          >
-                            Limpiar
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  </div>
-                </>
-              )}
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Limpiar el carrito?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Se quitaran todos los productos seleccionados.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => {
+                          clearCart();
+                        }}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        Limpiar
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
             </CardContent>
           </Card>
         </div>

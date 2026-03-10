@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { Wallet, Loader2, ShieldAlert, RefreshCcw, BookOpen } from "lucide-react";
+import { Wallet, Loader2, ShieldAlert } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -54,11 +54,14 @@ export function CashModule() {
   );
   const [dailyBookPage, setDailyBookPage] = useState(1);
   const dailyBookPageSize = 20;
-  const [dailyBook, setDailyBook] = useState<CashBookDailyResponse | null>(null);
+  const [dailyBook, setDailyBook] = useState<CashBookDailyResponse | null>(
+    null
+  );
   const [isLoadingDailyBook, setIsLoadingDailyBook] = useState(false);
 
   const activeBranchName = useMemo(
-    () => branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal",
+    () =>
+      branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal",
     [branches, branchId]
   );
   const allDailyEntries = useMemo(
@@ -84,7 +87,10 @@ export function CashModule() {
       setIsLoading(true);
       const session = await backendApi.cash.getCurrentSession();
       setCashSession(session);
-      if (session?.expectedCash !== undefined && session?.expectedCash !== null) {
+      if (
+        session?.expectedCash !== undefined &&
+        session?.expectedCash !== null
+      ) {
         setCountedCash(String(session.expectedCash));
       }
     } catch (error: any) {
@@ -108,16 +114,20 @@ export function CashModule() {
 
     try {
       setIsLoadingDailyBook(true);
-      const response = await backendApi.cash.dailyBook({
-        date: dailyBookDate,
-      }, branchId);
+      const response = await backendApi.cash.dailyBook(
+        {
+          date: dailyBookDate,
+        },
+        branchId
+      );
       setDailyBook(response);
     } catch (error: any) {
       setDailyBook(null);
       toast({
         variant: "destructive",
         title: "Error en libro diario",
-        description: error?.message || "No se pudo obtener el libro diario de caja.",
+        description:
+          error?.message || "No se pudo obtener el libro diario de caja.",
       });
     } finally {
       setIsLoadingDailyBook(false);
@@ -159,12 +169,17 @@ export function CashModule() {
 
     try {
       setIsSaving(true);
-      const session = await backendApi.cash.openSession({ openingFloat: opening });
+      const session = await backendApi.cash.openSession({
+        openingFloat: opening,
+      });
       setCashSession(session);
       setOpeningFloat("");
       setCountedCash(String(session.expectedCash ?? ""));
       void loadDailyBook();
-      toast({ title: "Caja abierta", description: "Sesion abierta correctamente." });
+      toast({
+        title: "Caja abierta",
+        description: "Sesion abierta correctamente.",
+      });
     } catch (error: any) {
       const message = String(error?.message ?? "");
       if (message.toLowerCase().includes("already an open cash session")) {
@@ -173,10 +188,11 @@ export function CashModule() {
       toast({
         variant: "destructive",
         title: "Error al abrir caja",
-        description:
-          message.toLowerCase().includes("already an open cash session")
-            ? "Ya existe una sesion de caja abierta para esta sucursal."
-            : error?.message || "No se pudo abrir caja.",
+        description: message
+          .toLowerCase()
+          .includes("already an open cash session")
+          ? "Ya existe una sesion de caja abierta para esta sucursal."
+          : error?.message || "No se pudo abrir caja.",
       });
     } finally {
       setIsSaving(false);
@@ -278,9 +294,7 @@ export function CashModule() {
       const expected = Number(
         closedSession.expectedCash ?? cashSession.expectedCash ?? 0
       );
-      const difference = Number(
-        closedSession.difference ?? counted - expected
-      );
+      const difference = Number(closedSession.difference ?? counted - expected);
 
       logEvent(
         "close_cashbox",
@@ -300,7 +314,10 @@ export function CashModule() {
       setCountedCash("");
       setCloseNotes("");
       void loadDailyBook();
-      toast({ title: "Caja cerrada", description: "Sesion cerrada correctamente." });
+      toast({
+        title: "Caja cerrada",
+        description: "Sesion cerrada correctamente.",
+      });
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -319,7 +336,8 @@ export function CashModule() {
           <ShieldAlert className="h-10 w-10 text-destructive" />
           <h2 className="text-xl font-semibold">Acceso denegado</h2>
           <p className="max-w-md text-sm text-muted-foreground">
-            Solo administradores, managers, cajeros y sellers pueden gestionar caja.
+            Solo administradores, managers, cajeros y sellers pueden gestionar
+            caja.
           </p>
         </CardContent>
       </Card>
@@ -329,7 +347,9 @@ export function CashModule() {
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-3">
-        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Gestion de Caja</h1>
+        <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+          Gestion de Caja
+        </h1>
         <p className="text-sm text-muted-foreground">
           Apertura, movimientos y cierre de caja en una seccion dedicada.
         </p>
@@ -360,7 +380,9 @@ export function CashModule() {
 
         <CardContent className="space-y-4">
           {isLoading && (
-            <div className="text-sm text-muted-foreground">Cargando estado de caja...</div>
+            <div className="text-sm text-muted-foreground">
+              Cargando estado de caja...
+            </div>
           )}
 
           {!cashSession ? (
@@ -375,7 +397,11 @@ export function CashModule() {
                 value={openingFloat}
                 onChange={(event) => setOpeningFloat(event.target.value)}
               />
-              <Button className="w-full" onClick={handleOpenCash} disabled={isSaving || !branchId}>
+              <Button
+                className="w-full"
+                onClick={handleOpenCash}
+                disabled={isSaving || !branchId}
+              >
                 {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
                 Abrir Caja
               </Button>
@@ -389,16 +415,26 @@ export function CashModule() {
                 </p>
                 <p className="text-sm">
                   Fondo inicial:{" "}
-                  <strong>${Number(cashSession.openingFloat ?? 0).toLocaleString()}</strong>
+                  <strong>
+                    ${Number(cashSession.openingFloat ?? 0).toLocaleString()}
+                  </strong>
                 </p>
                 <p className="text-sm">
-                  Esperado: <strong>${Number(cashSession.expectedCash ?? 0).toLocaleString()}</strong>
+                  Esperado:{" "}
+                  <strong>
+                    ${Number(cashSession.expectedCash ?? 0).toLocaleString()}
+                  </strong>
                 </p>
               </div>
 
               <div className="space-y-2 rounded-md border p-4">
                 <h3 className="text-sm font-semibold">Registrar movimiento</h3>
-                <Select value={movementType} onValueChange={(value) => setMovementType(value as CashMovementType)}>
+                <Select
+                  value={movementType}
+                  onValueChange={(value) =>
+                    setMovementType(value as CashMovementType)
+                  }
+                >
                   <SelectTrigger>
                     <SelectValue />
                   </SelectTrigger>
@@ -447,208 +483,18 @@ export function CashModule() {
                   onChange={(event) => setCloseNotes(event.target.value)}
                   maxLength={600}
                 />
-                <Button className="w-full" onClick={handleCloseCash} disabled={isSaving}>
-                  {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+                <Button
+                  className="w-full"
+                  onClick={handleCloseCash}
+                  disabled={isSaving}
+                >
+                  {isSaving && (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  )}
                   Cerrar Caja
                 </Button>
               </div>
             </div>
-          )}
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader className="space-y-4">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <CardTitle className="flex items-center gap-2">
-              <BookOpen className="h-4 w-4" />
-              Libro de Caja Diario
-            </CardTitle>
-            <Button variant="outline" size="sm" onClick={() => void loadDailyBook()}>
-              <RefreshCcw className="mr-2 h-4 w-4" />
-              Actualizar
-            </Button>
-          </div>
-          <div className="max-w-xs space-y-2">
-            <Label htmlFor="daily-book-date">Fecha</Label>
-            <Input
-              id="daily-book-date"
-              type="date"
-              value={dailyBookDate}
-              onChange={(event) => {
-                setDailyBookDate(event.target.value);
-                setDailyBookPage(1);
-              }}
-            />
-          </div>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          {isLoadingDailyBook && (
-            <div className="text-sm text-muted-foreground">Cargando libro diario...</div>
-          )}
-
-          {!isLoadingDailyBook && !dailyBook && (
-            <div className="text-sm text-muted-foreground">
-              No hay datos de libro diario para la fecha seleccionada.
-            </div>
-          )}
-
-          {dailyBook && (
-            <>
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Apertura</p>
-                  <p className="text-lg font-semibold">
-                    ${Number(dailyBook.summary.openingFloat ?? 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Esperado</p>
-                  <p className="text-lg font-semibold">
-                    ${Number(dailyBook.summary.expectedCash ?? 0).toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Diferencia</p>
-                  <p
-                    className={`text-lg font-semibold ${
-                      Number(dailyBook.summary.difference ?? 0) < 0
-                        ? "text-red-600"
-                        : "text-emerald-600"
-                    }`}
-                  >
-                    {dailyBook.summary.difference === null
-                      ? "-"
-                      : `$${Number(dailyBook.summary.difference ?? 0).toLocaleString()}`}
-                  </p>
-                </div>
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Balance movimientos</p>
-                  <p className="text-lg font-semibold">
-                    ${Number(dailyBook.summary.movementBalance ?? 0).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Cobros en efectivo</p>
-                  <p className="text-base font-semibold">
-                    ${Number(
-                      dailyBook.summary.income?.cashFromPayments ?? 0
-                    ).toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Cobros transferencia</p>
-                  <p className="text-base font-semibold">
-                    ${Number(
-                      dailyBook.summary.income?.transferFromPayments ?? 0
-                    ).toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Ingresos manuales</p>
-                  <p className="text-base font-semibold">
-                    ${Number(
-                      dailyBook.summary.income?.movementIn ?? 0
-                    ).toLocaleString()}
-                  </p>
-                </div>
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Egresos manuales</p>
-                  <p className="text-base font-semibold">
-                    ${Number(
-                      dailyBook.summary.outflow?.movementOut ?? 0
-                    ).toLocaleString()}
-                  </p>
-                </div>
-              </div>
-
-              {dailyBook.summary.differenceSource && (
-                <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Tipo de diferencia</p>
-                  <Badge variant="secondary" className="mt-1">
-                    {dailyBook.summary.differenceSource === "RUNNING"
-                      ? "diferencia en tiempo real"
-                      : dailyBook.summary.differenceSource === "CLOSED_SESSION"
-                      ? "diferencia de cierre"
-                      : dailyBook.summary.differenceSource}
-                  </Badge>
-                </div>
-              )}
-
-              <div className="rounded-md border overflow-x-auto">
-                <table className="w-full min-w-[640px]">
-                  <thead className="bg-muted/40">
-                    <tr>
-                      <th className="p-3 text-left text-xs font-semibold">Hora</th>
-                      <th className="p-3 text-left text-xs font-semibold">Tipo</th>
-                      <th className="p-3 text-left text-xs font-semibold">Metodo</th>
-                      <th className="p-3 text-left text-xs font-semibold">Descripcion</th>
-                      <th className="p-3 text-right text-xs font-semibold">Monto</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {allDailyEntries.length === 0 ? (
-                      <tr>
-                        <td colSpan={5} className="p-4 text-center text-sm text-muted-foreground">
-                          Sin movimientos para esta fecha.
-                        </td>
-                      </tr>
-                    ) : (
-                      paginatedDailyEntries.map((entry) => (
-                        <tr key={entry.id} className="border-t">
-                          <td className="p-3 text-xs">
-                            {entry.createdAt
-                              ? new Date(entry.createdAt).toLocaleTimeString()
-                              : "-"}
-                          </td>
-                          <td className="p-3 text-xs">{entry.type}</td>
-                          <td className="p-3 text-xs">{entry.method ?? "-"}</td>
-                          <td className="p-3 text-xs">{entry.description ?? "-"}</td>
-                          <td className="p-3 text-right text-xs font-semibold">
-                            ${Number(entry.amount ?? 0).toLocaleString()}
-                          </td>
-                        </tr>
-                      ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-
-              {allDailyEntries.length > 0 && (
-                <div className="flex items-center justify-between">
-                  <p className="text-xs text-muted-foreground">
-                    Mostrando{" "}
-                    {allDailyEntries.length === 0
-                      ? 0
-                      : (dailyBookPage - 1) * dailyBookPageSize + 1}
-                    -
-                    {Math.min(dailyBookPage * dailyBookPageSize, allDailyEntries.length)}{" "}
-                    de {allDailyEntries.length}
-                  </p>
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setDailyBookPage((prev) => Math.max(1, prev - 1))}
-                      disabled={dailyBookPage <= 1}
-                    >
-                      Anterior
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="outline"
-                      onClick={() => setDailyBookPage((prev) => prev + 1)}
-                      disabled={dailyBookPage >= totalDailyPages}
-                    >
-                      Siguiente
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </>
           )}
         </CardContent>
       </Card>
