@@ -39,7 +39,7 @@ import { emitProductsSync } from "@/lib/products-live-sync";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import type { PaymentMethod, PriceType, PricingMode } from "@/lib/api-types";
-import { ProductCategoryIcon } from "@/components/products/components/ProductCategoryIcon";
+import { resolveProductImageUrl } from "@/lib/media-utils";
 
 interface CartItem extends Product {
   quantity: number;
@@ -1084,11 +1084,17 @@ export function POSModule() {
                       className="rounded-lg border bg-card p-3 shadow-sm"
                     >
                       <div className="flex items-start gap-3">
-                        <ProductCategoryIcon
-                          category={getProductCategoryLabel(item)}
-                          className="h-10 w-10 shrink-0 rounded"
-                          iconClassName="h-5 w-5"
-                        />
+                        <div className="h-10 w-10 shrink-0 overflow-hidden rounded bg-muted ring-1 ring-border/60">
+                          <img
+                            src={resolveProductImageUrl(item)}
+                            alt={item.name}
+                            className="h-full w-full object-cover"
+                            loading="lazy"
+                            onError={(event) => {
+                              event.currentTarget.src = "/placeholder.svg";
+                            }}
+                          />
+                        </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-start justify-between gap-2">
                             <h4 className="truncate text-sm font-medium">

@@ -90,7 +90,10 @@ function toFiniteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function getExpenseSituation(amount: number, referenceAmount: number): ExpenseSituation {
+function getExpenseSituation(
+  amount: number,
+  referenceAmount: number
+): ExpenseSituation {
   const safeReference = referenceAmount > 0 ? referenceAmount : 1;
   const ratio = amount / safeReference;
 
@@ -216,13 +219,7 @@ export function ExpensesModule() {
       if (requestId !== listRequestIdRef.current) return;
       setIsLoadingList(false);
     }
-  }, [
-    branchId,
-    currentPage,
-    debouncedSearchQuery,
-    categoryFilter,
-    toast,
-  ]);
+  }, [branchId, currentPage, debouncedSearchQuery, categoryFilter, toast]);
 
   const loadAnalytics = useCallback(async () => {
     const requestId = ++analyticsRequestIdRef.current;
@@ -290,7 +287,8 @@ export function ExpensesModule() {
 
     const refreshOnFocus = () => {
       const now = Date.now();
-      if (now - lastAutoRefreshAtRef.current < WINDOW_REFRESH_COOLDOWN_MS) return;
+      if (now - lastAutoRefreshAtRef.current < WINDOW_REFRESH_COOLDOWN_MS)
+        return;
       lastAutoRefreshAtRef.current = now;
       void refreshAll("focus");
     };
@@ -315,7 +313,8 @@ export function ExpensesModule() {
       if (payload.branchId && payload.branchId !== branchId) return;
 
       const now = Date.now();
-      if (now - lastAutoRefreshAtRef.current < WINDOW_REFRESH_COOLDOWN_MS) return;
+      if (now - lastAutoRefreshAtRef.current < WINDOW_REFRESH_COOLDOWN_MS)
+        return;
       lastAutoRefreshAtRef.current = now;
       void refreshAll("mutation");
     });
@@ -336,8 +335,10 @@ export function ExpensesModule() {
   const averageVisibleExpense = useMemo(() => {
     if (expenses.length === 0) return 0;
     return (
-      expenses.reduce((sum, expense) => sum + toFiniteNumber(expense.amount, 0), 0) /
-      expenses.length
+      expenses.reduce(
+        (sum, expense) => sum + toFiniteNumber(expense.amount, 0),
+        0
+      ) / expenses.length
     );
   }, [expenses]);
 
@@ -353,7 +354,11 @@ export function ExpensesModule() {
     const current = toFiniteNumber(points[points.length - 1]?.total, 0);
     const previous = toFiniteNumber(points[points.length - 2]?.total, 0);
     const deltaPercent =
-      previous === 0 ? (current > 0 ? 100 : 0) : ((current - previous) / previous) * 100;
+      previous === 0
+        ? current > 0
+          ? 100
+          : 0
+        : ((current - previous) / previous) * 100;
 
     if (deltaPercent > 5) return { trend: "UP" as const, deltaPercent };
     if (deltaPercent < -5) return { trend: "DOWN" as const, deltaPercent };
@@ -380,7 +385,11 @@ export function ExpensesModule() {
     if (isSubmittingExpense) return;
 
     const amount = Number(newExpense.amount);
-    if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_EXPENSE_AMOUNT) {
+    if (
+      !Number.isFinite(amount) ||
+      amount <= 0 ||
+      amount > MAX_EXPENSE_AMOUNT
+    ) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
@@ -474,14 +483,18 @@ export function ExpensesModule() {
         <div className="space-y-1">
           <div className="flex items-center gap-3">
             <BrandMark className="h-8 w-8 rounded-lg" />
-            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">Gastos</h1>
+            <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
+              Gastos
+            </h1>
           </div>
           <p className="text-muted-foreground">
             Panel operativo con desglose por situacion y categoria.
           </p>
           <p className="text-xs text-muted-foreground">
             Ultima sincronizacion:{" "}
-            {lastSyncedAt ? format(new Date(lastSyncedAt), "dd/MM/yyyy HH:mm:ss") : "Sin datos"}
+            {lastSyncedAt
+              ? format(new Date(lastSyncedAt), "dd/MM/yyyy HH:mm:ss")
+              : "Sin datos"}
           </p>
         </div>
 
@@ -494,7 +507,9 @@ export function ExpensesModule() {
           >
             <RefreshCcw
               className={`mr-2 h-4 w-4 ${
-                isRefreshing || isLoadingList || isLoadingAnalytics ? "animate-spin" : ""
+                isRefreshing || isLoadingList || isLoadingAnalytics
+                  ? "animate-spin"
+                  : ""
               }`}
             />
             Actualizar
@@ -516,58 +531,58 @@ export function ExpensesModule() {
                   </DialogDescription>
                 </DialogHeader>
                 <div className="grid gap-4 py-4">
-                <div className="grid gap-2">
-                  <Label htmlFor="amount">Monto</Label>
-                  <Input
-                    id="amount"
-                    type="number"
-                    step="0.01"
-                    value={newExpense.amount}
-                    onChange={(event) =>
-                      setNewExpense((prev) => ({
-                        ...prev,
-                        amount: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Categoria</Label>
-                  <select
-                    value={newExpense.category}
-                    onChange={(event) =>
-                      setNewExpense((prev) => ({
-                        ...prev,
-                        category: event.target.value,
-                      }))
-                    }
-                    className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                    required
-                  >
-                    <option value="">Selecciona una categoria</option>
-                    {EXPENSE_CATEGORY_OPTIONS.map((category) => (
-                      <option key={category.value} value={category.value}>
-                        {category.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="grid gap-2">
-                  <Label htmlFor="description">Descripcion</Label>
-                  <Input
-                    id="description"
-                    maxLength={MAX_EXPENSE_DESCRIPTION_LENGTH}
-                    value={newExpense.description}
-                    onChange={(event) =>
-                      setNewExpense((prev) => ({
-                        ...prev,
-                        description: event.target.value,
-                      }))
-                    }
-                    required
-                  />
-                </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="amount">Monto</Label>
+                    <Input
+                      id="amount"
+                      type="number"
+                      step="0.01"
+                      value={newExpense.amount}
+                      onChange={(event) =>
+                        setNewExpense((prev) => ({
+                          ...prev,
+                          amount: event.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
+                  <div className="grid gap-2">
+                    <Label>Categoria</Label>
+                    <select
+                      value={newExpense.category}
+                      onChange={(event) =>
+                        setNewExpense((prev) => ({
+                          ...prev,
+                          category: event.target.value,
+                        }))
+                      }
+                      className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                      required
+                    >
+                      <option value="">Selecciona una categoria</option>
+                      {EXPENSE_CATEGORY_OPTIONS.map((category) => (
+                        <option key={category.value} value={category.value}>
+                          {category.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid gap-2">
+                    <Label htmlFor="description">Descripcion</Label>
+                    <Input
+                      id="description"
+                      maxLength={MAX_EXPENSE_DESCRIPTION_LENGTH}
+                      value={newExpense.description}
+                      onChange={(event) =>
+                        setNewExpense((prev) => ({
+                          ...prev,
+                          description: event.target.value,
+                        }))
+                      }
+                      required
+                    />
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     Sucursal activa:{" "}
                     {branches.find((branch) => branch.id === branchId)?.name ??
@@ -604,7 +619,9 @@ export function ExpensesModule() {
               <BrandSpinner size="sm" label="Cargando..." layout="inline" />
             ) : (
               <>
-                <div className="text-2xl font-bold">{formatMoney(analytics?.total ?? 0)}</div>
+                <div className="text-2xl font-bold">
+                  {formatMoney(analytics?.total ?? 0)}
+                </div>
                 <p className="mt-1 text-xs text-muted-foreground">
                   {analyticsPeriod}
                 </p>
@@ -615,21 +632,29 @@ export function ExpensesModule() {
 
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Categorias activas</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Categorias activas
+            </CardTitle>
             <PieChart className="h-4 w-4 text-orange-500" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{analytics?.byCategory?.length ?? 0}</div>
+            <div className="text-2xl font-bold">
+              {analytics?.byCategory?.length ?? 0}
+            </div>
             <p className="mt-1 text-xs text-muted-foreground">
               Top actual:{" "}
-              {topCategory ? getExpenseCategoryLabel(topCategory.category) : "Sin categoria dominante"}
+              {topCategory
+                ? getExpenseCategoryLabel(topCategory.category)
+                : "Sin categoria dominante"}
             </p>
           </CardContent>
         </Card>
 
         <Card className="md:col-span-2">
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Situacion del gasto</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Situacion del gasto
+            </CardTitle>
             {evolutionSummary.trend === "UP" ? (
               <ArrowUpRight className="h-4 w-4 text-red-500" />
             ) : evolutionSummary.trend === "DOWN" ? (
@@ -640,7 +665,9 @@ export function ExpensesModule() {
           </CardHeader>
           <CardContent className="grid gap-3 sm:grid-cols-3">
             <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Ritmo</p>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Ritmo
+              </p>
               <p className="text-lg font-bold">
                 {evolutionSummary.trend === "UP"
                   ? "En alza"
@@ -655,7 +682,9 @@ export function ExpensesModule() {
             </div>
 
             <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Concentracion</p>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Concentracion
+              </p>
               <p className="text-lg font-bold">
                 {topCategory?.sharePercent !== undefined
                   ? `${topCategory.sharePercent.toFixed(1)}%`
@@ -663,14 +692,20 @@ export function ExpensesModule() {
               </p>
               <p className="text-xs text-muted-foreground">
                 {topCategory
-                  ? `Principal: ${getExpenseCategoryLabel(topCategory.category)}`
+                  ? `Principal: ${getExpenseCategoryLabel(
+                      topCategory.category
+                    )}`
                   : "No se identifica categoria dominante"}
               </p>
             </div>
 
             <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">Control</p>
-              <p className="text-lg font-bold">{formatMoney(averageVisibleExpense)}</p>
+              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                Control
+              </p>
+              <p className="text-lg font-bold">
+                {formatMoney(averageVisibleExpense)}
+              </p>
               <p className="text-xs text-muted-foreground">
                 Promedio de la pagina actual ({expenses.length} registros)
               </p>
@@ -785,7 +820,11 @@ export function ExpensesModule() {
                       <TableRow key={expense.id}>
                         <TableCell className="whitespace-nowrap">
                           {format(
-                            new Date(expense.createdAt ?? expense.updatedAt ?? new Date()),
+                            new Date(
+                              expense.createdAt ??
+                                expense.updatedAt ??
+                                new Date()
+                            ),
                             "dd/MM/yyyy HH:mm",
                             {
                               locale: es,
@@ -794,8 +833,12 @@ export function ExpensesModule() {
                         </TableCell>
                         <TableCell>
                           <div className="max-w-[260px]">
-                            <p className="truncate font-medium">{expense.description}</p>
-                            <p className="truncate text-xs text-muted-foreground">{expense.id}</p>
+                            <p className="truncate font-medium">
+                              {expense.description}
+                            </p>
+                            <p className="truncate text-xs text-muted-foreground">
+                              {expense.id}
+                            </p>
                           </div>
                         </TableCell>
                         <TableCell>
@@ -805,8 +848,12 @@ export function ExpensesModule() {
                         </TableCell>
                         <TableCell>
                           <div className="space-y-1">
-                            <Badge className={situation.badgeClassName}>{situation.label}</Badge>
-                            <p className="text-[11px] text-muted-foreground">{situation.detail}</p>
+                            <Badge className={situation.badgeClassName}>
+                              {situation.label}
+                            </Badge>
+                            <p className="text-[11px] text-muted-foreground">
+                              {situation.detail}
+                            </p>
                           </div>
                         </TableCell>
                         <TableCell className="text-right font-semibold">
@@ -871,63 +918,15 @@ export function ExpensesModule() {
             </div>
           )}
 
-          <div className="mt-6 rounded-md border bg-muted/20 p-3 text-xs">
-            <div className="flex flex-wrap items-center gap-2">
-              <ShieldCheck className="h-4 w-4 text-emerald-600" />
-              <span className="font-semibold">Integridad operativa:</span>
-              <span className="text-muted-foreground">
-                Se evita duplicar por doble submit y se refresca al volver a la pantalla.
-              </span>
-            </div>
-            {topCategory?.sharePercent !== undefined && topCategory.sharePercent > 60 && (
+          {topCategory?.sharePercent !== undefined &&
+            topCategory.sharePercent > 60 && (
               <div className="mt-2 flex items-center gap-2 text-amber-700">
                 <AlertTriangle className="h-4 w-4" />
-                Alta concentracion en {getExpenseCategoryLabel(topCategory.category)} (
+                Alta concentracion en{" "}
+                {getExpenseCategoryLabel(topCategory.category)} (
                 {topCategory.sharePercent.toFixed(1)}%).
               </div>
             )}
-          </div>
-
-          <div className="mt-4 space-y-2">
-            <p className="text-sm font-semibold">Evolucion</p>
-            {isLoadingAnalytics ? (
-              <BrandSpinner
-                size="sm"
-                label="Cargando evolucion..."
-                layout="inline"
-              />
-            ) : (analytics?.evolution?.length ?? 0) === 0 ? (
-              <p className="text-xs text-muted-foreground">
-                Sin datos de evolucion.
-              </p>
-            ) : (
-              <div className="grid gap-2">
-                {analytics?.evolution.map((point) => (
-                  <div
-                    key={point.period}
-                    className="grid grid-cols-[110px_1fr_auto] items-center gap-2 text-xs"
-                  >
-                    <span className="text-muted-foreground">
-                      {point.period}
-                    </span>
-                    <div className="h-1.5 rounded bg-muted overflow-hidden">
-                      <div
-                        className="h-full bg-primary"
-                        style={{
-                          width: `${Math.min(
-                            100,
-                            (toFiniteNumber(point.total, 0) / maxEvolutionTotal) *
-                              100
-                          )}%`,
-                        }}
-                      />
-                    </div>
-                    <span>{formatMoney(point.total)}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
         </CardContent>
       </Card>
 
@@ -947,7 +946,9 @@ export function ExpensesModule() {
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <p className="text-muted-foreground">Monto</p>
-                  <p className="font-semibold">{formatMoney(detailTarget.amount)}</p>
+                  <p className="font-semibold">
+                    {formatMoney(detailTarget.amount)}
+                  </p>
                 </div>
                 <div>
                   <p className="text-muted-foreground">Categoria</p>
@@ -966,7 +967,9 @@ export function ExpensesModule() {
               </div>
               <div className="rounded-md border p-3">
                 <p className="font-semibold">Descripcion</p>
-                <p className="mt-1 text-muted-foreground">{detailTarget.description}</p>
+                <p className="mt-1 text-muted-foreground">
+                  {detailTarget.description}
+                </p>
               </div>
             </div>
           )}
