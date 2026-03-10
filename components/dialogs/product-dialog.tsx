@@ -445,9 +445,6 @@ export function ProductDialog({
                   disabled={disableForm}
                 />
               </div>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
                 <div className="flex flex-col gap-1">
                   <Label className="font-bold">

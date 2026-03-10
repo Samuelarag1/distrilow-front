@@ -1,7 +1,13 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { addMonths, format, isSameMonth, startOfMonth, subMonths } from "date-fns";
+import {
+  addMonths,
+  format,
+  isSameMonth,
+  startOfMonth,
+  subMonths,
+} from "date-fns";
 import { es } from "date-fns/locale";
 import {
   CalendarDays,
@@ -74,15 +80,22 @@ function emptyDailyResponse(date: string): CashBookDailyResponse {
 
 export function CashCalendarReport() {
   const { branchId } = useUser();
-  const [visibleMonth, setVisibleMonth] = useState(() => startOfMonth(new Date()));
+  const [visibleMonth, setVisibleMonth] = useState(() =>
+    startOfMonth(new Date())
+  );
   const [selectedDate, setSelectedDate] = useState(() => new Date());
-  const [monthlyPayload, setMonthlyPayload] = useState<ReportsCashMonthlyResponse | null>(null);
-  const [dailyPayload, setDailyPayload] = useState<CashBookDailyResponse | null>(null);
+  const [monthlyPayload, setMonthlyPayload] =
+    useState<ReportsCashMonthlyResponse | null>(null);
+  const [dailyPayload, setDailyPayload] =
+    useState<CashBookDailyResponse | null>(null);
   const [isMonthlyLoading, setIsMonthlyLoading] = useState(false);
   const [isDailyLoading, setIsDailyLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const selectedDateYmd = useMemo(() => format(selectedDate, "yyyy-MM-dd"), [selectedDate]);
+  const selectedDateYmd = useMemo(
+    () => format(selectedDate, "yyyy-MM-dd"),
+    [selectedDate]
+  );
 
   const loadMonthly = useCallback(async () => {
     if (!branchId) {
@@ -213,9 +226,10 @@ export function CashCalendarReport() {
                 <CalendarDays className="h-5 w-5 text-primary" />
                 Cajas del mes
               </CardTitle>
-              <p className="text-sm text-muted-foreground">
-                Consolidado desde /reports/cash/monthly y detalle diario desde /cash/book/daily.
-              </p>
+              {/* <p className="text-sm text-muted-foreground">
+                Consolidado desde /reports/cash/monthly y detalle diario desde
+                /cash/book/daily.
+              </p> */}
             </div>
 
             <div className="flex items-center gap-2">
@@ -254,18 +268,26 @@ export function CashCalendarReport() {
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <div className="rounded-md border p-3">
-              <p className="text-xs text-muted-foreground">Esperado de cierre</p>
-              <p className="text-2xl font-bold">{formatMoney(selectedMonth.expectedCashClose, 0)}</p>
+              <p className="text-xs text-muted-foreground">
+                Esperado de cierre
+              </p>
+              <p className="text-2xl font-bold">
+                {formatMoney(selectedMonth.expectedCashClose, 0)}
+              </p>
               <p className="text-[11px] text-muted-foreground">
                 Contado: {formatMoney(selectedMonth.countedCashClose, 0)}
               </p>
             </div>
 
             <div className="rounded-md border p-3">
-              <p className="text-xs text-muted-foreground">Diferencia del mes</p>
+              <p className="text-xs text-muted-foreground">
+                Diferencia del mes
+              </p>
               <p
                 className={`text-2xl font-bold ${
-                  selectedMonth.difference < 0 ? "text-red-600" : "text-emerald-600"
+                  selectedMonth.difference < 0
+                    ? "text-red-600"
+                    : "text-emerald-600"
                 }`}
               >
                 {formatMoney(selectedMonth.difference, 0)}
@@ -285,13 +307,17 @@ export function CashCalendarReport() {
                 )}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Efectivo: {formatMoney(selectedMonth.cashFromSales, 0)} / Transferencias: {formatMoney(selectedMonth.transferFromSales, 0)}
+                Efectivo: {formatMoney(selectedMonth.cashFromSales, 0)} /
+                Transferencias:{" "}
+                {formatMoney(selectedMonth.transferFromSales, 0)}
               </p>
             </div>
 
             <div className="rounded-md border p-3">
               <p className="text-xs text-muted-foreground">Sesiones cerradas</p>
-              <p className="text-2xl font-bold">{selectedMonth.daysWithClose}</p>
+              <p className="text-2xl font-bold">
+                {selectedMonth.daysWithClose}
+              </p>
               <p className="text-[11px] text-muted-foreground">
                 Total sesiones: {selectedMonth.sessionsCount}
               </p>
@@ -301,22 +327,52 @@ export function CashCalendarReport() {
 
         <CardContent className="space-y-4">
           {isMonthlyLoading && (
-            <BrandSpinner size="sm" label="Cargando consolidado mensual..." layout="inline" />
+            <BrandSpinner
+              size="sm"
+              label="Cargando consolidado mensual..."
+              layout="inline"
+            />
           )}
 
-          {!isMonthlyLoading && error && <p className="text-sm text-destructive">{error}</p>}
+          {!isMonthlyLoading && error && (
+            <p className="text-sm text-destructive">{error}</p>
+          )}
 
           {!isMonthlyLoading && !error && (
             <div className="h-[280px] sm:h-[360px]">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={monthlyChartData}>
-                  <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={12} />
+                  <XAxis
+                    dataKey="month"
+                    tickLine={false}
+                    axisLine={false}
+                    fontSize={12}
+                  />
                   <YAxis tickLine={false} axisLine={false} fontSize={12} />
-                  <Tooltip formatter={(value: number) => formatMoney(Number(value ?? 0))} />
+                  <Tooltip
+                    formatter={(value: number) =>
+                      formatMoney(Number(value ?? 0))
+                    }
+                  />
                   <Legend />
-                  <Bar dataKey="esperado" fill="#3b82f6" name="Esperado" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="contado" fill="#22c55e" name="Contado" radius={[3, 3, 0, 0]} />
-                  <Bar dataKey="diferencia" fill="#f59e0b" name="Diferencia" radius={[3, 3, 0, 0]} />
+                  <Bar
+                    dataKey="esperado"
+                    fill="#3b82f6"
+                    name="Esperado"
+                    radius={[3, 3, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="contado"
+                    fill="#22c55e"
+                    name="Contado"
+                    radius={[3, 3, 0, 0]}
+                  />
+                  <Bar
+                    dataKey="diferencia"
+                    fill="#f59e0b"
+                    name="Diferencia"
+                    radius={[3, 3, 0, 0]}
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -336,27 +392,43 @@ export function CashCalendarReport() {
             <input
               type="date"
               value={selectedDateYmd}
-              onChange={(event) => setSelectedDate(new Date(`${event.target.value}T00:00:00`))}
+              onChange={(event) =>
+                setSelectedDate(new Date(`${event.target.value}T00:00:00`))
+              }
               className="rounded-md border border-input bg-background px-3 py-2 text-sm"
             />
-            <Button variant="outline" size="sm" onClick={() => void loadDaily()}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => void loadDaily()}
+            >
               <RefreshCcw className="mr-2 h-4 w-4" />
               Recargar dia
             </Button>
           </div>
 
-          {isDailyLoading && <BrandSpinner size="sm" label="Cargando libro diario..." layout="inline" />}
+          {isDailyLoading && (
+            <BrandSpinner
+              size="sm"
+              label="Cargando libro diario..."
+              layout="inline"
+            />
+          )}
 
           {!isDailyLoading && dailyPayload && (
             <div className="space-y-3">
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">Apertura</p>
-                  <p className="text-base font-semibold">{formatMoney(dailyPayload.summary.openingFloat)}</p>
+                  <p className="text-base font-semibold">
+                    {formatMoney(dailyPayload.summary.openingFloat)}
+                  </p>
                 </div>
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">Esperado</p>
-                  <p className="text-base font-semibold">{formatMoney(dailyPayload.summary.expectedCash)}</p>
+                  <p className="text-base font-semibold">
+                    {formatMoney(dailyPayload.summary.expectedCash)}
+                  </p>
                 </div>
                 <div className="rounded-md border p-3">
                   <p className="text-xs text-muted-foreground">Contado</p>
@@ -384,25 +456,35 @@ export function CashCalendarReport() {
 
               <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
                 <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Ingresos efectivo</p>
+                  <p className="text-xs text-muted-foreground">
+                    Ingresos efectivo
+                  </p>
                   <p className="text-base font-semibold">
                     {formatMoney(dailyPayload.summary.income.cashFromPayments)}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Transferencias</p>
+                  <p className="text-xs text-muted-foreground">
+                    Transferencias
+                  </p>
                   <p className="text-base font-semibold">
-                    {formatMoney(dailyPayload.summary.income.transferFromPayments)}
+                    {formatMoney(
+                      dailyPayload.summary.income.transferFromPayments
+                    )}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Ingresos manuales</p>
+                  <p className="text-xs text-muted-foreground">
+                    Ingresos manuales
+                  </p>
                   <p className="text-base font-semibold">
                     {formatMoney(dailyPayload.summary.income.movementIn)}
                   </p>
                 </div>
                 <div className="rounded-md border p-3">
-                  <p className="text-xs text-muted-foreground">Egresos manuales</p>
+                  <p className="text-xs text-muted-foreground">
+                    Egresos manuales
+                  </p>
                   <p className="text-base font-semibold">
                     {formatMoney(dailyPayload.summary.outflow.movementOut)}
                   </p>
@@ -411,7 +493,9 @@ export function CashCalendarReport() {
 
               <div className="space-y-2">
                 {dailyPayload.entries.items.length === 0 ? (
-                  <p className="text-sm text-muted-foreground">No hay movimientos para este dia.</p>
+                  <p className="text-sm text-muted-foreground">
+                    No hay movimientos para este dia.
+                  </p>
                 ) : (
                   dailyPayload.entries.items.map((entry) => (
                     <div
@@ -424,7 +508,9 @@ export function CashCalendarReport() {
                       </div>
                       <div>
                         <p className="text-muted-foreground">Monto</p>
-                        <p className="font-medium">{formatMoney(entry.amount)}</p>
+                        <p className="font-medium">
+                          {formatMoney(entry.amount)}
+                        </p>
                       </div>
                       <div>
                         <p className="text-muted-foreground">Metodo</p>
@@ -432,7 +518,9 @@ export function CashCalendarReport() {
                       </div>
                       <div className="sm:col-span-2">
                         <p className="text-muted-foreground">Descripcion</p>
-                        <p className="font-medium">{entry.description ?? "-"}</p>
+                        <p className="font-medium">
+                          {entry.description ?? "-"}
+                        </p>
                       </div>
                     </div>
                   ))
@@ -440,14 +528,6 @@ export function CashCalendarReport() {
               </div>
             </div>
           )}
-
-          <div className="mt-4 flex items-center gap-2 rounded-md border bg-muted/20 p-3 text-xs">
-            <Receipt className="h-4 w-4 text-primary" />
-            <span>
-              El consolidado mensual no se calcula en el front: viene directo del endpoint
-              /reports/cash/monthly.
-            </span>
-          </div>
         </CardContent>
       </Card>
     </div>

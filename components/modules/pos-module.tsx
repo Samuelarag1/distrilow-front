@@ -272,6 +272,7 @@ export function POSModule() {
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [scanQuery, setScanQuery] = useState("");
+  const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
@@ -304,7 +305,7 @@ export function POSModule() {
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     branchId: branchId ?? null,
-    resolveStockFromStocksEndpoint: false,
+    resolveStockFromStocksEndpoint: true,
   });
   const { data: categoriesData } = useSWR<Category[]>(
     "/categories",
@@ -500,6 +501,12 @@ export function POSModule() {
       return matchesSearch && matchesCategory;
     });
   }, [products, searchQuery, selectedCategory]);
+  const searchSuggestions = useMemo(
+    () => filteredProducts.slice(0, 8),
+    [filteredProducts]
+  );
+  const shouldShowSearchDropdown =
+    isSearchDropdownOpen && searchQuery.trim().length > 0;
 
   const getProductCategoryLabel = (product: Product) => {
     if (product.categoryId) {
@@ -611,13 +618,23 @@ export function POSModule() {
 
   const updateQuantity = (id: string, quantity: number) => {
     const inCart = cart.find((product) => product.id === id);
-    const maxStock = Number(inCart?.stock ?? 0);
     const normalizedQuantity = roundTo(quantity, 3);
+    const stockFromProductsList = products.find(
+      (product) => product.id === id
+    )?.stock;
+    const maxStock = pickFirstFinite(
+      [inCart?.stock, stockFromProductsList],
+      NaN
+    );
+    const hasReliableStockLimit =
+      Number.isFinite(maxStock) && toSafeNumber(maxStock, 0) > 0;
 
-    if (inCart && normalizedQuantity > maxStock) {
+    if (inCart && hasReliableStockLimit && normalizedQuantity > maxStock) {
       toast({
         title: "Stock insuficiente",
-        description: `No puedes agregar mas de ${maxStock} unidades`,
+        description: `No puedes agregar mas de ${formatThresholdQuantity(
+          maxStock
+        )} ${getMeasurementLabel(inCart)}`,
         variant: "destructive",
       });
       return;
@@ -968,6 +985,14 @@ export function POSModule() {
     }
   };
 
+  const handleSelectSearchProduct = (product: Product) => {
+    if (isSaleCommitted) return;
+    addToCart(product);
+    setSearchQuery("");
+    setCurrentPage(1);
+    setIsSearchDropdownOpen(false);
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -1018,12 +1043,94 @@ export function POSModule() {
                     <Input
                       placeholder="Buscar productos..."
                       value={searchQuery}
+                      onFocus={() => setIsSearchDropdownOpen(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => {
+                          setIsSearchDropdownOpen(false);
+                        }, 120);
+                      }}
                       onChange={(event) => {
                         setSearchQuery(event.target.value);
                         setCurrentPage(1);
+                        setIsSearchDropdownOpen(true);
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          setIsSearchDropdownOpen(false);
+                          return;
+                        }
+
+                        if (
+                          event.key === "Enter" &&
+                          searchSuggestions.length > 0 &&
+                          !isLoading
+                        ) {
+                          event.preventDefault();
+                          handleSelectSearchProduct(searchSuggestions[0]);
+                        }
                       }}
                       className="pl-8"
                     />
+                    {shouldShowSearchDropdown ? (
+                      <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-xl border bg-popover shadow-xl">
+                        {isLoading ? (
+                          <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            Buscando productos...
+                          </div>
+                        ) : searchSuggestions.length > 0 ? (
+                          <div className="max-h-80 overflow-y-auto p-1">
+                            {searchSuggestions.map((product) => (
+                              <button
+                                key={product.id}
+                                type="button"
+                                className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted"
+                                onMouseDown={(event) => event.preventDefault()}
+                                onClick={() => handleSelectSearchProduct(product)}
+                              >
+                                <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-border/60">
+                                  <img
+                                    src={resolveProductImageUrl(product)}
+                                    alt={product.name}
+                                    className="h-full w-full object-cover"
+                                    loading="lazy"
+                                    onError={(event) => {
+                                      event.currentTarget.src =
+                                        "/placeholder.svg";
+                                    }}
+                                  />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <p className="truncate text-sm font-semibold">
+                                    {product.name}
+                                  </p>
+                                  <p className="truncate text-[11px] text-muted-foreground">
+                                    {getProductCategoryLabel(product)}
+                                  </p>
+                                </div>
+                                <div className="flex flex-col items-end gap-1">
+                                  <Badge
+                                    variant="outline"
+                                    className={`h-5 min-w-[76px] justify-center px-2 text-[10px] font-black uppercase ${getStockBadgeClassName(
+                                      product
+                                    )}`}
+                                  >
+                                    stock {product.stock ?? 0}
+                                  </Badge>
+                                  <span className="text-xs font-bold text-primary">
+                                    ${formatMoney(getRetailPrice(product))}
+                                  </span>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        ) : (
+                          <p className="px-3 py-3 text-sm text-muted-foreground">
+                            No se encontraron productos para: {searchQuery}.
+                          </p>
+                        )}
+                      </div>
+                    ) : null}
                   </div>
                   <select
                     value={selectedCategory}
