@@ -129,7 +129,11 @@ export function ReportsModule() {
   const { events, isLoading, error } = useAudit();
   const { sales } = useTransactions();
   const { businessType } = useBusiness();
-  const { products } = useProducts({ take: 500, skip: 0 });
+  const { products } = useProducts({
+    take: 500,
+    skip: 0,
+    resolveStockFromStocksEndpoint: false,
+  });
   const { branchId } = useUser();
 
   const [activeTab, setActiveTab] = useState("audit");

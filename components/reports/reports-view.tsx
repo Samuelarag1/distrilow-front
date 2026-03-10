@@ -5,6 +5,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SalesReport } from "./sales-report";
 import { StockReport } from "./stock-report";
 import { ClientsReport } from "./clients-report";
+import { CashCalendarReport } from "./cash-calendar-report";
+import { ExpensesProjectionReport } from "./expenses-projection-report";
 import { ReportsModule } from "@/components/modules/reports-module";
 
 export function ReportsView() {
@@ -21,19 +23,27 @@ export function ReportsView() {
         </h2>
       </div>
 
-      <Tabs defaultValue="sales" className="space-y-4">
+      <Tabs defaultValue="cashCalendar" className="space-y-4">
         <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto bg-muted p-1">
+          <TabsTrigger className="shrink-0" value="cashCalendar">Cajas del mes</TabsTrigger>
           <TabsTrigger className="shrink-0" value="sales">Ventas</TabsTrigger>
           <TabsTrigger className="shrink-0" value="stock">Inventario</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="expenses">Gastos</TabsTrigger>
           <TabsTrigger className="shrink-0" value="clients">Clientes</TabsTrigger>
           <TabsTrigger className="shrink-0" value="audit">Auditoria</TabsTrigger>
         </TabsList>
 
+        <TabsContent value="cashCalendar" className="space-y-4">
+          <CashCalendarReport />
+        </TabsContent>
         <TabsContent value="sales" className="space-y-4">
           <SalesReport dateRange={dateRange} />
         </TabsContent>
         <TabsContent value="stock" className="space-y-4">
           <StockReport />
+        </TabsContent>
+        <TabsContent value="expenses" className="space-y-4">
+          <ExpensesProjectionReport />
         </TabsContent>
         <TabsContent value="clients" className="space-y-4">
           <ClientsReport dateRange={dateRange} />

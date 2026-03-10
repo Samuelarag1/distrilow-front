@@ -1,4 +1,6 @@
-import { apiClientFetch, getApiSession } from "@/lib/api-client";
+import { ApiError, apiClientFetch, getApiSession } from "@/lib/api-client";
+import { emitExpensesSync } from "@/lib/expenses-live-sync";
+import { emitProductsSync } from "@/lib/products-live-sync";
 import type {
   AnalyticsSalesQuery,
   AnalyticsSalesResponse,
@@ -43,6 +45,16 @@ import type {
   ProductsListResponse,
   ProductsQuery,
   RefreshRequest,
+  ReportsCashMonthlyQuery,
+  ReportsCashMonthlyResponse,
+  ReportsExpensesProjectionQuery,
+  ReportsExpensesProjectionResponse,
+  ReportsInventoryLowStockQuery,
+  ReportsInventoryLowStockResponse,
+  ReportsInventorySummaryQuery,
+  ReportsInventorySummaryResponse,
+  ReportsTopProductsQuery,
+  ReportsTopProductsResponse,
   Sale,
   SaleListQuery,
   SalePayment,
@@ -95,21 +107,27 @@ function toFiniteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function buildQuery(params: object) {
+function buildQuery(
+  params: object,
+  options?: { preserveLimitAndOffset?: boolean }
+) {
   const query = new URLSearchParams();
   const source = { ...(params as Record<string, unknown>) };
+  const preserveLimitAndOffset = options?.preserveLimitAndOffset ?? false;
 
-  if (source.skip === undefined && source.offset !== undefined) {
-    source.skip = source.offset;
+  if (!preserveLimitAndOffset) {
+    if (source.skip === undefined && source.offset !== undefined) {
+      source.skip = source.offset;
+    }
+    if (source.take === undefined && source.limit !== undefined) {
+      source.take = source.limit;
+    }
+    if (source.take !== undefined) {
+      source.take = Math.min(100, Math.max(1, toFiniteNumber(source.take, 20)));
+    }
+    delete source.offset;
+    delete source.limit;
   }
-  if (source.take === undefined && source.limit !== undefined) {
-    source.take = source.limit;
-  }
-  if (source.take !== undefined) {
-    source.take = Math.min(100, Math.max(1, toFiniteNumber(source.take, 20)));
-  }
-  delete source.offset;
-  delete source.limit;
 
   Object.entries(source).forEach(([key, value]) => {
     if (value === undefined || value === null || value === "") return;
@@ -440,6 +458,62 @@ async function getCachedStocksForBranch(branchId: string) {
   return rows;
 }
 
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === "AbortError";
+}
+
+function waitMs(ms: number, signal?: AbortSignal) {
+  if (!Number.isFinite(ms) || ms <= 0) return Promise.resolve();
+  return new Promise<void>((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      signal?.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+
+    const onAbort = () => {
+      clearTimeout(timeoutId);
+      signal?.removeEventListener("abort", onAbort);
+      reject(new DOMException("Aborted", "AbortError"));
+    };
+
+    if (signal?.aborted) {
+      onAbort();
+      return;
+    }
+
+    signal?.addEventListener("abort", onAbort);
+  });
+}
+
+async function withRateLimitRetry<T>(
+  execute: () => Promise<T>,
+  signal?: AbortSignal,
+  maxRetries = 2
+) {
+  let retries = 0;
+
+  while (true) {
+    try {
+      return await execute();
+    } catch (error) {
+      if (isAbortError(error)) throw error;
+
+      if (!(error instanceof ApiError) || error.status !== 429) {
+        throw error;
+      }
+
+      if (retries >= maxRetries) {
+        throw error;
+      }
+
+      const retrySeconds = error.retryAfterSeconds ?? 1 + retries;
+      const backoffSeconds = Math.max(1, Math.ceil(retrySeconds));
+      await waitMs(backoffSeconds * 1000, signal);
+      retries += 1;
+    }
+  }
+}
+
 export const backendApi = {
   auth: {
     login: (body: LoginRequest) =>
@@ -521,8 +595,11 @@ export const backendApi = {
       }),
   },
   products: {
-    create: (body: CreateProductRequest) =>
-      apiClientFetch.post<Product>("/products", body),
+    create: async (body: CreateProductRequest) => {
+      const created = await apiClientFetch.post<Product>("/products", body);
+      emitProductsSync(created.branchId ?? body.branchId ?? getApiSession().branchId);
+      return created;
+    },
     resolveBarcode: async (code: string) => {
       const payload = await apiClientFetch.get<BarcodeLookupResponse>(
         `/products/barcode/${code}`
@@ -597,10 +674,25 @@ export const backendApi = {
     },
     getById: (id: string) =>
       apiClientFetch.get<ProductListItem>(`/products/${id}`),
-    update: (id: string, body: UpdateProductRequest) =>
-      apiClientFetch.patch<Product | null>(`/products/${id}`, body),
-    updateReviewFlags: (id: string, body: UpdateProductReviewFlagsRequest) =>
-      apiClientFetch.patch<Product>(`/products/${id}/review-flags`, body),
+    update: async (id: string, body: UpdateProductRequest) => {
+      const updated = await apiClientFetch.patch<Product | null>(
+        `/products/${id}`,
+        body
+      );
+      emitProductsSync(updated?.branchId ?? body.branchId ?? getApiSession().branchId);
+      return updated;
+    },
+    updateReviewFlags: async (
+      id: string,
+      body: UpdateProductReviewFlagsRequest
+    ) => {
+      const updated = await apiClientFetch.patch<Product>(
+        `/products/${id}/review-flags`,
+        body
+      );
+      emitProductsSync(updated.branchId ?? getApiSession().branchId);
+      return updated;
+    },
     reviewPending: async (
       query: ProductReviewPendingQuery = {},
       branchIdOverride?: string | null
@@ -654,12 +746,19 @@ export const backendApi = {
         // Number(query.take ?? query.limit ?? 20)
       );
     },
-    remove: (id: string) => apiClientFetch.delete<boolean>(`/products/${id}`),
-    uploadImageByProductId: (id: string, formData: FormData) =>
-      apiClientFetch.post<UploadImageResponse>(
+    remove: async (id: string) => {
+      const deleted = await apiClientFetch.delete<boolean>(`/products/${id}`);
+      emitProductsSync(getApiSession().branchId);
+      return deleted;
+    },
+    uploadImageByProductId: async (id: string, formData: FormData) => {
+      const uploaded = await apiClientFetch.post<UploadImageResponse>(
         `/products/${id}/image`,
         formData
-      ),
+      );
+      emitProductsSync(uploaded.product?.branchId ?? getApiSession().branchId);
+      return uploaded;
+    },
   },
   files: {
     uploadProductImage: (formData: FormData) =>
@@ -873,7 +972,10 @@ export const backendApi = {
         ...restBody,
         branchId: body.branchId ?? requireActiveBranchId(),
       };
-      return apiClientFetch.post<Expense>("/expenses", payload);
+      return apiClientFetch.post<Expense>("/expenses", payload).then((created) => {
+        emitExpensesSync(created.branchId ?? payload.branchId ?? getApiSession().branchId);
+        return created;
+      });
     },
     list: async (
       query: ExpenseListQuery = {},
@@ -926,7 +1028,11 @@ export const backendApi = {
       );
     },
     getById: (id: string) => apiClientFetch.get<Expense>(`/expenses/${id}`),
-    remove: (id: string) => apiClientFetch.delete<true>(`/expenses/${id}`),
+    remove: async (id: string) => {
+      const deleted = await apiClientFetch.delete<true>(`/expenses/${id}`);
+      emitExpensesSync(getApiSession().branchId);
+      return deleted;
+    },
   },
   cash: {
     openSession: (body: OpenCashSessionRequest) =>
@@ -1112,6 +1218,146 @@ export const backendApi = {
       apiClientFetch.get<AnalyticsSalesResponse>(
         `/analytics/sales${buildQuery(query)}`
       ),
+  },
+  reports: {
+    sales: {
+      topProducts: async (
+        query: ReportsTopProductsQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsTopProductsResponse>(
+              `/reports/sales/top-products${buildQuery(query, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+    },
+    inventory: {
+      summary: async (
+        query: ReportsInventorySummaryQuery = {},
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsInventorySummaryResponse>(
+              `/reports/inventory/summary${buildQuery(query, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+      lowStock: async (
+        query: ReportsInventoryLowStockQuery = {},
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsInventoryLowStockResponse>(
+              `/reports/inventory/low-stock${buildQuery(query, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+    },
+    expenses: {
+      projection: async (
+        query: ReportsExpensesProjectionQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsExpensesProjectionResponse>(
+              `/reports/expenses/projection${buildQuery(query, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+    },
+    cash: {
+      monthly: async (
+        query: ReportsCashMonthlyQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsCashMonthlyResponse>(
+              `/reports/cash/monthly${buildQuery(query, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+    },
   },
   audit: {
     list: async (query: AuditQuery = {}) => {

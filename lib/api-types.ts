@@ -727,6 +727,189 @@ export interface AnalyticsSalesQuery {
   metric: AnalyticsMetric;
 }
 
+export interface ReportsTopProductsQuery {
+  branchId?: string;
+  from: string;
+  to: string;
+  limit?: number;
+  categoryId?: string;
+}
+
+export interface ReportsTopProductItem {
+  productId: string;
+  productName: string;
+  categoryId?: string | null;
+  categoryName?: string | null;
+  unitsTotal: number;
+  revenueTotal: number;
+  unitsRetail: number;
+  revenueRetail: number;
+  unitsWholesale: number;
+  revenueWholesale: number;
+  costTotal: number;
+  marginTotal: number;
+  marginPct: number;
+}
+
+export interface ReportsTopProductsResponse {
+  range: {
+    from: string;
+    to: string;
+  };
+  filters: {
+    branchId?: string | null;
+    categoryId?: string | null;
+  };
+  limit: number;
+  items: ReportsTopProductItem[];
+}
+
+export interface ReportsInventorySummaryQuery {
+  branchId?: string;
+  categoryId?: string;
+  search?: string;
+  lowStockThreshold?: number;
+}
+
+export interface ReportsInventoryCategorySummaryItem {
+  categoryId?: string | null;
+  categoryName?: string | null;
+  productsTotal: number;
+  lowStockTotal: number;
+  inventoryValueCost: number;
+  inventoryValueRetail: number;
+  inventoryValueWholesale: number;
+  stockUnitsTotal: number;
+}
+
+export interface ReportsInventorySummaryResponse {
+  branchId?: string | null;
+  lowStockThreshold: number;
+  filters: {
+    categoryId?: string | null;
+    search?: string | null;
+  };
+  productsTotal: number;
+  lowStockTotal: number;
+  inventoryValueCost: number;
+  inventoryValueRetail: number;
+  inventoryValueWholesale: number;
+  stockUnitsTotal: number;
+  byCategory: ReportsInventoryCategorySummaryItem[];
+}
+
+export interface ReportsInventoryLowStockQuery {
+  branchId?: string;
+  categoryId?: string;
+  search?: string;
+  page?: number;
+  limit?: number;
+  lowStockThreshold?: number;
+}
+
+export interface ReportsInventoryLowStockItem {
+  productId: string;
+  productName: string;
+  stock: number;
+  minStock: number;
+  shortageQty: number;
+  category?: {
+    id?: string | null;
+    name?: string | null;
+  } | null;
+  costPrice?: number | null;
+  retailPrice?: number | null;
+  wholesalePrice?: number | null;
+}
+
+export interface ReportsInventoryLowStockResponse {
+  items: ReportsInventoryLowStockItem[];
+  total: number;
+  page: number;
+  limit: number;
+  summary: {
+    productsTotal: number;
+    lowStockTotal: number;
+    inventoryValueCost: number;
+    inventoryValueRetail: number;
+    inventoryValueWholesale: number;
+    stockUnitsTotal: number;
+  };
+}
+
+export interface ReportsExpensesProjectionQuery {
+  branchId?: string;
+  from: string;
+  to: string;
+  horizonMonths?: 3 | 6;
+  context?: ExpenseContext;
+  category?: ExpenseCategory;
+}
+
+export interface ReportsExpensesProjectionResponse {
+  range: {
+    from: string;
+    to: string;
+  };
+  filters: {
+    branchId?: string | null;
+    context?: ExpenseContext | null;
+    category?: ExpenseCategory | null;
+  };
+  horizonMonths: 3 | 6;
+  trendPct: number;
+  historical: Array<{
+    month: string;
+    total: number;
+  }>;
+  projected: Array<{
+    month: string;
+    total: number;
+  }>;
+  byCategoryHistorical: Array<{
+    category: ExpenseCategory | string;
+    total: number;
+    pct: number;
+  }>;
+  byCategoryProjected: Array<{
+    category: ExpenseCategory | string;
+    total: number;
+    pct: number;
+  }>;
+}
+
+export interface ReportsCashMonthlyQuery {
+  branchId?: string;
+  fromMonth: string;
+  toMonth: string;
+}
+
+export interface ReportsCashMonthlyItem {
+  month: string;
+  openingFloatTotal: number;
+  cashFromSales: number;
+  transferFromSales: number;
+  manualIn: number;
+  manualOut: number;
+  expectedCashClose: number;
+  countedCashClose: number;
+  difference: number;
+  sessionsCount: number;
+  daysWithClose: number;
+  avgDifference: number;
+}
+
+export interface ReportsCashMonthlyResponse {
+  range: {
+    fromMonth: string;
+    toMonth: string;
+  };
+  filters: {
+    branchId?: string | null;
+  };
+  items: ReportsCashMonthlyItem[];
+}
+
 export interface AuditLog {
   id: string;
   userId: string;

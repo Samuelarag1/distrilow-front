@@ -17,6 +17,7 @@ import type {
   SalePaymentInput,
 } from "@/lib/api-types";
 import type { BusinessType } from "@/lib/data-service";
+import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
 
 export interface Expense {
   id: string;
@@ -307,6 +308,8 @@ export function TransactionsProvider({
   const [sales, setSales] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const refreshRequestIdRef = useRef(0);
+  const expenseRefreshRequestIdRef = useRef(0);
+  const lastExpensesSyncAtRef = useRef(0);
   const { logEvent } = useAudit();
   const { token, branchId } = useUser();
   const { businessType } = useBusiness();
@@ -378,9 +381,44 @@ export function TransactionsProvider({
     }
   }, [token, branchId, businessType]);
 
+  const refreshExpensesOnly = useCallback(async () => {
+    const requestId = ++expenseRefreshRequestIdRef.current;
+    if (!token || !branchId) return;
+
+    try {
+      const apiExpenses = await collectAllPages((skip, take) =>
+        backendApi.expenses.list({ skip, take }, branchId)
+      );
+      if (requestId !== expenseRefreshRequestIdRef.current) return;
+
+      setExpenses(
+        dedupeById(
+          apiExpenses
+            .map((expense) => normalizeExpense(expense, businessType))
+            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+        )
+      );
+    } catch (e) {
+      if (requestId !== expenseRefreshRequestIdRef.current) return;
+      console.error("Error refreshing expenses data", e);
+    }
+  }, [token, branchId, businessType]);
+
   useEffect(() => {
     void refreshTransactions();
   }, [refreshTransactions]);
+
+  useEffect(() => {
+    if (!branchId) return;
+
+    return subscribeExpensesSync((payload) => {
+      if (payload.branchId && payload.branchId !== branchId) return;
+      const now = Date.now();
+      if (now - lastExpensesSyncAtRef.current < 1_500) return;
+      lastExpensesSyncAtRef.current = now;
+      void refreshExpensesOnly();
+    });
+  }, [branchId, refreshExpensesOnly]);
 
   const addExpense = useCallback(
     async (newExpense: AddExpenseInput) => {

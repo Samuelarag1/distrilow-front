@@ -1,45 +1,45 @@
-export type ProductsSyncPayload = {
+export type ExpensesSyncPayload = {
   branchId: string | null;
   at: number;
 };
 
-const PRODUCTS_SYNC_CHANNEL = "bms-products-sync";
-const PRODUCTS_SYNC_EVENT = "bms:products-sync";
-const PRODUCTS_SYNC_STORAGE_KEY = "bms:products-sync";
+const EXPENSES_SYNC_CHANNEL = "bms-expenses-sync";
+const EXPENSES_SYNC_EVENT = "bms:expenses-sync";
+const EXPENSES_SYNC_STORAGE_KEY = "bms:expenses-sync";
 
-let productsBroadcastChannel: BroadcastChannel | null = null;
+let expensesBroadcastChannel: BroadcastChannel | null = null;
 
-function getProductsBroadcastChannel() {
+function getExpensesBroadcastChannel() {
   if (typeof window === "undefined") return null;
   if (typeof BroadcastChannel === "undefined") return null;
-  if (!productsBroadcastChannel) {
-    productsBroadcastChannel = new BroadcastChannel(PRODUCTS_SYNC_CHANNEL);
+  if (!expensesBroadcastChannel) {
+    expensesBroadcastChannel = new BroadcastChannel(EXPENSES_SYNC_CHANNEL);
   }
-  return productsBroadcastChannel;
+  return expensesBroadcastChannel;
 }
 
-export function emitProductsSync(branchId?: string | null) {
+export function emitExpensesSync(branchId?: string | null) {
   if (typeof window === "undefined") return;
 
-  const payload: ProductsSyncPayload = {
+  const payload: ExpensesSyncPayload = {
     branchId: branchId ?? null,
     at: Date.now(),
   };
 
   window.dispatchEvent(
-    new CustomEvent<ProductsSyncPayload>(PRODUCTS_SYNC_EVENT, {
+    new CustomEvent<ExpensesSyncPayload>(EXPENSES_SYNC_EVENT, {
       detail: payload,
     })
   );
 
-  const channel = getProductsBroadcastChannel();
+  const channel = getExpensesBroadcastChannel();
   if (channel) {
     channel.postMessage(payload);
   }
 
   try {
     window.localStorage.setItem(
-      PRODUCTS_SYNC_STORAGE_KEY,
+      EXPENSES_SYNC_STORAGE_KEY,
       JSON.stringify(payload)
     );
   } catch {
@@ -47,8 +47,8 @@ export function emitProductsSync(branchId?: string | null) {
   }
 }
 
-export function subscribeProductsSync(
-  listener: (payload: ProductsSyncPayload) => void
+export function subscribeExpensesSync(
+  listener: (payload: ExpensesSyncPayload) => void
 ) {
   if (typeof window === "undefined") {
     return () => {};
@@ -56,7 +56,7 @@ export function subscribeProductsSync(
 
   let lastEventSignature = "";
 
-  const notify = (payload: ProductsSyncPayload) => {
+  const notify = (payload: ExpensesSyncPayload) => {
     const signature = `${payload.branchId ?? "null"}:${payload.at}`;
     if (signature === lastEventSignature) return;
     lastEventSignature = signature;
@@ -64,16 +64,16 @@ export function subscribeProductsSync(
   };
 
   const handleWindowEvent = (event: Event) => {
-    const customEvent = event as CustomEvent<ProductsSyncPayload>;
+    const customEvent = event as CustomEvent<ExpensesSyncPayload>;
     if (customEvent.detail) {
       notify(customEvent.detail);
     }
   };
 
   const handleStorageEvent = (event: StorageEvent) => {
-    if (event.key !== PRODUCTS_SYNC_STORAGE_KEY || !event.newValue) return;
+    if (event.key !== EXPENSES_SYNC_STORAGE_KEY || !event.newValue) return;
     try {
-      const payload = JSON.parse(event.newValue) as ProductsSyncPayload;
+      const payload = JSON.parse(event.newValue) as ExpensesSyncPayload;
       if (payload && typeof payload === "object") {
         notify(payload);
       }
@@ -82,14 +82,14 @@ export function subscribeProductsSync(
     }
   };
 
-  const channel = getProductsBroadcastChannel();
-  const handleChannelMessage = (event: MessageEvent<ProductsSyncPayload>) => {
+  const channel = getExpensesBroadcastChannel();
+  const handleChannelMessage = (event: MessageEvent<ExpensesSyncPayload>) => {
     if (event.data) {
       notify(event.data);
     }
   };
 
-  window.addEventListener(PRODUCTS_SYNC_EVENT, handleWindowEvent as EventListener);
+  window.addEventListener(EXPENSES_SYNC_EVENT, handleWindowEvent as EventListener);
   window.addEventListener("storage", handleStorageEvent);
   if (channel) {
     channel.addEventListener("message", handleChannelMessage as EventListener);
@@ -97,7 +97,7 @@ export function subscribeProductsSync(
 
   return () => {
     window.removeEventListener(
-      PRODUCTS_SYNC_EVENT,
+      EXPENSES_SYNC_EVENT,
       handleWindowEvent as EventListener
     );
     window.removeEventListener("storage", handleStorageEvent);

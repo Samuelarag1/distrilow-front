@@ -64,6 +64,7 @@ import { BrandMark } from "@/components/common/brand-mark";
 import { BrandSpinner } from "@/components/common/brand-spinner";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
+import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
 
 const PAGE_SIZE = 15;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -262,6 +263,9 @@ export function ExpensesModule() {
   const refreshAll = useCallback(
     async (origin: "manual" | "focus" | "mutation" = "manual") => {
       if (!branchId) return;
+      if (origin === "mutation") {
+        lastAutoRefreshAtRef.current = Date.now();
+      }
       if (origin === "manual") setIsRefreshing(true);
 
       try {
@@ -302,6 +306,19 @@ export function ExpensesModule() {
       window.removeEventListener("focus", refreshOnFocus);
       document.removeEventListener("visibilitychange", onVisibilityChange);
     };
+  }, [branchId, refreshAll]);
+
+  useEffect(() => {
+    if (!branchId) return;
+
+    return subscribeExpensesSync((payload) => {
+      if (payload.branchId && payload.branchId !== branchId) return;
+
+      const now = Date.now();
+      if (now - lastAutoRefreshAtRef.current < WINDOW_REFRESH_COOLDOWN_MS) return;
+      lastAutoRefreshAtRef.current = now;
+      void refreshAll("mutation");
+    });
   }, [branchId, refreshAll]);
 
   const totalPages = Math.max(

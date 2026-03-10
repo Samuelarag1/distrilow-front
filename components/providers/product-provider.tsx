@@ -380,7 +380,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       revalidate: false,
     });
     await invalidateProducts();
-    emitProductsSync(created.branchId ?? sessionBranchId ?? null);
 
     return created;
   };
@@ -405,7 +404,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       invalidateProducts(),
       mutate(["product", id], undefined, { revalidate: true }),
     ]);
-    emitProductsSync(updated?.branchId ?? sessionBranchId ?? null);
 
     return updated;
   };
@@ -420,7 +418,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       mutate(["product", id], undefined, { revalidate: false }),
     ]);
     await invalidateProducts();
-    emitProductsSync(sessionBranchId ?? null);
   };
 
   return (

@@ -303,6 +303,7 @@ export function POSModule() {
     search: debouncedSearch,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
     branchId: branchId ?? null,
+    resolveStockFromStocksEndpoint: false,
   });
   const { data: categoriesData } = useSWR<Category[]>(
     "/categories",
@@ -760,6 +761,7 @@ export function POSModule() {
   );
   const totalInitialPayments = cashPaymentPreview + transferPaymentPreview;
   const pendingAfterInitialPayments = Math.max(0, total - totalInitialPayments);
+  const changeDuePreview = Math.max(0, totalInitialPayments - total);
   const totalPages = Math.max(
     1,
     Math.ceil((productsTotal || 0) / Math.max(take, 1))
@@ -922,6 +924,7 @@ export function POSModule() {
       const paidAmount = Number(createdSale.paidAmount ?? 0);
       const outstandingAmount = Number(createdSale.outstandingAmount ?? 0);
       const backendTotal = Number(createdSale.totalAmount ?? total);
+      const localChangeDue = Math.max(0, totalInitialPayments - backendTotal);
 
       toast({
         title: "Venta exitosa",
@@ -932,6 +935,12 @@ export function POSModule() {
               )} registrada. Pagado: $${formatMoney(
                 paidAmount
               )}. Saldo pendiente: $${formatMoney(outstandingAmount)}.`
+            : localChangeDue > 0
+            ? `Venta por $${formatMoney(
+                backendTotal
+              )} registrada y pagada. Vuelto sugerido: $${formatMoney(
+                localChangeDue
+              )}.`
             : `Venta por $${formatMoney(backendTotal)} registrada y pagada.`,
       });
       await mutateProducts();
@@ -1320,6 +1329,16 @@ export function POSModule() {
                       <span>Subtotal:</span>
                       <span>${roundTo(total, 2).toFixed(2)}</span>
                     </div>
+                    <div className="flex justify-between text-sm">
+                      <span>Pagos iniciales:</span>
+                      <span>${roundTo(totalInitialPayments, 2).toFixed(2)}</span>
+                    </div>
+                    {changeDuePreview > 0 && (
+                      <div className="flex justify-between text-sm font-semibold text-emerald-700">
+                        <span>Vuelto a entregar:</span>
+                        <span>${roundTo(changeDuePreview, 2).toFixed(2)}</span>
+                      </div>
+                    )}
                     <Separator />
                     <div className="flex justify-between font-bold">
                       <span>Total:</span>
@@ -1420,6 +1439,13 @@ export function POSModule() {
               iniciales: <strong>${formatMoney(totalInitialPayments)}</strong>.
               Saldo pendiente:{" "}
               <strong>${formatMoney(pendingAfterInitialPayments)}</strong>.
+              {changeDuePreview > 0 ? (
+                <>
+                  {" "}
+                  Vuelto a entregar:{" "}
+                  <strong>${formatMoney(changeDuePreview)}</strong>.
+                </>
+              ) : null}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

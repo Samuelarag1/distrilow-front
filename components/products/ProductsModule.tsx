@@ -101,6 +101,7 @@ export function ProductsModule() {
       branchId: activeBranchId ?? null,
       sortBy: sortKey === "name" ? "name" : "price",
       sortOrder,
+      resolveStockFromStocksEndpoint: false,
     });
 
   const { data: categoriesData } = useSWR<Category[]>(

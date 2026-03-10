@@ -12,143 +12,198 @@ import { Button } from "@/components/ui/button";
 import {
   Bar,
   BarChart,
+  Cell,
   Legend,
+  Pie,
+  PieChart,
   ResponsiveContainer,
   Tooltip,
   XAxis,
   YAxis,
-  PieChart,
-  Pie,
-  Cell,
 } from "recharts";
 import { format } from "date-fns";
 import { es } from "date-fns/locale";
 import { Download } from "lucide-react";
 import useSWR from "swr";
 
-import { useTransactions } from "@/components/providers/transactions-provider";
-import { useBusiness } from "@/components/providers/business-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
+import type { ReportsTopProductItem } from "@/lib/api-types";
 
-const COLORS = ["#0088FE", "#00C49F", "#FFBB28", "#FF8042", "#8884d8"];
+const PIE_COLORS = [
+  "#0ea5e9",
+  "#22c55e",
+  "#f59e0b",
+  "#ef4444",
+  "#6366f1",
+  "#14b8a6",
+];
 
-export function SalesReport({ dateRange }: { dateRange: any }) {
-  const { sales, isLoading } = useTransactions();
-  const { businessType } = useBusiness();
+type DateRange = {
+  from?: Date;
+  to?: Date;
+};
+
+function toYmd(value: Date) {
+  return format(value, "yyyy-MM-dd");
+}
+
+function formatMoney(value: number) {
+  return Number(value ?? 0).toLocaleString("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 2,
+  });
+}
+
+function shortLabel(label: string, max = 20) {
+  if (!label) return "Sin nombre";
+  if (label.length <= max) return label;
+  return `${label.slice(0, max - 1)}...`;
+}
+
+export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const { branchId } = useUser();
 
-  const { data: productsPayload } = useSWR(
-    branchId ? ["sales-report-products", branchId] : null,
-    () => backendApi.products.list({ skip: 0, take: 100 }, branchId),
-    { revalidateOnFocus: false }
+  const range = useMemo(() => {
+    const today = new Date();
+    const defaultFrom = new Date(today);
+    defaultFrom.setDate(today.getDate() - 30);
+
+    const from = dateRange?.from ?? defaultFrom;
+    const to = dateRange?.to ?? today;
+
+    return {
+      from,
+      to,
+      fromYmd: toYmd(from),
+      toYmd: toYmd(to),
+    };
+  }, [dateRange]);
+
+  const { data, isLoading, error } = useSWR(
+    branchId ? ["reports-sales", branchId, range.fromYmd, range.toYmd] : null,
+    async () => {
+      const [salesTrend, topProducts] = await Promise.all([
+        backendApi.analytics.sales({
+          from: range.fromYmd,
+          to: range.toYmd,
+          groupBy: "day",
+          metric: "revenue",
+        }),
+        backendApi.reports.sales.topProducts(
+          {
+            from: range.fromYmd,
+            to: range.toYmd,
+            limit: 50,
+            branchId,
+          },
+          branchId
+        ),
+      ]);
+
+      return {
+        salesTrend,
+        topProducts,
+      };
+    },
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
   );
 
-  const productNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    (productsPayload?.items ?? []).forEach((product) => {
-      if (product?.id && product?.name) {
-        map.set(product.id, product.name);
-      }
-    });
-    return map;
-  }, [productsPayload]);
+  const topProductsItems = useMemo(
+    () => data?.topProducts.items ?? [],
+    [data?.topProducts.items]
+  );
 
-  const filteredSales = useMemo(
+  const totals = useMemo(() => {
+    const seed = {
+      revenueTotal: 0,
+      unitsTotal: 0,
+      marginTotal: 0,
+      revenueRetail: 0,
+      revenueWholesale: 0,
+    };
+
+    return topProductsItems.reduce((acc, item) => {
+      acc.revenueTotal += Number(item.revenueTotal ?? 0);
+      acc.unitsTotal += Number(item.unitsTotal ?? 0);
+      acc.marginTotal += Number(item.marginTotal ?? 0);
+      acc.revenueRetail += Number(item.revenueRetail ?? 0);
+      acc.revenueWholesale += Number(item.revenueWholesale ?? 0);
+      return acc;
+    }, seed);
+  }, [topProductsItems]);
+
+  const salesTrendData = useMemo(
     () =>
-      sales.filter((sale) => {
-        if (sale.businessType !== businessType) return false;
-        if (!dateRange?.from) return true;
-        const saleDate = new Date(sale.date);
-        const from = new Date(dateRange.from);
-        const to = dateRange.to ? new Date(dateRange.to) : new Date();
-        return saleDate >= from && saleDate <= to;
-      }),
-    [sales, businessType, dateRange]
+      (data?.salesTrend.points ?? []).map((point) => ({
+        name: format(new Date(point.period), "dd/MM", { locale: es }),
+        total: Number(point.value ?? 0),
+      })),
+    [data?.salesTrend.points]
   );
 
-  const salesByDate = useMemo(() => {
-    const grouped: { [key: string]: number } = {};
-    filteredSales.forEach((sale) => {
-      const date = format(new Date(sale.date), "dd/MM", { locale: es });
-      grouped[date] = (grouped[date] || 0) + sale.amount;
-    });
-    return Object.keys(grouped).map((key) => ({ name: key, total: grouped[key] }));
-  }, [filteredSales]);
+  const topProductsByPriceType = useMemo(
+    () =>
+      topProductsItems.slice(0, 8).map((item) => ({
+        name: shortLabel(item.productName, 16),
+        minorista: Number(item.revenueRetail ?? 0),
+        mayorista: Number(item.revenueWholesale ?? 0),
+      })),
+    [topProductsItems]
+  );
 
-  const topProducts = useMemo(() => {
-    const byProduct: Record<string, number> = {};
-
-    filteredSales.forEach((sale) => {
-      (sale.lineItems ?? []).forEach((item) => {
-        const lineItem = item as {
-          productId?: string;
-          productName?: string;
-          name?: string;
-          quantity: number;
-          price: number;
-        };
-
-        const productLabel =
-          lineItem.productName?.trim() ||
-          lineItem.name?.trim() ||
-          (lineItem.productId ? productNameById.get(lineItem.productId) : undefined) ||
-          "Producto sin nombre";
-
-        byProduct[productLabel] =
-          (byProduct[productLabel] || 0) + lineItem.quantity * lineItem.price;
-      });
-    });
-
-    return Object.entries(byProduct)
-      .map(([name, value]) => ({
-        name,
-        value,
-      }))
-      .sort((a, b) => b.value - a.value)
-      .slice(0, 6);
-  }, [filteredSales, productNameById]);
-
-  const salesByPaymentMethod = useMemo(
+  const salesByPriceTypePie = useMemo(
     () => [
-      {
-        name: "No informado",
-        value: filteredSales.length,
-      },
+      { name: "Minorista", value: totals.revenueRetail },
+      { name: "Mayorista", value: totals.revenueWholesale },
     ],
-    [filteredSales.length]
+    [totals.revenueRetail, totals.revenueWholesale]
   );
 
-  const totalRevenue = filteredSales.reduce((acc, sale) => acc + sale.amount, 0);
-  const totalTransactions = filteredSales.length;
-  const tableRows = filteredSales
-    .slice()
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .map((sale) => ({
-      fecha: format(new Date(sale.date), "dd/MM/yyyy HH:mm", { locale: es }),
-      cliente: sale.customerName,
-      vendedor: sale.userName,
-      items: sale.items,
-      total: Number(sale.amount).toLocaleString("es-AR", {
-        style: "currency",
-        currency: "ARS",
-      }),
-    }));
+  const tableRows = useMemo(
+    () =>
+      topProductsItems.map((item, index) => ({
+        posicion: index + 1,
+        producto: item.productName,
+        categoria: item.categoryName ?? "Sin categoria",
+        unidadesTotal: Number(item.unitsTotal ?? 0).toLocaleString("es-AR"),
+        ingresosTotal: formatMoney(Number(item.revenueTotal ?? 0)),
+        unidadesMinorista: Number(item.unitsRetail ?? 0).toLocaleString(
+          "es-AR"
+        ),
+        ingresosMinorista: formatMoney(Number(item.revenueRetail ?? 0)),
+        unidadesMayorista: Number(item.unitsWholesale ?? 0).toLocaleString(
+          "es-AR"
+        ),
+        ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
+        margen: formatMoney(Number(item.marginTotal ?? 0)),
+      })),
+    [topProductsItems]
+  );
 
   const exportColumns = [
-    { key: "fecha", label: "Fecha" },
-    { key: "cliente", label: "Cliente" },
-    { key: "vendedor", label: "Vendedor" },
-    { key: "items", label: "Items" },
-    { key: "total", label: "Total" },
+    { key: "posicion", label: "#" },
+    { key: "producto", label: "Producto" },
+    { key: "categoria", label: "Categoria" },
+    { key: "unidadesTotal", label: "Unidades Total" },
+    { key: "ingresosTotal", label: "Ingresos Total" },
+    { key: "unidadesMinorista", label: "Unid. Minorista" },
+    { key: "ingresosMinorista", label: "Ingresos Minorista" },
+    { key: "unidadesMayorista", label: "Unid. Mayorista" },
+    { key: "ingresosMayorista", label: "Ingresos Mayorista" },
+    { key: "margen", label: "Margen" },
   ];
 
   const handleExport = (formatType: "csv" | "pdf") => {
     const payload = {
       filename: "reporte-ventas",
       title: "Reporte de Ventas",
-      subtitle: "Ventas filtradas por periodo y tipo de negocio.",
+      subtitle: `Periodo ${range.fromYmd} a ${range.toYmd}.`,
       columns: exportColumns,
       rows: tableRows,
     };
@@ -157,8 +212,19 @@ export function SalesReport({ dateRange }: { dateRange: any }) {
       exportRowsToCsv(payload);
       return;
     }
+
     exportRowsToPdf(payload);
   };
+
+  if (!branchId) {
+    return (
+      <Card>
+        <CardContent className="py-6 text-sm text-muted-foreground">
+          Selecciona una sucursal activa para ver reportes de ventas.
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <div className="space-y-4">
@@ -168,6 +234,7 @@ export function SalesReport({ dateRange }: { dateRange: any }) {
           variant="outline"
           size="sm"
           onClick={() => handleExport("csv")}
+          disabled={tableRows.length === 0}
         >
           <Download className="mr-2 h-4 w-4" />
           Exportar CSV
@@ -177,119 +244,269 @@ export function SalesReport({ dateRange }: { dateRange: any }) {
           variant="outline"
           size="sm"
           onClick={() => handleExport("pdf")}
+          disabled={tableRows.length === 0}
         >
           <Download className="mr-2 h-4 w-4" />
           Exportar PDF
         </Button>
       </div>
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Ventas Totales</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              Ingresos Totales
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">${totalRevenue.toLocaleString()}</div>
-            <p className="text-xs text-muted-foreground">Periodo seleccionado</p>
+            <div className="text-2xl font-bold">
+              {formatMoney(totals.revenueTotal)}
+            </div>
           </CardContent>
         </Card>
+
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Transacciones</CardTitle>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              Unidades vendidas
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{totalTransactions}</div>
+            <div className="text-2xl font-bold">
+              {totals.unitsTotal.toLocaleString("es-AR")}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              Margen acumulado
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatMoney(totals.marginTotal)}
+            </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              Productos con ventas
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{topProductsItems.length}</div>
           </CardContent>
         </Card>
       </div>
 
       {isLoading && (
-        <div className="text-sm text-muted-foreground">Cargando datos de ventas...</div>
+        <p className="text-sm text-muted-foreground">
+          Cargando reportes de ventas...
+        </p>
       )}
 
-      <div className="grid gap-4 lg:grid-cols-7">
-        <Card className="lg:col-span-4">
-          <CardHeader>
-            <CardTitle>Ventas por Periodo</CardTitle>
-          </CardHeader>
-          <CardContent className="pl-2">
-            <div className="h-[260px] sm:h-[350px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={salesByDate}>
-                  <XAxis dataKey="name" stroke="#888888" fontSize={12} tickLine={false} axisLine={false} />
-                  <YAxis stroke="#888888" fontSize={12} tickLine={false} axisLine={false} tickFormatter={(value) => `$${value}`} />
-                  <Tooltip
-                    cursor={{ fill: "transparent" }}
-                    contentStyle={{ borderRadius: "8px", border: "none", boxShadow: "0 4px 12px rgba(0,0,0,0.1)" }}
-                  />
-                  <Bar dataKey="total" fill="#adfa1d" radius={[4, 4, 0, 0]} barSize={40} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
+      {!isLoading && error && (
+        <p className="text-sm text-destructive">
+          {error instanceof Error
+            ? error.message
+            : "No se pudo cargar el reporte de ventas."}
+        </p>
+      )}
 
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Top Productos</CardTitle>
-            <CardDescription>Productos mas vendidos en el periodo</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[260px] sm:h-[350px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={topProducts}
-                    cx="50%"
-                    cy="50%"
-                    innerRadius={60}
-                    outerRadius={80}
-                    fill="#8884d8"
-                    paddingAngle={5}
-                    dataKey="value"
-                  >
-                    {topProducts.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+      {!isLoading && !error && (
+        <>
+          <div className="grid gap-4 lg:grid-cols-7">
+            <Card className="lg:col-span-4">
+              <CardHeader>
+                <CardTitle>Tendencia diaria de ingresos</CardTitle>
+                <CardDescription>
+                  Endpoint: /analytics/sales?groupBy=day&metric=revenue
+                </CardDescription>
+              </CardHeader>
+              <CardContent className="pl-2">
+                <div className="h-[260px] sm:h-[350px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={salesTrendData}>
+                      <XAxis
+                        dataKey="name"
+                        stroke="#888888"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                      />
+                      <YAxis
+                        stroke="#888888"
+                        fontSize={12}
+                        tickLine={false}
+                        axisLine={false}
+                        tickFormatter={(value) => `$${value}`}
+                      />
+                      <Tooltip cursor={{ fill: "transparent" }} />
+                      <Bar
+                        dataKey="total"
+                        fill="#22c55e"
+                        radius={[4, 4, 0, 0]}
+                        barSize={28}
+                      />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
 
-      <div className="grid gap-4 lg:grid-cols-7">
-        <Card className="lg:col-span-3">
-          <CardHeader>
-            <CardTitle>Metodos de Pago</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="h-[240px] sm:h-[300px]">
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={salesByPaymentMethod}
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={80}
-                    fill="#8884d8"
-                    dataKey="value"
-                    label
-                  >
-                    {salesByPaymentMethod.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+            <Card className="lg:col-span-3">
+              <CardHeader>
+                <CardTitle>Participacion por tipo de precio</CardTitle>
+                <CardDescription>Minorista vs mayorista</CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="h-[260px] sm:h-[350px]">
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={salesByPriceTypePie}
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={60}
+                        outerRadius={90}
+                        dataKey="value"
+                        nameKey="name"
+                      >
+                        {salesByPriceTypePie.map((entry, index) => (
+                          <Cell
+                            key={`${entry.name}-${index}`}
+                            fill={PIE_COLORS[index % PIE_COLORS.length]}
+                          />
+                        ))}
+                      </Pie>
+                      <Tooltip
+                        formatter={(value: number) =>
+                          formatMoney(Number(value ?? 0))
+                        }
+                      />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </CardContent>
+            </Card>
+          </div>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>
+                Top productos: ingresos por minorista/mayorista
+              </CardTitle>
+              <CardDescription>
+                Endpoint: /reports/sales/top-products
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="h-[280px] sm:h-[360px]">
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart data={topProductsByPriceType}>
+                    <XAxis
+                      dataKey="name"
+                      stroke="#888888"
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <YAxis
+                      stroke="#888888"
+                      fontSize={12}
+                      tickLine={false}
+                      axisLine={false}
+                    />
+                    <Tooltip
+                      formatter={(value: number) =>
+                        formatMoney(Number(value ?? 0))
+                      }
+                    />
+                    <Legend />
+                    <Bar
+                      dataKey="minorista"
+                      stackId="a"
+                      fill="#0ea5e9"
+                      name="Minorista"
+                      radius={[0, 0, 4, 4]}
+                    />
+                    <Bar
+                      dataKey="mayorista"
+                      stackId="a"
+                      fill="#6366f1"
+                      name="Mayorista"
+                      radius={[4, 4, 0, 0]}
+                    />
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Detalle de productos</CardTitle>
+              <CardDescription>
+                Ranking con desglose retail/wholesale desde backend
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {topProductsItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No hay ventas para el rango seleccionado.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {topProductsItems
+                    .slice(0, 12)
+                    .map((item: ReportsTopProductItem) => (
+                      <div
+                        key={item.productId}
+                        className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-5"
+                      >
+                        <div className="sm:col-span-2">
+                          <p className="font-semibold">{item.productName}</p>
+                          <p className="text-muted-foreground">
+                            {item.categoryName ?? "Sin categoria"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Unidades</p>
+                          <p className="font-medium">
+                            {Number(item.unitsTotal ?? 0).toLocaleString(
+                              "es-AR"
+                            )}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">
+                            Minorista / Mayorista
+                          </p>
+                          <p className="font-medium">
+                            {formatMoney(Number(item.revenueRetail ?? 0))} /{" "}
+                            {formatMoney(Number(item.revenueWholesale ?? 0))}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Margen</p>
+                          <p className="font-medium">
+                            {formatMoney(Number(item.marginTotal ?? 0))} (
+                            {Number(item.marginPct ?? 0).toFixed(2)}%)
+                          </p>
+                        </div>
+                      </div>
                     ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+        </>
+      )}
     </div>
   );
 }

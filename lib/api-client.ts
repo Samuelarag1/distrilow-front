@@ -12,6 +12,7 @@ type ApiSessionInput =
 type RequestOptions = RequestInit & {
   _retried?: boolean;
   branchScoped?: boolean;
+  disableCache?: boolean;
 };
 
 let authToken: string | null = null;
@@ -29,6 +30,7 @@ const BRANCH_SCOPED_PREFIXES = [
   "/expenses",
   "/cash",
   "/analytics",
+  "/reports",
 ] as const;
 
 function normalizeBaseUrl(base: string) {
@@ -164,10 +166,28 @@ export class ApiError extends Error {
   constructor(
     public status: number,
     public bodyText: string,
-    public body?: unknown
+    public body?: unknown,
+    public retryAfterSeconds?: number | null
   ) {
     super(bodyText || `API request failed (${status})`);
   }
+}
+
+function parseRetryAfterSeconds(headerValue: string | null): number | null {
+  if (!headerValue) return null;
+  const trimmed = headerValue.trim();
+  if (!trimmed) return null;
+
+  const asSeconds = Number(trimmed);
+  if (Number.isFinite(asSeconds) && asSeconds >= 0) {
+    return asSeconds;
+  }
+
+  const asDate = Date.parse(trimmed);
+  if (Number.isNaN(asDate)) return null;
+
+  const deltaSeconds = Math.ceil((asDate - Date.now()) / 1000);
+  return deltaSeconds > 0 ? deltaSeconds : 0;
 }
 
 function extractApiMessage(body: unknown, fallback: string) {
@@ -290,6 +310,10 @@ async function request<T = unknown>(
     options.branchScoped === undefined
       ? isBranchScopedPath(path)
       : options.branchScoped;
+  const disableCache =
+    options.disableCache === undefined
+      ? false
+      : options.disableCache;
 
   const headers = new Headers(options.headers);
   if (isJsonBody(options.body) && !headers.has("Content-Type")) {
@@ -306,12 +330,19 @@ async function request<T = unknown>(
     headers.set("x-branch-id", branchToUse);
   }
 
+  const { _retried: _ignoredRetried, branchScoped: _ignoredBranchScoped, disableCache: _ignoredDisableCache, ...fetchOptions } =
+    options;
+  void _ignoredRetried;
+  void _ignoredBranchScoped;
+  void _ignoredDisableCache;
+
   const res = await fetch(`${resolveApiBaseUrl()}${path}`, {
-    ...options,
+    ...fetchOptions,
     method,
     headers,
     body: options.body,
     credentials: "include",
+    cache: method === "GET" && disableCache ? "no-store" : fetchOptions.cache,
   });
 
   if (res.status === 401 && !options._retried && shouldTryRefresh(path, method)) {
@@ -359,11 +390,15 @@ async function request<T = unknown>(
       res.status >= 500
         ? "Ocurrio un error del servidor. Intenta nuevamente en unos minutos."
         : friendlyMessage || bodyText || statusHint;
+    const retryAfterSeconds = parseRetryAfterSeconds(
+      res.headers.get("Retry-After")
+    );
 
     throw new ApiError(
       res.status,
       publicMessage,
-      parsedBody
+      parsedBody,
+      retryAfterSeconds
     );
   }
 
