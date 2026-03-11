@@ -383,6 +383,8 @@ export interface StockQuery {
   offset?: number;
   limit?: number;
   productId?: string;
+  stockStatus?: string;
+  lowStockThreshold?: number;
 }
 
 export interface StockSummaryResponse {

@@ -1086,7 +1086,9 @@ export function POSModule() {
                                 type="button"
                                 className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted"
                                 onMouseDown={(event) => event.preventDefault()}
-                                onClick={() => handleSelectSearchProduct(product)}
+                                onClick={() =>
+                                  handleSelectSearchProduct(product)
+                                }
                               >
                                 <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-border/60">
                                   <img
@@ -1132,21 +1134,6 @@ export function POSModule() {
                       </div>
                     ) : null}
                   </div>
-                  <select
-                    value={selectedCategory}
-                    onChange={(event) => {
-                      setSelectedCategory(event.target.value);
-                      setCurrentPage(1);
-                    }}
-                    className="rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-                  >
-                    <option value="all">Todas las categorias</option>
-                    {categories.map((category) => (
-                      <option key={category.value} value={category.value}>
-                        {category.label}
-                      </option>
-                    ))}
-                  </select>
                 </div>
                 <p className="text-xs text-muted-foreground">
                   Sucursal activa:{" "}

@@ -56,13 +56,24 @@ interface UserContextType {
 const UserContext = createContext<UserContextType | undefined>(undefined);
 const USER_AVATAR_STORE_KEY = "user-avatar-by-id";
 
+function normalizeBranchIdValue(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "null" || lowered === "undefined") return null;
+
+  return trimmed;
+}
+
 function normalizeSessionBranches(input: unknown): Branch[] {
   if (!Array.isArray(input)) return [];
 
   return input
     .map((raw, index) => {
       if (typeof raw === "string") {
-        const id = raw.trim();
+        const id = normalizeBranchIdValue(raw);
         if (!id) return null;
         return { id, name: `Sucursal ${index + 1}` } satisfies Branch;
       }
@@ -76,8 +87,8 @@ function normalizeSessionBranches(input: unknown): Branch[] {
         isDefault?: unknown;
       };
       const id =
-        (typeof value.id === "string" && value.id.trim()) ||
-        (typeof value.branchId === "string" && value.branchId.trim()) ||
+        normalizeBranchIdValue(value.id) ??
+        normalizeBranchIdValue(value.branchId) ??
         "";
 
       if (!id) return null;
@@ -157,7 +168,7 @@ function writeSessionCookies(payload: {
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const [currentUser, setCurrentUserState] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
-  const [branchId, setBranchId] = useState<string | null>(null);
+  const [branchId, setBranchIdState] = useState<string | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean>(false);
   const [sessionBootstrapped, setSessionBootstrapped] = useState(false);
@@ -213,6 +224,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     });
   }, []);
 
+  const setBranchId = useCallback((id: string | null) => {
+    setBranchIdState(normalizeBranchIdValue(id));
+  }, []);
+
   useEffect(() => {
     setSessionBootstrapped(false);
 
@@ -250,7 +265,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setNeedsOnboarding(onboardingCookie === "true");
     }
 
-    const resolvedBranchId = activeBranchCookie || parsedBranches[0]?.id || null;
+    const resolvedBranchId =
+      normalizeBranchIdValue(activeBranchCookie) ??
+      parsedBranches[0]?.id ??
+      null;
     setBranchId(resolvedBranchId);
 
     if (!activeBranchCookie && resolvedBranchId) {
@@ -278,10 +296,10 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
           payload?.session?.availableBranches ?? parsedBranches
         );
         const refreshedBranchId =
-          payload?.session?.activeBranchId ??
-          session.branchId ??
-          resolvedBranchId ??
-          refreshedBranches[0]?.id ??
+          normalizeBranchIdValue(payload?.session?.activeBranchId) ??
+          normalizeBranchIdValue(session.branchId) ??
+          normalizeBranchIdValue(resolvedBranchId) ??
+          normalizeBranchIdValue(refreshedBranches[0]?.id) ??
           null;
         const refreshedNeedsOnboarding =
           payload?.session?.needsOnboarding ??
@@ -328,7 +346,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [hydrateUserAvatar]);
+  }, [hydrateUserAvatar, setBranchId]);
 
   useEffect(() => {
     if (!sessionBootstrapped) return;
@@ -373,7 +391,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const nextBranches = normalizeSessionBranches(
       response.session?.availableBranches ?? branches
     );
-    const nextBranchId = response.session?.activeBranchId ?? id;
+    const nextBranchId =
+      normalizeBranchIdValue(response.session?.activeBranchId) ??
+      normalizeBranchIdValue(id);
+    if (!nextBranchId) {
+      throw new Error("No se pudo resolver la sucursal activa.");
+    }
     const nextNeedsOnboarding =
       response.session?.needsOnboarding ?? needsOnboarding;
 
@@ -399,7 +422,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       activeBranchId: nextBranchId,
       needsOnboarding: nextNeedsOnboarding,
     });
-  }, [branchId, token, branches, needsOnboarding, currentUser?.role]);
+  }, [branchId, token, branches, needsOnboarding, currentUser?.role, setBranchId]);
 
   useEffect(() => {
     const hasRefreshCookie = Boolean(
@@ -421,8 +444,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       if (session.accessToken && session.accessToken !== token) {
         setToken(session.accessToken);
       }
-      if (session.branchId && session.branchId !== branchId) {
-        setBranchId(session.branchId);
+      const refreshedBranchId = normalizeBranchIdValue(session.branchId);
+      if (refreshedBranchId && refreshedBranchId !== branchId) {
+        setBranchId(refreshedBranchId);
       }
     };
 
@@ -449,9 +473,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [currentUser, token, branchId]);
+  }, [currentUser, token, branchId, setBranchId]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     try {
       await backendApi.auth.logout();
     } catch {
@@ -468,7 +492,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     setApiSession({ accessToken: null, branchId: null });
 
     window.location.href = "/login";
-  };
+  }, [setCurrentUser, setBranchId]);
 
   const value = useMemo(
     () => ({
@@ -495,6 +519,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setCurrentUser,
       setAvatar,
       switchBranch,
+      logout,
+      setBranchId,
     ]
   );
 

@@ -36,11 +36,22 @@ import { Product } from "@/lib/products";
 import { useProducts } from "@/components/providers/product-provider";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
-import type { MovementType } from "@/lib/api-types";
+import type { MovementType, Stock } from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
+import { backendApi } from "@/lib/backend-api";
 
 type SortKey = "name" | "stock" | "category" | "price";
 type SortOrder = "asc" | "desc";
+const LOW_STOCK_THRESHOLD = 5;
+
+function normalizeBranchContextId(value: string | null | undefined) {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "null" || lowered === "undefined") return null;
+  return trimmed;
+}
 
 const CATEGORY_COLORS: Record<string, string> = {
   Cervezas: "bg-amber-100 text-amber-700 border-amber-200",
@@ -61,6 +72,11 @@ type Category = {
   id: string;
   name: string;
   isActive: boolean;
+};
+
+type LowStockRow = Stock & {
+  name?: string;
+  product?: Partial<Product> & { id?: string; name?: string };
 };
 
 function getLooseCategoryLabel(category: unknown): string {
@@ -355,6 +371,7 @@ function SortButton({
 
 export function InventoryModule() {
   const { branches, branchId } = useUser();
+  const effectiveBranchId = normalizeBranchContextId(branchId);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
@@ -365,6 +382,30 @@ export function InventoryModule() {
   const { data: categoriesData } = useSWR<Category[]>(
     "/categories",
     swrFetcher
+  );
+  const { data: inventorySummary, mutate: mutateInventorySummary } = useSWR(
+    effectiveBranchId
+      ? ["stocks-summary", effectiveBranchId, LOW_STOCK_THRESHOLD]
+      : null,
+    () =>
+      backendApi.stocks.summary(
+        { lowStockThreshold: LOW_STOCK_THRESHOLD },
+        effectiveBranchId
+      )
+  );
+  const { data: lowStockRows, mutate: mutateLowStockRows } = useSWR<
+    LowStockRow[]
+  >(
+    effectiveBranchId
+      ? ["stocks-low-list", effectiveBranchId, LOW_STOCK_THRESHOLD]
+      : null,
+    async () => {
+      const payload = await backendApi.stocks.list({
+        stockStatus: "low_stock",
+        lowStockThreshold: LOW_STOCK_THRESHOLD,
+      }, effectiveBranchId);
+      return payload.items as LowStockRow[];
+    }
   );
 
   const {
@@ -381,7 +422,7 @@ export function InventoryModule() {
     take: pageSize,
     search: searchQuery.trim() || undefined,
     categoryId: selectedCategory === "all" ? null : selectedCategory,
-    branchId: branchId ?? null,
+    branchId: effectiveBranchId,
     sortBy:
       sortKey === "name" ? "name" : sortKey === "price" ? "price" : undefined,
     sortOrder,
@@ -445,13 +486,48 @@ export function InventoryModule() {
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [categoriesData]);
 
-  const lowStockItems = inventory.filter(
-    (item: Product) => item.stock <= (item.minStock || 0)
+  const totalValueFallback = inventory.reduce(
+    (sum: number, item: Product) => sum + item.stock * getWholesaleUnitPrice(item),
+    0
   );
+  const inventoryNameById = useMemo(
+    () => new Map(inventory.map((item) => [item.id, item.name])),
+    [inventory]
+  );
+  const lowStockNamesPreview = useMemo(() => {
+    if (!Array.isArray(lowStockRows)) return [];
 
-  const totalValue = inventory.reduce(
-    (sum: number, item: Product) =>
-      sum + item.stock * getWholesaleUnitPrice(item),
+    const names = lowStockRows
+      .map((row) => {
+        const directName =
+          typeof row.name === "string" ? row.name.trim() : "";
+        if (directName) return directName;
+
+        const nestedName =
+          typeof row.product?.name === "string" ? row.product.name.trim() : "";
+        if (nestedName) return nestedName;
+
+        const productId =
+          typeof row.productId === "string"
+            ? row.productId
+            : typeof row.product?.id === "string"
+            ? row.product.id
+            : null;
+        if (!productId) return "";
+        return inventoryNameById.get(productId) ?? "";
+      })
+      .filter((name): name is string => Boolean(name));
+
+    return Array.from(new Set(names)).slice(0, 3);
+  }, [lowStockRows, inventoryNameById]);
+  const totalProductsKpi = inventorySummary?.products.total ?? inventoryTotal;
+  const lowStockCountKpi =
+    inventorySummary?.products.lowStock ?? lowStockRows?.length ?? 0;
+  const inventoryValueKpi =
+    inventorySummary?.inventoryValue.wholesale ?? totalValueFallback;
+  const categoriesTotalKpi = inventorySummary?.categories.total ?? categories.length;
+  const lowStockHiddenCount = Math.max(
+    lowStockCountKpi - lowStockNamesPreview.length,
     0
   );
   const totalPages = Math.max(
@@ -499,7 +575,7 @@ export function InventoryModule() {
       try {
         await registerStockMovement({
           productId: item.id,
-          branchId: item.branchId ?? branchId ?? undefined,
+          branchId: item.branchId ?? effectiveBranchId ?? undefined,
           quantity: input.quantity,
           type: input.type,
           unitCost: Number(item.costPrice ?? 0),
@@ -507,7 +583,11 @@ export function InventoryModule() {
           reason: input.reason,
           toBranchId: input.toBranchId,
         });
-        await mutateProducts();
+        await Promise.all([
+          mutateProducts(),
+          mutateInventorySummary(),
+          mutateLowStockRows(),
+        ]);
 
         toast({
           title: "Movimiento registrado",
@@ -643,7 +723,7 @@ export function InventoryModule() {
           <p className="text-xs text-muted-foreground">
             Sucursal activa:{" "}
             <span className="font-semibold text-foreground">
-              {branches.find((branch) => branch.id === branchId)?.name ??
+              {branches.find((branch) => branch.id === effectiveBranchId)?.name ??
                 "Sin sucursal"}
             </span>
           </p>
@@ -658,7 +738,9 @@ export function InventoryModule() {
                 <p className="text-sm font-medium text-muted-foreground">
                   Total Productos
                 </p>
-                <p className="text-3xl font-bold mt-1">{inventory.length}</p>
+                <p className="text-3xl font-bold mt-1">
+                  {totalProductsKpi.toLocaleString()}
+                </p>
               </div>
               <div className="h-12 w-12 rounded-full bg-blue-500/10 flex items-center justify-center">
                 <Package className="h-6 w-6 text-blue-500" />
@@ -675,7 +757,7 @@ export function InventoryModule() {
                   Stock Bajo
                 </p>
                 <p className="text-3xl font-bold mt-1 text-red-500">
-                  {lowStockItems.length}
+                  {lowStockCountKpi.toLocaleString()}
                 </p>
               </div>
               <div className="h-12 w-12 rounded-full bg-red-500/10 flex items-center justify-center">
@@ -693,7 +775,7 @@ export function InventoryModule() {
                   Valor Total
                 </p>
                 <p className="text-3xl font-bold mt-1">
-                  ${totalValue.toLocaleString()}
+                  ${inventoryValueKpi.toLocaleString()}
                 </p>
               </div>
               <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
@@ -710,7 +792,9 @@ export function InventoryModule() {
                 <p className="text-sm font-medium text-muted-foreground">
                   Categorías
                 </p>
-                <p className="text-3xl font-bold mt-1">{categories.length}</p>
+                <p className="text-3xl font-bold mt-1">
+                  {categoriesTotalKpi.toLocaleString()}
+                </p>
               </div>
               <div className="h-12 w-12 rounded-full bg-orange-500/10 flex items-center justify-center">
                 <TrendingDown className="h-6 w-6 text-orange-500" />
@@ -720,7 +804,7 @@ export function InventoryModule() {
         </Card>
       </div>
 
-      {lowStockItems.length > 0 && (
+      {lowStockCountKpi > 0 && (
         <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
           <div className="bg-red-500 p-2 rounded-lg">
             <AlertTriangle className="h-5 w-5 text-white" />
@@ -728,15 +812,14 @@ export function InventoryModule() {
           <div className="flex-1">
             <h4 className="text-red-900 font-bold">Resumen de Reposición</h4>
             <p className="text-red-700 text-sm">
-              Hay {lowStockItems.length} productos con stock crítico. Se
+              Hay {lowStockCountKpi} productos con stock crítico. Se
               recomienda revisar:
               <span className="font-bold ml-1">
-                {lowStockItems
-                  .slice(0, 3)
-                  .map((item: Product) => item.name)
-                  .join(", ")}
-                {lowStockItems.length > 3
-                  ? ` y ${lowStockItems.length - 3} más...`
+                {lowStockNamesPreview.length > 0
+                  ? lowStockNamesPreview.join(", ")
+                  : "productos con stock bajo"}
+                {lowStockNamesPreview.length > 0 && lowStockHiddenCount > 0
+                  ? ` y ${lowStockHiddenCount} más...`
                   : ""}
               </span>
             </p>

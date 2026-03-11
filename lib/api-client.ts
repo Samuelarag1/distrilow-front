@@ -33,6 +33,17 @@ const BRANCH_SCOPED_PREFIXES = [
   "/reports",
 ] as const;
 
+function sanitizeBranchId(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  const lowered = trimmed.toLowerCase();
+  if (lowered === "null" || lowered === "undefined") return null;
+
+  return trimmed;
+}
+
 function normalizeBaseUrl(base: string) {
   return base.endsWith("/") ? base.slice(0, -1) : base;
 }
@@ -90,7 +101,9 @@ function getSessionRefreshToken() {
 
 function getSessionBranchId() {
   const explicitBranchId =
-    activeBranchId ?? getCookie("activeBranchId") ?? getCookie("branchId");
+    sanitizeBranchId(activeBranchId) ??
+    sanitizeBranchId(getCookie("activeBranchId")) ??
+    sanitizeBranchId(getCookie("branchId"));
   if (explicitBranchId) return explicitBranchId;
 
   const branchesRaw = getCookie("branches");
@@ -110,14 +123,14 @@ function getSessionBranchId() {
     });
 
     if (typeof first === "string") {
-      return first.trim() || null;
+      return sanitizeBranchId(first);
     }
     if (first && typeof first === "object") {
       const obj = first as { id?: unknown; branchId?: unknown };
-      if (typeof obj.id === "string" && obj.id.trim()) return obj.id.trim();
-      if (typeof obj.branchId === "string" && obj.branchId.trim()) {
-        return obj.branchId.trim();
-      }
+      const byId = sanitizeBranchId(obj.id);
+      if (byId) return byId;
+      const byBranchId = sanitizeBranchId(obj.branchId);
+      if (byBranchId) return byBranchId;
     }
   } catch {
     return null;
@@ -281,7 +294,8 @@ export function setApiSession(token: ApiSessionInput, branchId?: string | null) 
     if (token) {
       lastSuccessfulRefreshAt = Date.now();
     }
-    activeBranchId = branchId === undefined ? activeBranchId : branchId;
+    activeBranchId =
+      branchId === undefined ? activeBranchId : sanitizeBranchId(branchId);
     return;
   }
 
@@ -291,7 +305,9 @@ export function setApiSession(token: ApiSessionInput, branchId?: string | null) 
     lastSuccessfulRefreshAt = Date.now();
   }
   activeBranchId =
-    token?.branchId === undefined ? activeBranchId : token?.branchId ?? null;
+    token?.branchId === undefined
+      ? activeBranchId
+      : sanitizeBranchId(token?.branchId);
 }
 
 export function getApiSession() {

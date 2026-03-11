@@ -323,9 +323,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <Card className="lg:col-span-4">
               <CardHeader>
                 <CardTitle>Tendencia diaria de ingresos</CardTitle>
-                <CardDescription>
-                  Endpoint: /analytics/sales?groupBy=day&metric=revenue
-                </CardDescription>
               </CardHeader>
               <CardContent className="pl-2">
                 <div className="h-[260px] sm:h-[350px]">

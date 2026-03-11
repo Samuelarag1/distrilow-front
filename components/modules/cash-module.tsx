@@ -411,7 +411,10 @@ export function CashModule() {
               <div className="space-y-3 rounded-md border p-4">
                 <h3 className="text-sm font-semibold">Resumen</h3>
                 <p className="text-sm">
-                  Estado: <strong>{cashSession.status}</strong>
+                  Estado:{" "}
+                  <strong>
+                    {cashSession.status === "OPEN" ? "Abierta" : "Cerrada"}
+                  </strong>
                 </p>
                 <p className="text-sm">
                   Fondo inicial:{" "}

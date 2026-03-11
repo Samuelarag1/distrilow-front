@@ -774,10 +774,21 @@ export const backendApi = {
       invalidateStockCache(payload.branchId);
       return created;
     },
-    list: async (query: StockQuery = {}) => {
+    list: async (
+      query: StockQuery = {},
+      branchIdOverride?: string | null
+    ) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
       const payload = await apiClientFetch.get<
         PaginatedResponse<Stock> | Stock[]
-      >(`/stocks${buildQuery(query)}`);
+      >(`/stocks${buildQuery(query)}`, {
+        headers: {
+          "x-branch-id": effectiveBranchId,
+        },
+      });
       return toPaginatedResponse(
         payload,
         Number(query.skip ?? query.offset ?? 0),

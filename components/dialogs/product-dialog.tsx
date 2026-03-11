@@ -50,6 +50,30 @@ type Category = {
   isActive?: boolean;
 };
 
+type OptionalNumericInput = number | "";
+
+type ProductDialogFormState = {
+  sku: string;
+  barcode: string;
+  pluCode: string;
+  isWeighable: boolean;
+  name: string;
+  description: string;
+  costPrice: OptionalNumericInput;
+  wholesalePrice: OptionalNumericInput;
+  retailPrice: OptionalNumericInput;
+  marginPercent: number;
+  priceReviewPending: boolean;
+  costReviewPending: boolean;
+  categoryId: string;
+  brand: string;
+  trackStock: boolean;
+  allowNegativeStock: boolean;
+  measurementType: MeasurementType;
+  isActive: boolean;
+  imageUrl: string;
+};
+
 const measurementOptions: { value: MeasurementType; label: string }[] = [
   { value: MeasurementType.UNIT, label: "Unidad" },
   { value: MeasurementType.GRAM, label: "Gramo" },
@@ -57,6 +81,12 @@ const measurementOptions: { value: MeasurementType; label: string }[] = [
   { value: MeasurementType.MILLILITER, label: "Mililitro" },
   { value: MeasurementType.LITER, label: "Litro" },
 ];
+
+function parseOptionalNumberInput(value: string): OptionalNumericInput {
+  if (value.trim() === "") return "";
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : "";
+}
 
 export function ProductDialog({
   open,
@@ -78,7 +108,7 @@ export function ProductDialog({
       .sort((a, b) => a.label.localeCompare(b.label));
   }, [categoriesData]);
 
-  const [formData, setFormData] = useState({
+  const [formData, setFormData] = useState<ProductDialogFormState>({
     // Backend entity / dto
     sku: "",
     barcode: "",
@@ -203,18 +233,21 @@ export function ProductDialog({
     }
     if (!formData.sku.trim()) return;
     if (!formData.name.trim()) return;
+    const costPrice = Number(formData.costPrice);
+    const wholesalePrice = Number(formData.wholesalePrice);
+    const retailPrice = Number(formData.retailPrice);
+
     if (
-      formData.costPrice < 0 ||
-      formData.wholesalePrice < 0 ||
-      formData.retailPrice < 0
-    )
+      !Number.isFinite(costPrice) ||
+      !Number.isFinite(wholesalePrice) ||
+      !Number.isFinite(retailPrice)
+    ) {
       return;
+    }
+    if (costPrice < 0 || wholesalePrice < 0 || retailPrice < 0) return;
 
     // si querÃ©s autocalcular margen al guardar:
-    const marginPercent = computeMargin(
-      formData.costPrice,
-      formData.retailPrice
-    );
+    const marginPercent = computeMargin(costPrice, retailPrice);
 
     await onSave({
       sku: formData.sku.trim(),
@@ -223,9 +256,9 @@ export function ProductDialog({
       isWeighable: formData.isWeighable,
       name: formData.name.trim(),
       description: formData.description?.trim() || undefined,
-      costPrice: formData.costPrice,
-      wholesalePrice: formData.wholesalePrice,
-      retailPrice: formData.retailPrice,
+      costPrice,
+      wholesalePrice,
+      retailPrice,
       marginPercent: marginPercent || undefined,
       priceReviewPending: formData.priceReviewPending,
       costReviewPending: formData.costReviewPending,
@@ -328,11 +361,11 @@ export function ProductDialog({
                     step="0.01"
                     min="0"
                     className="pl-7"
-                    value={formData.costPrice}
+                    value={formData.costPrice ?? ""}
                     onChange={(e) =>
                       setFormData((p) => ({
                         ...p,
-                        costPrice: Number.parseFloat(e.target.value) || 0,
+                        costPrice: parseOptionalNumberInput(e.target.value),
                       }))
                     }
                     required
@@ -356,7 +389,7 @@ export function ProductDialog({
                     onChange={(e) =>
                       setFormData((p) => ({
                         ...p,
-                        retailPrice: Number.parseFloat(e.target.value) || 0,
+                        retailPrice: parseOptionalNumberInput(e.target.value),
                       }))
                     }
                     required
@@ -379,7 +412,9 @@ export function ProductDialog({
                     onChange={(e) =>
                       setFormData((p) => ({
                         ...p,
-                        wholesalePrice: Number.parseFloat(e.target.value) || 0,
+                        wholesalePrice: parseOptionalNumberInput(
+                          e.target.value
+                        ),
                       }))
                     }
                     required

@@ -4,7 +4,43 @@ import { useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Clock, DollarSign, ShoppingCart } from "lucide-react";
+import {
+  ChartContainer,
+  ChartTooltip,
+  ChartTooltipContent,
+} from "@/components/ui/chart";
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+} from "recharts";
 import { useTransactions } from "@/components/providers/transactions-provider";
+import { useUser } from "@/components/providers/user-provider";
+
+const chartConfig = {
+  ventas: {
+    label: "Ventas ($)",
+    color: "hsl(var(--chart-1))",
+  },
+};
+
+function isSameCalendarDay(a: Date, b: Date) {
+  return (
+    a.getFullYear() === b.getFullYear() &&
+    a.getMonth() === b.getMonth() &&
+    a.getDate() === b.getDate()
+  );
+}
+
+function toDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 const getStatusColor = (status: string) => {
   switch (status) {
@@ -23,17 +59,52 @@ const getStatusColor = (status: string) => {
 
 export function DailySales() {
   const { sales, isLoading } = useTransactions();
+  const { branchId } = useUser();
+
+  const dailyTrend = (() => {
+    const today = new Date();
+    today.setHours(23, 59, 59, 999);
+
+    const start = new Date(today);
+    start.setDate(today.getDate() - 13);
+    start.setHours(0, 0, 0, 0);
+
+    const totalsByDate = new Map<string, number>();
+
+    sales.forEach((sale) => {
+      if (branchId && sale.branchId && sale.branchId !== branchId) return;
+      if (sale.lifecycleStatus === "CANCELLED") return;
+
+      const saleDate = new Date(sale.date);
+      if (Number.isNaN(saleDate.getTime())) return;
+      if (saleDate < start || saleDate > today) return;
+
+      const key = toDateKey(saleDate);
+      const current = totalsByDate.get(key) ?? 0;
+      totalsByDate.set(key, current + Number(sale.totalAmount ?? sale.amount ?? 0));
+    });
+
+    return Array.from({ length: 14 }).map((_, index) => {
+      const date = new Date(start);
+      date.setDate(start.getDate() + index);
+      const key = toDateKey(date);
+      return {
+        name: date.toLocaleDateString("es-AR", {
+          day: "2-digit",
+          month: "2-digit",
+        }),
+        ventas: Number(totalsByDate.get(key) ?? 0),
+      };
+    });
+  })();
 
   const todaySales = useMemo(() => {
     const today = new Date();
     return sales
       .filter((sale) => {
+        if (branchId && sale.branchId && sale.branchId !== branchId) return false;
         const date = new Date(sale.date);
-        return (
-          date.getFullYear() === today.getFullYear() &&
-          date.getMonth() === today.getMonth() &&
-          date.getDate() === today.getDate()
-        );
+        return isSameCalendarDay(date, today);
       })
       .map((sale) => ({
         id: sale.id,
@@ -58,15 +129,47 @@ export function DailySales() {
             : "pending",
       }))
       .sort((a, b) => (a.time < b.time ? 1 : -1));
-  }, [sales]);
+  }, [sales, branchId]);
 
   const totalSales = todaySales.reduce((sum, sale) => sum + sale.total, 0);
   const totalOrders = todaySales.length;
   const avgOrder = totalOrders > 0 ? totalSales / totalOrders : 0;
 
   return (
-    <div className="grid gap-6 lg:grid-cols-3">
-      <div className="lg:col-span-2">
+    <div className="space-y-6">
+      <Card>
+        <CardHeader>
+          <CardTitle>Evolucion diaria (ultimos 14 dias)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="w-full h-[280px]">
+            <ChartContainer config={chartConfig} className="w-full h-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart
+                  data={dailyTrend}
+                  margin={{ top: 10, right: 10, left: 10, bottom: 10 }}
+                >
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
+                  <XAxis dataKey="name" className="text-xs" tick={{ fontSize: 12 }} />
+                  <YAxis className="text-xs" tick={{ fontSize: 12 }} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Line
+                    type="monotone"
+                    dataKey="ventas"
+                    stroke="var(--color-ventas)"
+                    strokeWidth={3}
+                    dot={{ fill: "var(--color-ventas)", strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </ChartContainer>
+          </div>
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="lg:col-span-2">
         <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
@@ -121,44 +224,45 @@ export function DailySales() {
         </Card>
       </div>
 
-      <div className="space-y-4">
-        <Card>
-          <CardContent className="p-6">
-            <div className="text-center space-y-2">
-              <DollarSign className="h-8 w-8 mx-auto text-green-500" />
-              <p className="text-sm text-muted-foreground">Total del Dia</p>
-              <p className="text-3xl font-bold text-green-600">
-                ${totalSales.toFixed(2)}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="text-center space-y-2">
-              <ShoppingCart className="h-8 w-8 mx-auto text-blue-500" />
-              <p className="text-sm text-muted-foreground">
-                Ordenes Completadas
-              </p>
-              <p className="text-3xl font-bold text-blue-600">{totalOrders}</p>
-            </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardContent className="p-6">
-            <div className="text-center space-y-2">
-              <div className="h-8 w-8 mx-auto bg-purple-100 rounded-full flex items-center justify-center">
-                <span className="text-purple-600 font-bold">O</span>
+        <div className="space-y-4">
+          <Card>
+            <CardContent className="p-6">
+              <div className="text-center space-y-2">
+                <DollarSign className="h-8 w-8 mx-auto text-green-500" />
+                <p className="text-sm text-muted-foreground">Total del Dia</p>
+                <p className="text-3xl font-bold text-green-600">
+                  ${totalSales.toFixed(2)}
+                </p>
               </div>
-              <p className="text-sm text-muted-foreground">Ticket Promedio</p>
-              <p className="text-3xl font-bold text-purple-600">
-                ${avgOrder.toFixed(2)}
-              </p>
-            </div>
-          </CardContent>
-        </Card>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="text-center space-y-2">
+                <ShoppingCart className="h-8 w-8 mx-auto text-blue-500" />
+                <p className="text-sm text-muted-foreground">
+                  Ordenes Completadas
+                </p>
+                <p className="text-3xl font-bold text-blue-600">{totalOrders}</p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardContent className="p-6">
+              <div className="text-center space-y-2">
+                <div className="h-8 w-8 mx-auto bg-purple-100 rounded-full flex items-center justify-center">
+                  <span className="text-purple-600 font-bold">O</span>
+                </div>
+                <p className="text-sm text-muted-foreground">Ticket Promedio</p>
+                <p className="text-3xl font-bold text-purple-600">
+                  ${avgOrder.toFixed(2)}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     </div>
   );

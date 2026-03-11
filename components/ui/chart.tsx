@@ -10,6 +10,8 @@ const THEMES = { light: "", dark: ".dark" } as const
 const SAFE_CHART_ID = /^[a-zA-Z0-9_-]+$/
 const SAFE_COLOR_VALUE =
   /^(#[0-9a-fA-F]{3,8}|rgba?\([0-9\s.,%]+\)|hsla?\([0-9\s.,%]+\)|var\(--[a-zA-Z0-9_-]+\)|[a-zA-Z]+)$/
+const SAFE_HSL_WITH_VAR_VALUE =
+  /^hsla?\(\s*var\(--[a-zA-Z0-9_-]+\)\s*(\/\s*[0-9.]+%?)?\s*\)$/
 
 export type ChartConfig = {
   [k in string]: {
@@ -51,7 +53,9 @@ function sanitizeColorValue(value?: string) {
   if (!value) return null
   const trimmed = value.trim()
   if (!trimmed) return null
-  return SAFE_COLOR_VALUE.test(trimmed) ? trimmed : null
+  return SAFE_COLOR_VALUE.test(trimmed) || SAFE_HSL_WITH_VAR_VALUE.test(trimmed)
+    ? trimmed
+    : null
 }
 
 const ChartContainer = React.forwardRef<
