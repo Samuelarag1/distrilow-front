@@ -1153,15 +1153,14 @@ export function POSModule() {
             <CardContent>
               {cart.length === 0 ? (
                 <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-muted-foreground/40 bg-muted/20 px-6 py-10 text-center">
-                  <div className="relative mb-4 h-28 w-28 overflow-hidden rounded-2xl ring-1 ring-border/70">
-                    <Image
-                      src="/logo.png"
-                      alt="Logo Distri Low"
-                      fill
-                      sizes="112px"
-                      className="object-cover"
-                    />
-                  </div>
+                  <Image
+                    src="/emptystate.png"
+                    alt="Empty state POS"
+                    width={360}
+                    height={360}
+                    className="mb-5 h-44 w-auto max-w-[88%] object-contain drop-shadow-sm"
+                    priority
+                  />
                   <p className="text-sm font-semibold text-foreground">
                     No hay productos agregados
                   </p>
