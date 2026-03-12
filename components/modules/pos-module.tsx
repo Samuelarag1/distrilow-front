@@ -658,6 +658,24 @@ export function POSModule() {
     setIsSaleCommitted(false);
   };
 
+  const commitManualQuantity = (item: CartItem, rawValue: string) => {
+    const normalizedValue = rawValue.replace(",", ".").trim();
+    if (!normalizedValue) return false;
+
+    const parsedQuantity = Number(normalizedValue);
+    if (!Number.isFinite(parsedQuantity)) {
+      toast({
+        variant: "destructive",
+        title: "Cantidad invalida",
+        description: "Ingresa una cantidad numerica valida.",
+      });
+      return false;
+    }
+
+    updateQuantity(item.id, parsedQuantity);
+    return true;
+  };
+
   const updatePricingPreference = (
     id: string,
     selection: "AUTO" | "RETAIL" | "WHOLESALE"
@@ -1288,11 +1306,51 @@ export function POSModule() {
                           >
                             <Minus className="h-3 w-3" />
                           </Button>
-                          <span className="w-10 text-center text-sm">
-                            {isWeighableProduct(item)
-                              ? String(item.quantity)
-                              : Math.trunc(item.quantity)}
-                          </span>
+                          {isWeighableProduct(item) ? (
+                            <Input
+                              type="number"
+                              inputMode="decimal"
+                              min={getQuantityStep(item)}
+                              step={getQuantityStep(item)}
+                              defaultValue={formatThresholdQuantity(
+                                toSafeNumber(item.quantity, 0)
+                              )}
+                              key={`${item.id}-${item.quantity}`}
+                              className="h-8 w-24 text-center text-sm"
+                              disabled={isSaleCommitted}
+                              onBlur={(event) => {
+                                const committed = commitManualQuantity(
+                                  item,
+                                  event.target.value
+                                );
+                                if (!committed) {
+                                  event.target.value = formatThresholdQuantity(
+                                    toSafeNumber(item.quantity, 0)
+                                  );
+                                }
+                              }}
+                              onKeyDown={(event) => {
+                                if (event.key === "Enter") {
+                                  event.preventDefault();
+                                  const committed = commitManualQuantity(
+                                    item,
+                                    event.currentTarget.value
+                                  );
+                                  if (!committed) {
+                                    event.currentTarget.value =
+                                      formatThresholdQuantity(
+                                        toSafeNumber(item.quantity, 0)
+                                      );
+                                  }
+                                  event.currentTarget.blur();
+                                }
+                              }}
+                            />
+                          ) : (
+                            <span className="w-10 text-center text-sm">
+                              {Math.trunc(item.quantity)}
+                            </span>
+                          )}
                           <Button
                             size="sm"
                             variant="outline"
