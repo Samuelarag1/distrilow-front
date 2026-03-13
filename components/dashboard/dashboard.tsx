@@ -25,9 +25,12 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
     businessType === "wholesale" ? wholesaleData : retailData;
 
   const { data: branchMetrics } = useSWR<DashboardMetrics>(
-    branchId ? ["dashboard-metrics", branchId, businessType] : null,
+    branchId ? ["reporting-dashboard-summary", branchId, businessType] : null,
     async () => {
-      const snapshot = await backendApi.snapshots.metrics("monthly");
+      const snapshot = await backendApi.reporting.dashboard.summary({
+        period: "monthly",
+        scope: "active",
+      });
       return normalizeSnapshotMetrics(snapshot);
     },
     {

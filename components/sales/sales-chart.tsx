@@ -79,17 +79,24 @@ export function SalesChart({ period }: SalesChartProps) {
 
   const { data, isLoading, error } = useSWR(
     branchId
-      ? ["sales-chart", branchId, period, range.from, range.to, range.groupBy]
+      ? [
+          "reporting-sales-history-chart",
+          branchId,
+          period,
+          range.from,
+          range.to,
+          range.groupBy,
+        ]
       : null,
     async () => {
       const [revenue, count] = await Promise.all([
-        backendApi.analytics.sales({
+        backendApi.reporting.sales.history({
           from: range.from,
           to: range.to,
           groupBy: range.groupBy,
           metric: "revenue",
         }),
-        backendApi.analytics.sales({
+        backendApi.reporting.sales.history({
           from: range.from,
           to: range.to,
           groupBy: range.groupBy,

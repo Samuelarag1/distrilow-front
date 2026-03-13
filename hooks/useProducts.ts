@@ -12,7 +12,7 @@ export type UseProductsArgs = {
   search?: string;
   categoryId?: string | null;
   branchId?: string | null;
-  sortBy?: string;
+  sortBy?: "createdAt" | "name" | "sku" | "price";
   sortOrder?: "asc" | "desc";
   resolveStockFromStocksEndpoint?: boolean;
 };
@@ -22,6 +22,7 @@ export function useProducts(args: UseProductsArgs = {}) {
   const effectiveBranchId = args.branchId ?? getApiSession().branchId ?? null;
   const requestedSkip = args.skip ?? 0;
   const requestedTake = args.take ?? 20;
+  const normalizedSearch = (args.search ?? "").trim();
   const resolveStockFromStocksEndpoint =
     args.resolveStockFromStocksEndpoint ?? true;
   const key = effectiveBranchId
@@ -29,7 +30,7 @@ export function useProducts(args: UseProductsArgs = {}) {
         "products",
         requestedSkip,
         requestedTake,
-        args.search ?? "",
+        normalizedSearch,
         args.categoryId ?? "",
         effectiveBranchId,
         args.sortBy ?? "",
@@ -52,9 +53,9 @@ export function useProducts(args: UseProductsArgs = {}) {
       const normalizedQuery = {
         skip: requestedSkip,
         take: requestedTake,
-        name: args.search ?? undefined,
-        q: args.search ?? undefined,
-        search: args.search ?? undefined,
+        name: normalizedSearch || undefined,
+        q: normalizedSearch || undefined,
+        search: normalizedSearch || undefined,
         categoryId: args.categoryId ?? undefined,
         sortBy: normalizedSortBy,
         sortOrder: args.sortOrder,

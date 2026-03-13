@@ -1,7 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Wallet, Loader2, ShieldAlert } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  Wallet,
+  Loader2,
+  ShieldAlert,
+  RefreshCcw,
+  ChevronLeft,
+  ChevronRight,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -26,6 +33,24 @@ import type {
   CashSession,
 } from "@/lib/api-types";
 
+const DAILY_BOOK_PAGE_SIZE = 20;
+const SESSION_POLL_INTERVAL_MS = 8_000;
+
+function formatMoney(value: number) {
+  return Number(value ?? 0).toLocaleString("es-AR", {
+    style: "currency",
+    currency: "ARS",
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return "Sin actividad";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return "Sin actividad";
+  return parsed.toLocaleString("es-AR");
+}
+
 export function CashModule() {
   const { currentUser, branchId } = useUser();
   const { branches } = useBranches();
@@ -49,104 +74,199 @@ export function CashModule() {
   const [movementAmount, setMovementAmount] = useState("");
   const [countedCash, setCountedCash] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
+
   const [dailyBookDate, setDailyBookDate] = useState(
     new Date().toISOString().slice(0, 10)
   );
   const [dailyBookPage, setDailyBookPage] = useState(1);
-  const dailyBookPageSize = 20;
   const [dailyBook, setDailyBook] = useState<CashBookDailyResponse | null>(
     null
   );
   const [isLoadingDailyBook, setIsLoadingDailyBook] = useState(false);
+
+  const currentSessionValidatorsRef = useRef<{
+    etag: string | null;
+    lastModified: string | null;
+  }>({
+    etag: null,
+    lastModified: null,
+  });
 
   const activeBranchName = useMemo(
     () =>
       branches.find((branch) => branch.id === branchId)?.name ?? "Sin sucursal",
     [branches, branchId]
   );
-  const allDailyEntries = useMemo(
-    () => dailyBook?.entries.items ?? [],
-    [dailyBook?.entries.items]
-  );
-  const paginatedDailyEntries = useMemo(() => {
-    const start = (dailyBookPage - 1) * dailyBookPageSize;
-    return allDailyEntries.slice(start, start + dailyBookPageSize);
-  }, [allDailyEntries, dailyBookPage, dailyBookPageSize]);
-  const totalDailyPages = Math.max(
+
+  const dailyBookMeta = dailyBook?.entries.meta;
+  const dailyBookTotal = Number(dailyBookMeta?.total ?? 0);
+  const dailyBookLimit = Math.max(
     1,
-    Math.ceil(allDailyEntries.length / dailyBookPageSize)
+    Number(dailyBookMeta?.limit ?? DAILY_BOOK_PAGE_SIZE)
+  );
+  const resolvedDailyBookPage = Math.max(
+    1,
+    Number(dailyBookMeta?.page ?? dailyBookPage)
+  );
+  const resolvedDailyBookTotalPages = Math.max(
+    1,
+    Number(
+      dailyBookMeta?.totalPages ??
+        Math.ceil(dailyBookTotal / Math.max(1, dailyBookLimit))
+    )
+  );
+  const hasNextDailyBookPage = Boolean(
+    dailyBookMeta?.hasNextPage ??
+      resolvedDailyBookPage < resolvedDailyBookTotalPages
   );
 
-  const loadCurrentCashSession = useCallback(async () => {
-    if (!canManageCash || !branchId) {
-      setCashSession(null);
-      return;
-    }
-
-    try {
-      setIsLoading(true);
-      const session = await backendApi.cash.getCurrentSession();
-      setCashSession(session);
-      if (
-        session?.expectedCash !== undefined &&
-        session?.expectedCash !== null
-      ) {
-        setCountedCash(String(session.expectedCash));
+  const loadCurrentCashSession = useCallback(
+    async (options?: { silent?: boolean; syncCountedCash?: boolean }) => {
+      if (!canManageCash || !branchId) {
+        currentSessionValidatorsRef.current = {
+          etag: null,
+          lastModified: null,
+        };
+        setCashSession(null);
+        if (options?.syncCountedCash) {
+          setCountedCash("");
+        }
+        return;
       }
-    } catch (error: any) {
-      setCashSession(null);
-      toast({
-        variant: "destructive",
-        title: "Error de caja",
-        description:
-          error?.message || "No se pudo obtener el estado actual de caja.",
-      });
-    } finally {
-      setIsLoading(false);
-    }
-  }, [canManageCash, branchId, toast]);
 
-  const loadDailyBook = useCallback(async () => {
-    if (!canManageCash || !branchId) {
-      setDailyBook(null);
-      return;
-    }
+      const silent = options?.silent ?? false;
 
-    try {
-      setIsLoadingDailyBook(true);
-      const response = await backendApi.cash.dailyBook(
-        {
-          date: dailyBookDate,
-        },
-        branchId
-      );
-      setDailyBook(response);
-    } catch (error: any) {
-      setDailyBook(null);
-      toast({
-        variant: "destructive",
-        title: "Error en libro diario",
-        description:
-          error?.message || "No se pudo obtener el libro diario de caja.",
-      });
-    } finally {
-      setIsLoadingDailyBook(false);
-    }
-  }, [canManageCash, branchId, dailyBookDate, toast]);
+      try {
+        if (!silent) {
+          setIsLoading(true);
+        }
+
+        const response = await backendApi.cash.getCurrentSessionSnapshot({
+          etag: currentSessionValidatorsRef.current.etag,
+          lastModified: currentSessionValidatorsRef.current.lastModified,
+          branchIdOverride: branchId,
+        });
+
+        if (response.etag || response.lastModified) {
+          currentSessionValidatorsRef.current = {
+            etag: response.etag ?? currentSessionValidatorsRef.current.etag,
+            lastModified:
+              response.lastModified ??
+              currentSessionValidatorsRef.current.lastModified,
+          };
+        }
+
+        if (response.status === 304) {
+          return;
+        }
+
+        setCashSession(response.session);
+
+        if (options?.syncCountedCash) {
+          const nextExpected = response.session?.expectedCash;
+          if (nextExpected === undefined || nextExpected === null) {
+            setCountedCash("");
+          } else {
+            setCountedCash(String(nextExpected));
+          }
+        }
+      } catch (error: any) {
+        if (!silent) {
+          setCashSession(null);
+          toast({
+            variant: "destructive",
+            title: "Error de caja",
+            description:
+              error?.message || "No se pudo obtener el estado actual de caja.",
+          });
+        }
+      } finally {
+        if (!silent) {
+          setIsLoading(false);
+        }
+      }
+    },
+    [canManageCash, branchId, toast]
+  );
+
+  const loadDailyBook = useCallback(
+    async (page = 1) => {
+      if (!canManageCash || !branchId) {
+        setDailyBook(null);
+        return;
+      }
+
+      try {
+        setIsLoadingDailyBook(true);
+        const response = await backendApi.cash.dailyBook(
+          {
+            date: dailyBookDate,
+            page,
+            limit: DAILY_BOOK_PAGE_SIZE,
+          },
+          branchId
+        );
+
+        setDailyBook(response);
+        const backendPage = Number(response.entries.meta.page ?? page);
+        setDailyBookPage(
+          Number.isFinite(backendPage) && backendPage > 0 ? backendPage : 1
+        );
+      } catch (error: any) {
+        setDailyBook(null);
+        toast({
+          variant: "destructive",
+          title: "Error en libro diario",
+          description:
+            error?.message || "No se pudo obtener el libro diario de caja.",
+        });
+      } finally {
+        setIsLoadingDailyBook(false);
+      }
+    },
+    [canManageCash, branchId, dailyBookDate, toast]
+  );
 
   useEffect(() => {
-    loadCurrentCashSession();
-  }, [loadCurrentCashSession]);
+    currentSessionValidatorsRef.current = { etag: null, lastModified: null };
+    void loadCurrentCashSession({ syncCountedCash: true });
+  }, [loadCurrentCashSession, branchId]);
 
   useEffect(() => {
-    void loadDailyBook();
-  }, [loadDailyBook]);
+    setDailyBookPage(1);
+    void loadDailyBook(1);
+  }, [loadDailyBook, dailyBookDate, branchId]);
 
   useEffect(() => {
-    if (dailyBookPage > totalDailyPages) {
-      setDailyBookPage(totalDailyPages);
-    }
-  }, [dailyBookPage, totalDailyPages]);
+    if (!canManageCash || !branchId) return;
+    const intervalId = window.setInterval(() => {
+      void loadCurrentCashSession({ silent: true });
+    }, SESSION_POLL_INTERVAL_MS);
+
+    return () => window.clearInterval(intervalId);
+  }, [canManageCash, branchId, loadCurrentCashSession]);
+
+  const refreshCashState = useCallback(
+    async (options?: {
+      resetDailyBookToFirstPage?: boolean;
+      syncCountedCash?: boolean;
+    }) => {
+      const shouldReset = options?.resetDailyBookToFirstPage ?? false;
+      const nextPage = shouldReset ? 1 : dailyBookPage;
+      if (shouldReset) {
+        setDailyBookPage(1);
+      }
+
+      await Promise.all([
+        loadCurrentCashSession({
+          silent: true,
+          syncCountedCash: options?.syncCountedCash ?? false,
+        }),
+        loadDailyBook(nextPage),
+      ]);
+    },
+    [dailyBookPage, loadCurrentCashSession, loadDailyBook]
+  );
 
   const handleOpenCash = async () => {
     const opening = Number(openingFloat);
@@ -172,10 +292,15 @@ export function CashModule() {
       const session = await backendApi.cash.openSession({
         openingFloat: opening,
       });
+
       setCashSession(session);
       setOpeningFloat("");
-      setCountedCash(String(session.expectedCash ?? ""));
-      void loadDailyBook();
+
+      await refreshCashState({
+        resetDailyBookToFirstPage: true,
+        syncCountedCash: true,
+      });
+
       toast({
         title: "Caja abierta",
         description: "Sesion abierta correctamente.",
@@ -183,7 +308,7 @@ export function CashModule() {
     } catch (error: any) {
       const message = String(error?.message ?? "");
       if (message.toLowerCase().includes("already an open cash session")) {
-        await loadCurrentCashSession();
+        await loadCurrentCashSession({ silent: true, syncCountedCash: true });
       }
       toast({
         variant: "destructive",
@@ -251,7 +376,11 @@ export function CashModule() {
       setCashSession(updated);
       setMovementAmount("");
       setMovementReason("");
-      void loadDailyBook();
+
+      await refreshCashState({
+        resetDailyBookToFirstPage: true,
+      });
+
       toast({ title: "Movimiento registrado" });
     } catch (error: any) {
       toast({
@@ -310,10 +439,13 @@ export function CashModule() {
         }
       );
 
-      setCashSession(null);
-      setCountedCash("");
       setCloseNotes("");
-      void loadDailyBook();
+
+      await refreshCashState({
+        resetDailyBookToFirstPage: true,
+        syncCountedCash: true,
+      });
+
       toast({
         title: "Caja cerrada",
         description: "Sesion cerrada correctamente.",
@@ -327,6 +459,17 @@ export function CashModule() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleDailyBookPageChange = (nextPage: number) => {
+    const normalized = Math.min(
+      resolvedDailyBookTotalPages,
+      Math.max(1, Number(nextPage))
+    );
+    if (!Number.isFinite(normalized) || normalized === resolvedDailyBookPage) {
+      return;
+    }
+    void loadDailyBook(normalized);
   };
 
   if (!canManageCash) {
@@ -362,9 +505,14 @@ export function CashModule() {
               <Wallet className="h-4 w-4" />
               Estado de Caja
             </CardTitle>
-            <Badge variant={cashSession ? "default" : "secondary"}>
-              {cashSession ? "Caja abierta" : "Caja cerrada"}
-            </Badge>
+            <div className="flex flex-wrap items-center gap-2">
+              <Badge variant={cashSession ? "default" : "secondary"}>
+                {cashSession ? "Caja abierta" : "Caja cerrada"}
+              </Badge>
+              <Badge variant="outline">
+                Ultima actividad: {formatDateTime(cashSession?.lastActivityAt)}
+              </Badge>
+            </div>
           </div>
 
           <div className="grid gap-2 sm:max-w-sm">
@@ -409,7 +557,7 @@ export function CashModule() {
           ) : (
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="space-y-3 rounded-md border p-4">
-                <h3 className="text-sm font-semibold">Resumen</h3>
+                <h3 className="text-sm font-semibold">Resumen snapshot</h3>
                 <p className="text-sm">
                   Estado:{" "}
                   <strong>
@@ -418,16 +566,54 @@ export function CashModule() {
                 </p>
                 <p className="text-sm">
                   Fondo inicial:{" "}
-                  <strong>
-                    ${Number(cashSession.openingFloat ?? 0).toLocaleString()}
-                  </strong>
+                  <strong>{formatMoney(cashSession.openingFloat)}</strong>
                 </p>
                 <p className="text-sm">
                   Esperado:{" "}
-                  <strong>
-                    ${Number(cashSession.expectedCash ?? 0).toLocaleString()}
-                  </strong>
+                  <strong>{formatMoney(cashSession.expectedCash ?? 0)}</strong>
                 </p>
+                <p className="text-sm">
+                  Ventas: <strong>{Number(cashSession.salesCount ?? 0)}</strong>
+                </p>
+                <p className="text-sm">
+                  Pagos:{" "}
+                  <strong>{Number(cashSession.paymentsCount ?? 0)}</strong>
+                </p>
+              </div>
+
+              <div className="grid gap-3 rounded-md border p-4 sm:grid-cols-2">
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Pagos efectivo
+                  </p>
+                  <p className="text-base font-semibold">
+                    {formatMoney(cashSession.totals?.cashPayments ?? 0)}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Pagos transferencias
+                  </p>
+                  <p className="text-base font-semibold">
+                    {formatMoney(cashSession.totals?.transferPayments ?? 0)}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Movimientos Ingreso
+                  </p>
+                  <p className="text-base font-semibold">
+                    {formatMoney(cashSession.totals?.movementIn ?? 0)}
+                  </p>
+                </div>
+                <div className="rounded-md border bg-muted/30 p-3">
+                  <p className="text-xs text-muted-foreground">
+                    Movimientos Egreso
+                  </p>
+                  <p className="text-base font-semibold">
+                    {formatMoney(cashSession.totals?.movementOut ?? 0)}
+                  </p>
+                </div>
               </div>
 
               <div className="space-y-2 rounded-md border p-4">
@@ -470,7 +656,7 @@ export function CashModule() {
                 </Button>
               </div>
 
-              <div className="space-y-2 rounded-md border p-4 lg:col-span-2">
+              <div className="space-y-2 rounded-md border p-4">
                 <h3 className="text-sm font-semibold">Cerrar caja</h3>
                 <Input
                   type="number"

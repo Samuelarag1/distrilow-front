@@ -46,6 +46,7 @@ export function useProductsInfinite(args: {
     sortBy,
     sortOrder,
   } = args;
+  const normalizedSearch = (search ?? "").trim();
 
   const cap = Number.isFinite(maxItems) ? Math.max(0, maxItems) : Number.POSITIVE_INFINITY;
 
@@ -73,12 +74,12 @@ export function useProductsInfinite(args: {
       activeBranchId,
       skip,
       take,
-      search ?? "",
+      normalizedSearch,
       categoryId ?? "",
       sortBy,
       sortOrder,
     ] as const;
-  }, [activeBranchId, cap, take, search, categoryId, sortBy, sortOrder]);
+  }, [activeBranchId, cap, take, normalizedSearch, categoryId, sortBy, sortOrder]);
 
   const fetchPage = useCallback(async (key: PageKey) => {
     const [, , skip, incomingTake, query, incomingCategoryId, incomingSortBy, incomingSortOrder] =

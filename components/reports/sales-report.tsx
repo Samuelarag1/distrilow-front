@@ -29,7 +29,11 @@ import useSWR from "swr";
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
-import type { ReportsTopProductItem } from "@/lib/api-types";
+import type {
+  ReportsSalesPricingSourcesSummaryItem,
+  ReportsSalesPriceTypesSummaryItem,
+  ReportsTopProductItem,
+} from "@/lib/api-types";
 
 const PIE_COLORS = [
   "#0ea5e9",
@@ -63,6 +67,13 @@ function shortLabel(label: string, max = 20) {
   return `${label.slice(0, max - 1)}...`;
 }
 
+function getPricingSourceLabel(value: string) {
+  const normalized = value.trim().toUpperCase();
+  if (normalized === "AUTO") return "Automatico";
+  if (normalized === "MANUAL") return "Manual";
+  return value;
+}
+
 export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const { branchId } = useUser();
 
@@ -83,29 +94,54 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   }, [dateRange]);
 
   const { data, isLoading, error } = useSWR(
-    branchId ? ["reports-sales", branchId, range.fromYmd, range.toYmd] : null,
+    branchId
+      ? ["reporting-sales-report", branchId, range.fromYmd, range.toYmd]
+      : null,
     async () => {
-      const [salesTrend, topProducts] = await Promise.all([
-        backendApi.analytics.sales({
+      const [salesTrend, topProducts, priceTypesSummary, pricingSourcesSummary] =
+        await Promise.all([
+        backendApi.reporting.sales.history({
           from: range.fromYmd,
           to: range.toYmd,
           groupBy: "day",
           metric: "revenue",
         }),
-        backendApi.reports.sales.topProducts(
+        backendApi.reporting.sales.topProducts.report(
           {
             from: range.fromYmd,
             to: range.toYmd,
             limit: 50,
-            branchId,
+            branchId: branchId ?? undefined,
           },
           branchId
         ),
+        backendApi.reporting.sales.priceTypes
+          .summary(
+            {
+              from: range.fromYmd,
+              to: range.toYmd,
+              branchId: branchId ?? undefined,
+            },
+            branchId
+          )
+          .catch(() => null),
+        backendApi.reporting.sales.pricingSources
+          .summary(
+            {
+              from: range.fromYmd,
+              to: range.toYmd,
+              branchId: branchId ?? undefined,
+            },
+            branchId
+          )
+          .catch(() => null),
       ]);
 
       return {
         salesTrend,
         topProducts,
+        priceTypesSummary,
+        pricingSourcesSummary,
       };
     },
     {
@@ -118,6 +154,17 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     () => data?.topProducts.items ?? [],
     [data?.topProducts.items]
   );
+
+  const priceTypesSummaryItems = useMemo<ReportsSalesPriceTypesSummaryItem[]>(
+    () => data?.priceTypesSummary?.items ?? [],
+    [data?.priceTypesSummary?.items]
+  );
+
+  const pricingSourcesSummaryItems = useMemo<
+    ReportsSalesPricingSourcesSummaryItem[]
+  >(() => data?.pricingSourcesSummary?.items ?? [], [
+    data?.pricingSourcesSummary?.items,
+  ]);
 
   const totals = useMemo(() => {
     const seed = {
@@ -157,13 +204,50 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     [topProductsItems]
   );
 
-  const salesByPriceTypePie = useMemo(
-    () => [
+  const salesByPriceTypePie = useMemo(() => {
+    if (priceTypesSummaryItems.length > 0) {
+      const summaryByKey = new Map(
+        priceTypesSummaryItems.map((item) => [
+          String(item.key ?? "").trim().toUpperCase(),
+          Number(item.revenueTotal ?? 0),
+        ])
+      );
+
+      const retail = Number(summaryByKey.get("RETAIL") ?? 0);
+      const wholesale = Number(summaryByKey.get("WHOLESALE") ?? 0);
+      return [
+        { name: "Minorista", value: retail },
+        { name: "Mayorista", value: wholesale },
+      ];
+    }
+
+    return [
       { name: "Minorista", value: totals.revenueRetail },
       { name: "Mayorista", value: totals.revenueWholesale },
-    ],
-    [totals.revenueRetail, totals.revenueWholesale]
-  );
+    ];
+  }, [priceTypesSummaryItems, totals.revenueRetail, totals.revenueWholesale]);
+
+  const pricingSourcesCaption = useMemo(() => {
+    if (pricingSourcesSummaryItems.length === 0) return null;
+
+    const topSources = [...pricingSourcesSummaryItems]
+      .sort(
+        (left, right) =>
+          Number(right.revenueTotal ?? 0) - Number(left.revenueTotal ?? 0)
+      )
+      .slice(0, 2);
+
+    if (topSources.length === 0) return null;
+
+    return topSources
+      .map(
+        (item) =>
+          `${getPricingSourceLabel(String(item.key ?? ""))}: ${formatMoney(
+            Number(item.revenueTotal ?? 0)
+          )}`
+      )
+      .join(" | ");
+  }, [pricingSourcesSummaryItems]);
 
   const tableRows = useMemo(
     () =>
@@ -358,7 +442,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <Card className="lg:col-span-3">
               <CardHeader>
                 <CardTitle>Participacion por tipo de precio</CardTitle>
-                <CardDescription>Minorista vs mayorista</CardDescription>
+                <CardDescription>
+                  {pricingSourcesCaption
+                    ? `Minorista vs mayorista. Fuentes: ${pricingSourcesCaption}`
+                    : "Minorista vs mayorista"}
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="h-[260px] sm:h-[350px]">
@@ -399,7 +487,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                 Top productos: ingresos por minorista/mayorista
               </CardTitle>
               <CardDescription>
-                Endpoint: /reports/sales/top-products
+                Endpoint: /reporting/sales/top-products/report
               </CardDescription>
             </CardHeader>
             <CardContent>

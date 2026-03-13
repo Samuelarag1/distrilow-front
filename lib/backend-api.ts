@@ -13,6 +13,7 @@ import type {
   CashBookEntry,
   CashBookDailyQuery,
   CashBookDailyResponse,
+  CashCurrentSummaryResponse,
   CashSession,
   Category,
   CloseCashSessionRequest,
@@ -55,21 +56,32 @@ import type {
   ReportsInventoryLowStockResponse,
   ReportsInventorySummaryQuery,
   ReportsInventorySummaryResponse,
+  ReportsSalesPricingSourcesSummaryQuery,
+  ReportsSalesPricingSourcesSummaryResponse,
+  ReportsSalesPriceTypesSummaryQuery,
+  ReportsSalesPriceTypesSummaryResponse,
   ReportsTopProductsQuery,
   ReportsTopProductsResponse,
-  Sale,
+  SaleDetail,
   SaleListQuery,
   SalePayment,
+  SaleSummary,
   SalePaymentInput,
   SalePaymentsListQuery,
   SessionResponse,
   SnapshotPeriod,
   SnapshotMetricsResponse,
   Stock,
+  StockLot,
+  StockLotsListQuery,
+  StockLotsListResponse,
+  StockSummaryCategoriesResponse,
+  StockSummaryCategoryItem,
   StockSummaryResponse,
   StockQuery,
   SwitchBranchRequest,
   TransferMovementRequest,
+  UpsertStockLotRequest,
   UpdateBranchRequest,
   UpdateCategoryRequest,
   UpdateProductRequest,
@@ -95,12 +107,32 @@ export interface ResolvedBarcodeProduct {
   quantity?: number;
   unitPrice?: number;
   subtotal?: number;
-  barcodeType?: string;
+  barcodeType?: "STANDARD" | "INTERNAL_EAN13";
   rawBarcode?: string;
   barcodeBase?: string;
-  pluCode?: string;
+  pluCode?: string | null;
   priceType?: PriceType;
   pricingSource?: PricingMode;
+  stock?: {
+    branchId: string;
+    quantity: number;
+    averageCost: number;
+    lastPurchaseCost: number;
+    updatedAt: string | null;
+  };
+}
+
+export interface CashSessionSnapshotRequest {
+  etag?: string | null;
+  lastModified?: string | null;
+  branchIdOverride?: string | null;
+}
+
+export interface CashSessionSnapshotResponse {
+  status: 200 | 304;
+  session: CashSession | null;
+  etag: string | null;
+  lastModified: string | null;
 }
 
 const STOCK_CACHE_TTL_MS = 10_000;
@@ -209,6 +241,10 @@ function normalizeOffsetMeta(
     toFiniteNumber(parsed.offset, computedOffsetFromPage)
   );
   const total = Math.max(0, toFiniteNumber(parsed.total, fallbackTotal));
+  const totalPagesValue = toFiniteNumber(parsed.totalPages, Number.NaN);
+  const totalPages = Number.isFinite(totalPagesValue)
+    ? Math.max(1, totalPagesValue)
+    : Math.max(1, Math.ceil(total / limit));
   const hasMore =
     typeof parsed.hasMore === "boolean"
       ? parsed.hasMore
@@ -222,6 +258,7 @@ function normalizeOffsetMeta(
     limit,
     hasMore,
     page: Number.isFinite(page) ? page : Math.floor(offset / limit) + 1,
+    totalPages,
     hasNextPage: hasMore,
     hasPreviousPage:
       typeof parsed.hasPreviousPage === "boolean"
@@ -341,6 +378,20 @@ function requireActiveBranchId() {
 function normalizeBarcodePayload(
   payload: BarcodeLookupResponse
 ): ResolvedBarcodeProduct {
+  const normalizeStock = (value: unknown) => {
+    const source = asRecord(value);
+    const branchId = toOptionalText(source.branchId);
+    if (!branchId) return undefined;
+
+    return {
+      branchId,
+      quantity: toFiniteNumber(source.quantity, 0),
+      averageCost: toFiniteNumber(source.averageCost, 0),
+      lastPurchaseCost: toFiniteNumber(source.lastPurchaseCost, 0),
+      updatedAt: toOptionalText(source.updatedAt),
+    };
+  };
+
   const normalizeProduct = (value: unknown): ProductListItem => {
     const source = asRecord(value);
     const id = toOptionalText(source.id);
@@ -352,7 +403,9 @@ function normalizeBarcodePayload(
     const measurementType =
       measurementTypeRaw === "kg" ||
       measurementTypeRaw === "gram" ||
-      measurementTypeRaw === "unit"
+      measurementTypeRaw === "unit" ||
+      measurementTypeRaw === "ml" ||
+      measurementTypeRaw === "liter"
         ? measurementTypeRaw
         : "unit";
 
@@ -383,6 +436,7 @@ function normalizeBarcodePayload(
       isActive:
         typeof source.isActive === "boolean" ? source.isActive : undefined,
       categoryId: toOptionalText(source.categoryId),
+      categoryName: toOptionalText(source.categoryName),
       branchId: toOptionalText(source.branchId),
       brand: toOptionalText(source.brand),
       trackStock:
@@ -426,21 +480,34 @@ function normalizeBarcodePayload(
       pluCode?: unknown;
       priceType?: unknown;
       pricingSource?: unknown;
+      stock?: unknown;
     };
+    const normalizedStock = normalizeStock(barcodePayload.stock);
+    const normalizedProduct = normalizeProduct(barcodePayload.product);
+
     return {
-      product: normalizeProduct(barcodePayload.product),
+      product: {
+        ...normalizedProduct,
+        branchId: normalizedProduct.branchId ?? normalizedStock?.branchId ?? null,
+        stock:
+          toOptionalFiniteNumber(normalizedProduct.stock) ??
+          normalizedStock?.quantity ??
+          undefined,
+      },
       quantity: toFiniteNumber(barcodePayload.quantity, NaN),
       unitPrice: toFiniteNumber(barcodePayload.unitPrice, NaN),
       subtotal: toFiniteNumber(barcodePayload.subtotal, NaN),
       barcodeType:
-        typeof barcodePayload.barcodeType === "string"
+        barcodePayload.barcodeType === "STANDARD" ||
+        barcodePayload.barcodeType === "INTERNAL_EAN13"
           ? barcodePayload.barcodeType
           : undefined,
       rawBarcode: toOptionalText(barcodePayload.rawBarcode) ?? undefined,
       barcodeBase: toOptionalText(barcodePayload.barcodeBase) ?? undefined,
-      pluCode: toOptionalText(barcodePayload.pluCode) ?? undefined,
+      pluCode: toOptionalText(barcodePayload.pluCode),
       priceType: normalizePriceType(barcodePayload.priceType),
       pricingSource: normalizePricingMode(barcodePayload.pricingSource),
+      stock: normalizedStock,
     };
   }
 
@@ -468,6 +535,11 @@ function toOptionalText(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function toTrimmedOrUndefined(value: unknown) {
+  const normalized = toOptionalText(value);
+  return normalized ?? undefined;
+}
+
 function toOptionalFiniteNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = toFiniteNumber(value, Number.NaN);
@@ -476,32 +548,60 @@ function toOptionalFiniteNumber(value: unknown): number | null {
 
 function normalizeCashBookEntry(row: unknown, index: number): CashBookEntry {
   const source = asRecord(row);
-  const sourceType = toOptionalText(source.sourceType);
-  const direction = toOptionalText(source.direction);
+  const sourceTypeRaw =
+    toOptionalText(source.sourceType) ??
+    toOptionalText(source.entryType) ??
+    toOptionalText(source.kind);
+  const directionRaw = toOptionalText(source.direction);
   const legacyType = toOptionalText(source.type);
 
   const idCandidate = toOptionalText(source.id);
   const id = idCandidate ?? `cash-entry-${index}`;
 
-  const combinedType = [sourceType, direction]
+  const sourceType = sourceTypeRaw ?? "UNKNOWN";
+  const directionCandidate = directionRaw?.toUpperCase();
+  const direction =
+    directionCandidate === "IN" ||
+    directionCandidate === "OUT" ||
+    directionCandidate === "INFO"
+      ? directionCandidate
+      : "INFO";
+
+  const combinedType = [sourceTypeRaw, directionRaw]
     .filter((value): value is string => Boolean(value))
     .join(" / ");
   const typeLabel =
     legacyType ?? (combinedType.length > 0 ? combinedType : "MOVEMENT");
 
+  const notes =
+    toOptionalText(source.notes) ?? toOptionalText(source.description);
+  const reference =
+    toOptionalText(source.reference) ?? toOptionalText(source.saleId);
   const description =
     toOptionalText(source.description) ??
     toOptionalText(source.notes) ??
     toOptionalText(source.reference) ??
-    direction ??
-    sourceType ??
+    directionRaw ??
+    sourceTypeRaw ??
     null;
+  const amount =
+    toOptionalFiniteNumber(source.amount) ??
+    toOptionalFiniteNumber(source.netAmount) ??
+    toOptionalFiniteNumber(source.receivedAmount) ??
+    0;
 
   return {
     id,
+    sourceType,
+    direction,
     type: typeLabel,
-    amount: toFiniteNumber(source.amount, 0),
+    amount,
     method: toOptionalText(source.method),
+    receivedAmount: toOptionalFiniteNumber(source.receivedAmount),
+    changeAmount: toOptionalFiniteNumber(source.changeAmount),
+    netAmount: toOptionalFiniteNumber(source.netAmount),
+    notes,
+    reference,
     description,
     saleId: toOptionalText(source.saleId),
     sessionId: toOptionalText(source.sessionId),
@@ -514,7 +614,6 @@ function normalizeStockSummary(payload: unknown): StockSummaryResponse {
   const products = asRecord(source.products);
   const inventoryValue = asRecord(source.inventoryValue);
   const quantity = asRecord(source.quantity);
-  const categories = asRecord(source.categories);
 
   return {
     products: {
@@ -529,11 +628,357 @@ function normalizeStockSummary(payload: unknown): StockSummaryResponse {
     quantity: {
       total: toFiniteNumber(quantity.total, 0),
     },
-    categories: {
-      total: toFiniteNumber(categories.total, 0),
-      withProducts: toFiniteNumber(categories.withProducts, 0),
-      withStock: toFiniteNumber(categories.withStock, 0),
+  };
+}
+
+function normalizeStockSummaryCategories(
+  payload: unknown
+): StockSummaryCategoriesResponse {
+  const source = asRecord(payload);
+  const rawItems = Array.isArray(source.items)
+    ? source.items
+    : Array.isArray(source.byCategory)
+    ? source.byCategory
+    : Array.isArray(payload)
+    ? payload
+    : [];
+
+  const items: StockSummaryCategoryItem[] = rawItems.map((row) => {
+    const item = asRecord(row);
+    return {
+      categoryId: toOptionalText(item.categoryId ?? item.id),
+      categoryName: toOptionalText(item.categoryName ?? item.name),
+      productsTotal:
+        toOptionalFiniteNumber(item.productsTotal ?? item.totalProducts) ??
+        undefined,
+      lowStockTotal:
+        toOptionalFiniteNumber(item.lowStockTotal ?? item.lowStock) ??
+        undefined,
+      stockUnitsTotal:
+        toOptionalFiniteNumber(item.stockUnitsTotal ?? item.quantityTotal) ??
+        undefined,
+      inventoryValueCost:
+        toOptionalFiniteNumber(item.inventoryValueCost ?? item.totalCost) ??
+        undefined,
+      inventoryValueRetail:
+        toOptionalFiniteNumber(item.inventoryValueRetail ?? item.totalRetail) ??
+        undefined,
+      inventoryValueWholesale:
+        toOptionalFiniteNumber(
+          item.inventoryValueWholesale ?? item.totalWholesale
+        ) ?? undefined,
+    };
+  });
+
+  return {
+    items,
+    total: toFiniteNumber(source.total, items.length),
+  };
+}
+
+function normalizeStockLot(payload: unknown): StockLot {
+  const source = asRecord(payload);
+  const productSource = asRecord(source.product);
+
+  return {
+    id: toOptionalText(source.id) ?? "",
+    branchId: toOptionalText(source.branchId) ?? "",
+    productId:
+      toOptionalText(source.productId) ?? toOptionalText(productSource.id) ?? "",
+    lotCode: toOptionalText(source.lotCode) ?? "",
+    expiresAt: toOptionalText(source.expiresAt) ?? "",
+    quantity: toFiniteNumber(source.quantity, 0),
+    notes: toOptionalText(source.notes),
+    createdAt: toOptionalText(source.createdAt) ?? undefined,
+    updatedAt: toOptionalText(source.updatedAt) ?? undefined,
+    daysUntilExpiry: toOptionalFiniteNumber(source.daysUntilExpiry),
+    status: toOptionalText(source.status) ?? null,
+    product:
+      Object.keys(productSource).length > 0
+        ? {
+            id: toOptionalText(productSource.id) ?? "",
+            name: toOptionalText(productSource.name) ?? "Producto",
+            sku: toOptionalText(productSource.sku),
+            barcode: toOptionalText(productSource.barcode),
+            pluCode: toOptionalText(productSource.pluCode),
+            categoryId: toOptionalText(productSource.categoryId),
+            categoryName: toOptionalText(productSource.categoryName),
+          }
+        : null,
+  };
+}
+
+function normalizeStockLotsListResponse(
+  payload: unknown,
+  fallbackPage: number,
+  fallbackLimit: number
+): StockLotsListResponse {
+  const source = asRecord(payload);
+  const rawItems = Array.isArray(source.items)
+    ? source.items
+    : Array.isArray(payload)
+    ? payload
+    : [];
+  const items = rawItems.map((item) => normalizeStockLot(item));
+  const offset = Math.max(0, (fallbackPage - 1) * Math.max(1, fallbackLimit));
+  const meta = normalizeOffsetMeta(
+    source.meta,
+    offset,
+    Math.max(1, fallbackLimit),
+    items.length
+  );
+  const filtersSource = asRecord(source.filters);
+
+  return {
+    items,
+    filters: {
+      search: toOptionalText(filtersSource.search) ?? undefined,
+      productId: toOptionalText(filtersSource.productId) ?? undefined,
+      categoryId: toOptionalText(filtersSource.categoryId) ?? undefined,
+      days: toOptionalFiniteNumber(filtersSource.days) ?? undefined,
+      includeExpired:
+        typeof filtersSource.includeExpired === "boolean"
+          ? filtersSource.includeExpired
+          : undefined,
+      onlyPositive:
+        typeof filtersSource.onlyPositive === "boolean"
+          ? filtersSource.onlyPositive
+          : undefined,
+      page: toOptionalFiniteNumber(filtersSource.page) ?? undefined,
+      limit: toOptionalFiniteNumber(filtersSource.limit) ?? undefined,
     },
+    meta,
+  };
+}
+
+function normalizeSalesSummaryItems(
+  payload: unknown,
+  keyCandidates: string[]
+): Array<{
+  key: string;
+  label?: string | null;
+  unitsTotal: number;
+  revenueTotal: number;
+  salesCount?: number;
+}> {
+  const source = asRecord(payload);
+  const parseRow = (row: unknown, fallbackKey?: string) => {
+    const item = asRecord(row);
+
+    const key =
+      keyCandidates
+        .map((candidate) => toOptionalText(item[candidate]))
+        .find((value): value is string => Boolean(value)) ??
+      toOptionalText(item.key) ??
+      toOptionalText(item.type) ??
+      toOptionalText(item.bucket) ??
+      toOptionalText(item.name) ??
+      toOptionalText(item.label) ??
+      fallbackKey ??
+      null;
+
+    if (!key) return null;
+
+    const unitsTotal = toFiniteNumber(
+      item.unitsTotal ??
+        item.units ??
+        item.totalUnits ??
+        item.quantity ??
+        item.qty,
+      0
+    );
+    const revenueTotal = toFiniteNumber(
+      item.revenueTotal ??
+        item.revenue ??
+        item.totalRevenue ??
+        item.amount ??
+        item.totalAmount,
+      0
+    );
+    const salesCount = toOptionalFiniteNumber(
+      item.salesCount ??
+        item.ordersTotal ??
+        item.orders ??
+        item.tickets ??
+        item.transactions
+    );
+
+    return {
+      key,
+      label: toOptionalText(item.label ?? item.name),
+      unitsTotal,
+      revenueTotal,
+      salesCount: salesCount ?? undefined,
+    };
+  };
+
+  const itemsSource =
+    source.items ?? source.rows ?? source.data ?? source.byType ?? source.bySource;
+  const parsed: Array<{
+    key: string;
+    label?: string | null;
+    unitsTotal: number;
+    revenueTotal: number;
+    salesCount?: number;
+  }> = [];
+
+  if (Array.isArray(itemsSource)) {
+    itemsSource.forEach((row) => {
+      const normalized = parseRow(row);
+      if (normalized) parsed.push(normalized);
+    });
+  } else if (Array.isArray(payload)) {
+    payload.forEach((row) => {
+      const normalized = parseRow(row);
+      if (normalized) parsed.push(normalized);
+    });
+  } else if (itemsSource && typeof itemsSource === "object") {
+    Object.entries(asRecord(itemsSource)).forEach(([bucketKey, value]) => {
+      const normalized = parseRow(value, bucketKey);
+      if (normalized) parsed.push(normalized);
+    });
+  } else {
+    Object.entries(source).forEach(([bucketKey, value]) => {
+      if (
+        bucketKey === "range" ||
+        bucketKey === "filters" ||
+        bucketKey === "meta" ||
+        bucketKey === "totals" ||
+        bucketKey === "summary"
+      ) {
+        return;
+      }
+      if (!value || typeof value !== "object" || Array.isArray(value)) return;
+      const normalized = parseRow(value, bucketKey);
+      if (normalized) parsed.push(normalized);
+    });
+  }
+
+  const dedupedByKey = new Map<string, (typeof parsed)[number]>();
+  parsed.forEach((item) => {
+    dedupedByKey.set(item.key.toUpperCase(), {
+      ...item,
+      key: item.key.toUpperCase(),
+    });
+  });
+
+  return [...dedupedByKey.values()];
+}
+
+function normalizeSalesPriceTypesSummary(
+  payload: unknown
+): ReportsSalesPriceTypesSummaryResponse {
+  const source = asRecord(payload);
+  const range = asRecord(source.range);
+  const filters = asRecord(source.filters);
+
+  return {
+    range: {
+      from: toOptionalText(range.from) ?? toOptionalText(source.from) ?? "",
+      to: toOptionalText(range.to) ?? toOptionalText(source.to) ?? "",
+    },
+    filters: {
+      branchId:
+        toOptionalText(filters.branchId) ?? toOptionalText(source.branchId),
+      categoryId:
+        toOptionalText(filters.categoryId) ?? toOptionalText(source.categoryId),
+    },
+    items: normalizeSalesSummaryItems(payload, ["priceType", "type"]),
+  };
+}
+
+function normalizeSalesPricingSourcesSummary(
+  payload: unknown
+): ReportsSalesPricingSourcesSummaryResponse {
+  const source = asRecord(payload);
+  const range = asRecord(source.range);
+  const filters = asRecord(source.filters);
+
+  return {
+    range: {
+      from: toOptionalText(range.from) ?? toOptionalText(source.from) ?? "",
+      to: toOptionalText(range.to) ?? toOptionalText(source.to) ?? "",
+    },
+    filters: {
+      branchId:
+        toOptionalText(filters.branchId) ?? toOptionalText(source.branchId),
+      categoryId:
+        toOptionalText(filters.categoryId) ?? toOptionalText(source.categoryId),
+    },
+    items: normalizeSalesSummaryItems(payload, [
+      "pricingSource",
+      "source",
+      "mode",
+    ]),
+  };
+}
+
+function normalizeCashSessionFromUnknown(value: unknown): CashSession | null {
+  const source = asRecord(value);
+  const id = toOptionalText(source.id);
+  if (!id) return null;
+
+  const statusRaw = toOptionalText(source.status)?.toUpperCase();
+  const status = statusRaw === "CLOSED" ? "CLOSED" : "OPEN";
+
+  const totalsSource = asRecord(source.totals);
+  const totals =
+    Object.keys(totalsSource).length > 0
+      ? {
+          cashPayments: toOptionalFiniteNumber(totalsSource.cashPayments) ?? 0,
+          transferPayments:
+            toOptionalFiniteNumber(totalsSource.transferPayments) ?? 0,
+          movementIn: toOptionalFiniteNumber(totalsSource.movementIn) ?? 0,
+          movementOut: toOptionalFiniteNumber(totalsSource.movementOut) ?? 0,
+        }
+      : undefined;
+
+  return {
+    id,
+    branchId: toOptionalText(source.branchId) ?? "",
+    status,
+    openingFloat: toFiniteNumber(source.openingFloat, 0),
+    expectedCash: toOptionalFiniteNumber(source.expectedCash) ?? undefined,
+    countedCash: toOptionalFiniteNumber(source.countedCash) ?? undefined,
+    difference: toOptionalFiniteNumber(source.difference) ?? undefined,
+    notes: toOptionalText(source.notes) ?? undefined,
+    openedAt: toOptionalText(source.openedAt) ?? undefined,
+    closedAt: toOptionalText(source.closedAt),
+    salesCount: toOptionalFiniteNumber(source.salesCount) ?? undefined,
+    paymentsCount: toOptionalFiniteNumber(source.paymentsCount) ?? undefined,
+    lastActivityAt: toOptionalText(source.lastActivityAt),
+    totals,
+  };
+}
+
+function normalizeCashCurrentSummary(
+  payload: unknown
+): CashCurrentSummaryResponse {
+  const source = asRecord(payload);
+  const sessionCandidate =
+    source.session ??
+    source.currentSession ??
+    source.cashSession ??
+    source.openSession ??
+    payload;
+  const session = normalizeCashSessionFromUnknown(sessionCandidate);
+  const explicitOpen = source.hasOpenSession ?? source.hasOpen ?? source.open;
+  const hasOpenSession =
+    typeof explicitOpen === "boolean"
+      ? explicitOpen
+      : Boolean(session && session.status === "OPEN");
+
+  return {
+    hasOpenSession,
+    session: hasOpenSession ? session : null,
+    branchId:
+      toOptionalText(source.branchId) ??
+      session?.branchId ??
+      null,
+    updatedAt:
+      toOptionalText(source.updatedAt) ??
+      toOptionalText(source.lastModified) ??
+      toOptionalText(source.at),
   };
 }
 
@@ -688,7 +1133,9 @@ export const backendApi = {
   products: {
     create: async (body: CreateProductRequest) => {
       const created = await apiClientFetch.post<Product>("/products", body);
-      emitProductsSync(created.branchId ?? body.branchId ?? getApiSession().branchId);
+      emitProductsSync(
+        created.branchId ?? body.branchId ?? getApiSession().branchId
+      );
       return created;
     },
     resolveBarcode: async (
@@ -699,23 +1146,38 @@ export const backendApi = {
         manualOverrideReason?: string;
         hydrateProductDetails?: boolean;
         hydrateStock?: boolean;
+        branchId?: string | null;
       }
     ) => {
       const normalizedCode = code.trim();
       const {
-        hydrateProductDetails = true,
-        hydrateStock = true,
+        hydrateProductDetails = false,
+        hydrateStock = false,
+        branchId: branchIdOverride,
         ...requestOptions
       } = options ?? {};
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
       const query = Object.keys(requestOptions).length
         ? buildQuery(requestOptions, { preserveLimitAndOffset: true })
         : "";
       const payload = await apiClientFetch.get<BarcodeLookupResponse>(
-        `/products/pos/scan/${encodeURIComponent(normalizedCode)}${query}`
+        `/pos/scan/${encodeURIComponent(normalizedCode)}${query}`,
+        {
+          branchScoped: true,
+          headers: {
+            "x-branch-id": effectiveBranchId,
+          },
+        }
       );
       let normalized = normalizeBarcodePayload(payload);
 
-      if (hydrateProductDetails && shouldHydrateScannedProduct(normalized.product)) {
+      if (
+        hydrateProductDetails &&
+        shouldHydrateScannedProduct(normalized.product)
+      ) {
         try {
           const fullProduct = await apiClientFetch.get<ProductListItem>(
             `/products/${normalized.product.id}`
@@ -733,7 +1195,7 @@ export const backendApi = {
         }
       }
 
-      const { branchId } = getApiSession();
+      const branchId = effectiveBranchId;
       const hasKnownStock = Number.isFinite(
         toOptionalFiniteNumber(normalized.product.stock)
       );
@@ -769,6 +1231,15 @@ export const backendApi = {
       query: ProductsQuery = {},
       branchIdOverride?: string | null
     ) => {
+      const normalizedTextSearch = toTrimmedOrUndefined(
+        query.search ?? query.q ?? query.name
+      );
+      const normalizedQuery: ProductsQuery = {
+        ...query,
+        search: normalizedTextSearch,
+        q: normalizedTextSearch,
+        name: normalizedTextSearch,
+      };
       const fallbackOffset = Number(query.offset ?? query.skip ?? 0);
       const fallbackLimit = Number(query.limit ?? query.take ?? 20);
       const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
@@ -776,7 +1247,7 @@ export const backendApi = {
         throw new Error("Missing branch context. Send x-branch-id header.");
       }
       const payload = await apiClientFetch.get<ProductsListResponse>(
-        `/products${buildQuery(query)}`,
+        `/products${buildQuery(normalizedQuery)}`,
         effectiveBranchId
           ? {
               headers: {
@@ -794,7 +1265,7 @@ export const backendApi = {
         );
       }
 
-      const page = normalizeProductsPage(payload, query);
+      const page = normalizeProductsPage(payload, normalizedQuery);
       return {
         items: page.items,
         meta: normalizeOffsetMeta(
@@ -817,7 +1288,9 @@ export const backendApi = {
         `/products/${id}`,
         body
       );
-      emitProductsSync(updated?.branchId ?? body.branchId ?? getApiSession().branchId);
+      emitProductsSync(
+        updated?.branchId ?? body.branchId ?? getApiSession().branchId
+      );
       return updated;
     },
     updateReviewFlags: async (
@@ -912,10 +1385,7 @@ export const backendApi = {
       invalidateStockCache(payload.branchId);
       return created;
     },
-    list: async (
-      query: StockQuery = {},
-      branchIdOverride?: string | null
-    ) => {
+    list: async (query: StockQuery = {}, branchIdOverride?: string | null) => {
       const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
       if (!effectiveBranchId) {
         throw new Error("Missing branch context. Send x-branch-id header.");
@@ -975,6 +1445,104 @@ export const backendApi = {
         }
       );
       return normalizeStockSummary(payload);
+    },
+    summaryCategories: async (
+      query: { lowStockThreshold?: number } = {},
+      branchIdOverride?: string | null
+    ): Promise<StockSummaryCategoriesResponse> => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+      const payload = await apiClientFetch.get<unknown>(
+        `/stocks/summary/categories${buildQuery({
+          lowStockThreshold: query.lowStockThreshold ?? 5,
+        })}`,
+        {
+          headers: {
+            "x-branch-id": effectiveBranchId,
+          },
+        }
+      );
+      return normalizeStockSummaryCategories(payload);
+    },
+    lots: {
+      list: async (
+        query: StockLotsListQuery = {},
+        branchIdOverride?: string | null
+      ): Promise<StockLotsListResponse> => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const safeLimit = Math.max(
+          1,
+          Math.min(100, Math.trunc(Number(query.limit ?? 20)) || 20)
+        );
+        const safePage = Math.max(
+          1,
+          Math.trunc(Number(query.page ?? 1)) || 1
+        );
+        const safeQuery = {
+          search: toTrimmedOrUndefined(query.search),
+          productId: toTrimmedOrUndefined(query.productId),
+          categoryId: toTrimmedOrUndefined(query.categoryId),
+          days:
+            query.days === undefined || query.days === null
+              ? undefined
+              : Math.max(0, Math.trunc(Number(query.days)) || 0),
+          includeExpired:
+            typeof query.includeExpired === "boolean"
+              ? query.includeExpired
+              : undefined,
+          onlyPositive:
+            typeof query.onlyPositive === "boolean"
+              ? query.onlyPositive
+              : undefined,
+          page: safePage,
+          limit: safeLimit,
+        };
+
+        const payload = await apiClientFetch.get<unknown>(
+          `/stocks/lots${buildQuery(safeQuery, {
+            preserveLimitAndOffset: true,
+          })}`,
+          {
+            headers: {
+              "x-branch-id": effectiveBranchId,
+            },
+          }
+        );
+
+        return normalizeStockLotsListResponse(payload, safePage, safeLimit);
+      },
+      create: async (
+        body: UpsertStockLotRequest,
+        branchIdOverride?: string | null
+      ): Promise<StockLot> => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const payload: UpsertStockLotRequest = {
+          productId: toTrimmedOrUndefined(body.productId) ?? "",
+          lotCode: toTrimmedOrUndefined(body.lotCode) ?? "",
+          expiresAt: toTrimmedOrUndefined(body.expiresAt) ?? "",
+          quantity: toFiniteNumber(body.quantity, 0),
+          notes: toTrimmedOrUndefined(body.notes),
+        };
+
+        const created = await apiClientFetch.post<unknown>("/stocks/lots", payload, {
+          headers: {
+            "x-branch-id": effectiveBranchId,
+          },
+        });
+
+        invalidateStockCache(effectiveBranchId);
+        return normalizeStockLot(created);
+      },
     },
   },
   stockMovements: {
@@ -1059,7 +1627,10 @@ export const backendApi = {
         ...body,
         branchId: body.branchId ?? requireActiveBranchId(),
       };
-      const sale = await apiClientFetch.post<Sale>("/sales", payload);
+      const sale = await apiClientFetch.post<SaleDetail | SaleSummary>(
+        "/sales",
+        payload
+      );
       invalidateStockCache(payload.branchId);
       return sale;
     },
@@ -1082,7 +1653,7 @@ export const backendApi = {
         },
       };
       const payload = await apiClientFetch.get<
-        PaginatedResponse<Sale> | Sale[]
+        PaginatedResponse<SaleSummary> | SaleSummary[]
       >(`/sales${buildOffsetQuery(normalizedQuery)}`, requestOptions);
 
       return toPaginatedResponse(
@@ -1091,7 +1662,7 @@ export const backendApi = {
         Number(normalizedQuery.take ?? normalizedQuery.limit ?? 20)
       );
     },
-    getById: (id: string) => apiClientFetch.get<Sale>(`/sales/${id}`),
+    getById: (id: string) => apiClientFetch.get<SaleDetail>(`/sales/${id}`),
     addPayment: (id: string, body: SalePaymentInput) =>
       apiClientFetch.post<SalePayment>(`/sales/${id}/payments`, body),
     paymentsList: async (query: SalePaymentsListQuery = {}) => {
@@ -1104,14 +1675,300 @@ export const backendApi = {
         Number(query.take ?? query.limit ?? 20)
       );
     },
-    cancel: (id: string) => apiClientFetch.delete<Sale | true>(`/sales/${id}`),
+    cancel: (id: string) =>
+      apiClientFetch.delete<SaleDetail | SaleSummary | true>(`/sales/${id}`),
+  },
+  reporting: {
+    dashboard: {
+      summary: (
+        query: {
+          period?: SnapshotPeriod;
+          scope?: "active" | "all";
+          lowStockThreshold?: number;
+        } = {}
+      ) =>
+        apiClientFetch.get<SnapshotMetricsResponse>(
+          `/reporting/dashboard/summary${buildQuery({
+            period: query.period ?? "monthly",
+            scope: query.scope ?? "active",
+            lowStockThreshold: query.lowStockThreshold,
+          })}`,
+          { branchScoped: true }
+        ),
+    },
+    sales: {
+      history: (query: AnalyticsSalesQuery) =>
+        apiClientFetch.get<AnalyticsSalesResponse>(
+          `/reporting/sales/history${buildQuery(query)}`
+        ),
+      priceTypes: {
+        summary: async (
+          query: ReportsSalesPriceTypesSummaryQuery,
+          branchIdOverride?: string | null,
+          options?: { signal?: AbortSignal }
+        ) => {
+          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          if (!effectiveBranchId) {
+            throw new Error("Missing branch context. Send x-branch-id header.");
+          }
+
+          const { branchId: ignoredBranchId, ...summaryQuery } = query;
+          void ignoredBranchId;
+
+          return withRateLimitRetry(
+            () =>
+              apiClientFetch
+                .get<unknown>(
+                  `/reporting/sales/price-types/summary${buildQuery(
+                    summaryQuery,
+                    {
+                      preserveLimitAndOffset: true,
+                    }
+                  )}`,
+                  {
+                    headers: {
+                      "x-branch-id": effectiveBranchId,
+                    },
+                    signal: options?.signal,
+                  }
+                )
+                .then(normalizeSalesPriceTypesSummary),
+            options?.signal
+          );
+        },
+      },
+      pricingSources: {
+        summary: async (
+          query: ReportsSalesPricingSourcesSummaryQuery,
+          branchIdOverride?: string | null,
+          options?: { signal?: AbortSignal }
+        ) => {
+          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          if (!effectiveBranchId) {
+            throw new Error("Missing branch context. Send x-branch-id header.");
+          }
+
+          const { branchId: ignoredBranchId, ...summaryQuery } = query;
+          void ignoredBranchId;
+
+          return withRateLimitRetry(
+            () =>
+              apiClientFetch
+                .get<unknown>(
+                  `/reporting/sales/pricing-sources/summary${buildQuery(
+                    summaryQuery,
+                    {
+                      preserveLimitAndOffset: true,
+                    }
+                  )}`,
+                  {
+                    headers: {
+                      "x-branch-id": effectiveBranchId,
+                    },
+                    signal: options?.signal,
+                  }
+                )
+                .then(normalizeSalesPricingSourcesSummary),
+            options?.signal
+          );
+        },
+      },
+      topProducts: {
+        report: async (
+          query: ReportsTopProductsQuery,
+          branchIdOverride?: string | null,
+          options?: { signal?: AbortSignal }
+        ) => {
+          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          if (!effectiveBranchId) {
+            throw new Error("Missing branch context. Send x-branch-id header.");
+          }
+
+          const { branchId: ignoredBranchId, ...reportQuery } = query;
+          void ignoredBranchId;
+
+          return withRateLimitRetry(
+            () =>
+              apiClientFetch.get<ReportsTopProductsResponse>(
+                `/reporting/sales/top-products/report${buildQuery(reportQuery, {
+                  preserveLimitAndOffset: true,
+                })}`,
+                {
+                  headers: {
+                    "x-branch-id": effectiveBranchId,
+                  },
+                  signal: options?.signal,
+                }
+              ),
+            options?.signal
+          );
+        },
+      },
+    },
+    inventory: {
+      summary: async (
+        query: ReportsInventorySummaryQuery = {},
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const { branchId: ignoredBranchId, ...summaryQueryRaw } = query;
+        void ignoredBranchId;
+        const summaryQuery = {
+          ...summaryQueryRaw,
+          search: toTrimmedOrUndefined(summaryQueryRaw.search),
+          categoryId: toTrimmedOrUndefined(summaryQueryRaw.categoryId),
+        };
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsInventorySummaryResponse>(
+              `/reporting/inventory/summary${buildQuery(summaryQuery, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+      lowStock: async (
+        query: ReportsInventoryLowStockQuery = {},
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const { branchId: ignoredBranchId, ...lowStockQueryRaw } = query;
+        void ignoredBranchId;
+        const lowStockQuery = {
+          ...lowStockQueryRaw,
+          search: toTrimmedOrUndefined(lowStockQueryRaw.search),
+          categoryId: toTrimmedOrUndefined(lowStockQueryRaw.categoryId),
+        };
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsInventoryLowStockResponse>(
+              `/reporting/inventory/low-stock${buildQuery(lowStockQuery, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+    },
+    expenses: {
+      history: (
+        query: {
+          period: SnapshotPeriod;
+          context?: string;
+          category?: string;
+          from?: string;
+          to?: string;
+        },
+        branchIdOverride?: string | null
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+        return apiClientFetch.get<ExpenseAnalyticsResponse>(
+          `/reporting/expenses/history${buildQuery(query)}`,
+          effectiveBranchId
+            ? {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+              }
+            : undefined
+        );
+      },
+      projection: async (
+        query: ReportsExpensesProjectionQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const { branchId: ignoredBranchId, ...projectionQuery } = query;
+        void ignoredBranchId;
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsExpensesProjectionResponse>(
+              `/reporting/expenses/projection${buildQuery(projectionQuery, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+    },
+    cash: {
+      monthly: async (
+        query: ReportsCashMonthlyQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const { branchId: ignoredBranchId, ...monthlyQuery } = query;
+        void ignoredBranchId;
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsCashMonthlyResponse>(
+              `/reporting/cash/monthly${buildQuery(monthlyQuery, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
+    },
   },
   snapshots: {
     metrics: (period: SnapshotPeriod = "monthly") =>
-      apiClientFetch.get<SnapshotMetricsResponse>(
-        `/snapshots/metrics${buildQuery({ period })}`,
-        { branchScoped: true }
-      ),
+      backendApi.reporting.dashboard.summary({
+        period,
+        scope: "active",
+      }),
   },
   expenses: {
     create: (body: CreateExpenseRequest) => {
@@ -1121,10 +1978,14 @@ export const backendApi = {
         ...restBody,
         branchId: body.branchId ?? requireActiveBranchId(),
       };
-      return apiClientFetch.post<Expense>("/expenses", payload).then((created) => {
-        emitExpensesSync(created.branchId ?? payload.branchId ?? getApiSession().branchId);
-        return created;
-      });
+      return apiClientFetch
+        .post<Expense>("/expenses", payload)
+        .then((created) => {
+          emitExpensesSync(
+            created.branchId ?? payload.branchId ?? getApiSession().branchId
+          );
+          return created;
+        });
     },
     list: async (
       query: ExpenseListQuery = {},
@@ -1156,26 +2017,12 @@ export const backendApi = {
       query: {
         period: SnapshotPeriod;
         context?: string;
+        category?: string;
         from?: string;
         to?: string;
       },
       branchIdOverride?: string | null
-    ) => {
-      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
-      if (!effectiveBranchId) {
-        throw new Error("Missing branch context. Send x-branch-id header.");
-      }
-      return apiClientFetch.get<ExpenseAnalyticsResponse>(
-        `/expenses/analytics${buildQuery(query)}`,
-        effectiveBranchId
-          ? {
-              headers: {
-                "x-branch-id": effectiveBranchId,
-              },
-            }
-          : undefined
-      );
-    },
+    ) => backendApi.reporting.expenses.history(query, branchIdOverride),
     getById: (id: string) => apiClientFetch.get<Expense>(`/expenses/${id}`),
     remove: async (id: string) => {
       const deleted = await apiClientFetch.delete<true>(`/expenses/${id}`);
@@ -1196,8 +2043,100 @@ export const backendApi = {
         `/cash/sessions/${sessionId}/close`,
         body
       ),
-    getCurrentSession: () =>
-      apiClientFetch.get<CashSession | null>("/cash/sessions/current"),
+    getCurrentSessionSnapshot: async (
+      query: CashSessionSnapshotRequest = {}
+    ): Promise<CashSessionSnapshotResponse> => {
+      const effectiveBranchId = query.branchIdOverride ?? getApiSession().branchId;
+      const headers: Record<string, string> = {};
+
+      if (effectiveBranchId) {
+        headers["x-branch-id"] = effectiveBranchId;
+      }
+
+      const etag = query.etag?.trim();
+      if (etag) {
+        headers["If-None-Match"] = etag;
+      }
+
+      const lastModified = query.lastModified?.trim();
+      if (lastModified) {
+        headers["If-Modified-Since"] = lastModified;
+      }
+
+      const response = await apiClientFetch.getWithMetadata<CashSession | null>(
+        "/cash/sessions/current",
+        {
+          headers,
+        },
+        [304]
+      );
+
+      if (response.status === 304) {
+        return {
+          status: 304,
+          session: null,
+          etag: response.headers.get("ETag"),
+          lastModified: response.headers.get("Last-Modified"),
+        };
+      }
+
+      return {
+        status: 200,
+        session: response.data ?? null,
+        etag: response.headers.get("ETag"),
+        lastModified: response.headers.get("Last-Modified"),
+      };
+    },
+    getCurrentSummary: async (
+      branchIdOverride?: string | null
+    ): Promise<CashCurrentSummaryResponse> => {
+      const requestOptions = branchIdOverride
+        ? {
+            headers: {
+              "x-branch-id": branchIdOverride,
+            },
+          }
+        : undefined;
+
+      try {
+        const payload = await apiClientFetch.get<unknown>(
+          "/cash/sessions/current/summary",
+          requestOptions
+        );
+        return normalizeCashCurrentSummary(payload);
+      } catch (error) {
+        if (!(error instanceof ApiError) || error.status !== 404) {
+          throw error;
+        }
+
+        const response = await apiClientFetch.getWithMetadata<CashSession | null>(
+          "/cash/sessions/current",
+          requestOptions
+        );
+        const session = response.data ?? null;
+        const hasOpenSession = Boolean(session && session.status === "OPEN");
+
+        return {
+          hasOpenSession,
+          session: hasOpenSession ? session : null,
+          branchId: session?.branchId ?? branchIdOverride ?? null,
+          updatedAt: session?.lastActivityAt ?? null,
+        };
+      }
+    },
+    getCurrentSession: (branchIdOverride?: string | null) => {
+      const requestOptions = branchIdOverride
+        ? {
+            headers: {
+              "x-branch-id": branchIdOverride,
+            },
+          }
+        : undefined;
+
+      return apiClientFetch
+        .getWithMetadata<CashSession | null>("/cash/sessions/current", requestOptions)
+        .then((response) => response.data ?? null);
+    },
     listSessions: async (
       query: {
         from?: string;
@@ -1241,11 +2180,28 @@ export const backendApi = {
       if (!effectiveBranchId) {
         throw new Error("Missing branch context. Send x-branch-id header.");
       }
+      const fallbackLimit = Math.min(
+        100,
+        Math.max(1, toFiniteNumber(query.take ?? query.limit, 20))
+      );
+      const fallbackOffset = Math.max(
+        0,
+        toFiniteNumber(query.skip ?? query.offset, 0)
+      );
+      const fallbackPage = Math.max(
+        1,
+        toFiniteNumber(query.page, Math.floor(fallbackOffset / fallbackLimit) + 1)
+      );
+
       const safeQuery = {
         date: query.date,
+        page: fallbackPage,
+        limit: fallbackLimit,
       };
       const payload = await apiClientFetch.get<Record<string, unknown>>(
-        `/cash/book/daily${buildQuery(safeQuery)}`,
+        `/cash/book/daily${buildQuery(safeQuery, {
+          preserveLimitAndOffset: true,
+        })}`,
         effectiveBranchId
           ? {
               headers: {
@@ -1254,9 +2210,6 @@ export const backendApi = {
             }
           : undefined
       );
-
-      const fallbackOffset = Number(query.skip ?? query.offset ?? 0);
-      const fallbackLimit = Number(query.take ?? query.limit ?? 30);
 
       const entriesPayload = payload.entries ?? payload.items ?? [];
       let entries: PaginatedResponse<CashBookEntry>;
@@ -1364,148 +2317,82 @@ export const backendApi = {
   },
   analytics: {
     sales: (query: AnalyticsSalesQuery) =>
-      apiClientFetch.get<AnalyticsSalesResponse>(
-        `/analytics/sales${buildQuery(query)}`
-      ),
+      backendApi.reporting.sales.history(query),
   },
   reports: {
     sales: {
+      priceTypes: async (
+        query: ReportsSalesPriceTypesSummaryQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) =>
+        backendApi.reporting.sales.priceTypes.summary(
+          query,
+          branchIdOverride,
+          options
+        ),
+      pricingSources: async (
+        query: ReportsSalesPricingSourcesSummaryQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) =>
+        backendApi.reporting.sales.pricingSources.summary(
+          query,
+          branchIdOverride,
+          options
+        ),
       topProducts: async (
         query: ReportsTopProductsQuery,
         branchIdOverride?: string | null,
         options?: { signal?: AbortSignal }
-      ) => {
-        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
-        if (!effectiveBranchId) {
-          throw new Error("Missing branch context. Send x-branch-id header.");
-        }
-
-        return withRateLimitRetry(
-          () =>
-            apiClientFetch.get<ReportsTopProductsResponse>(
-              `/reports/sales/top-products${buildQuery(query, {
-                preserveLimitAndOffset: true,
-              })}`,
-              {
-                headers: {
-                  "x-branch-id": effectiveBranchId,
-                },
-                signal: options?.signal,
-              }
-            ),
-          options?.signal
-        );
-      },
+      ) =>
+        backendApi.reporting.sales.topProducts.report(
+          query,
+          branchIdOverride,
+          options
+        ),
     },
     inventory: {
       summary: async (
         query: ReportsInventorySummaryQuery = {},
         branchIdOverride?: string | null,
         options?: { signal?: AbortSignal }
-      ) => {
-        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
-        if (!effectiveBranchId) {
-          throw new Error("Missing branch context. Send x-branch-id header.");
-        }
-
-        return withRateLimitRetry(
-          () =>
-            apiClientFetch.get<ReportsInventorySummaryResponse>(
-              `/reports/inventory/summary${buildQuery(query, {
-                preserveLimitAndOffset: true,
-              })}`,
-              {
-                headers: {
-                  "x-branch-id": effectiveBranchId,
-                },
-                signal: options?.signal,
-              }
-            ),
-          options?.signal
-        );
-      },
+      ) =>
+        backendApi.reporting.inventory.summary(
+          query,
+          branchIdOverride,
+          options
+        ),
       lowStock: async (
         query: ReportsInventoryLowStockQuery = {},
         branchIdOverride?: string | null,
         options?: { signal?: AbortSignal }
-      ) => {
-        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
-        if (!effectiveBranchId) {
-          throw new Error("Missing branch context. Send x-branch-id header.");
-        }
-
-        return withRateLimitRetry(
-          () =>
-            apiClientFetch.get<ReportsInventoryLowStockResponse>(
-              `/reports/inventory/low-stock${buildQuery(query, {
-                preserveLimitAndOffset: true,
-              })}`,
-              {
-                headers: {
-                  "x-branch-id": effectiveBranchId,
-                },
-                signal: options?.signal,
-              }
-            ),
-          options?.signal
-        );
-      },
+      ) =>
+        backendApi.reporting.inventory.lowStock(
+          query,
+          branchIdOverride,
+          options
+        ),
     },
     expenses: {
       projection: async (
         query: ReportsExpensesProjectionQuery,
         branchIdOverride?: string | null,
         options?: { signal?: AbortSignal }
-      ) => {
-        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
-        if (!effectiveBranchId) {
-          throw new Error("Missing branch context. Send x-branch-id header.");
-        }
-
-        return withRateLimitRetry(
-          () =>
-            apiClientFetch.get<ReportsExpensesProjectionResponse>(
-              `/reports/expenses/projection${buildQuery(query, {
-                preserveLimitAndOffset: true,
-              })}`,
-              {
-                headers: {
-                  "x-branch-id": effectiveBranchId,
-                },
-                signal: options?.signal,
-              }
-            ),
-          options?.signal
-        );
-      },
+      ) =>
+        backendApi.reporting.expenses.projection(
+          query,
+          branchIdOverride,
+          options
+        ),
     },
     cash: {
       monthly: async (
         query: ReportsCashMonthlyQuery,
         branchIdOverride?: string | null,
         options?: { signal?: AbortSignal }
-      ) => {
-        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
-        if (!effectiveBranchId) {
-          throw new Error("Missing branch context. Send x-branch-id header.");
-        }
-
-        return withRateLimitRetry(
-          () =>
-            apiClientFetch.get<ReportsCashMonthlyResponse>(
-              `/reports/cash/monthly${buildQuery(query, {
-                preserveLimitAndOffset: true,
-              })}`,
-              {
-                headers: {
-                  "x-branch-id": effectiveBranchId,
-                },
-                signal: options?.signal,
-              }
-            ),
-          options?.signal
-        );
-      },
+      ) =>
+        backendApi.reporting.cash.monthly(query, branchIdOverride, options),
     },
   },
   audit: {
@@ -1539,13 +2426,16 @@ export const backendApi = {
     query: ProductsQuery = {},
     branchIdOverride?: string | null
   ) => {
+    const normalizedSearch = toTrimmedOrUndefined(
+      query.search ?? query.q ?? query.name
+    );
     const normalizedQuery: ProductsQuery = {
       ...query,
       skip: query.skip ?? query.offset,
       take: query.take ?? query.limit,
-      name: query.name ?? query.search ?? query.q,
-      q: query.q ?? query.search ?? query.name,
-      search: query.search ?? query.q ?? query.name,
+      name: normalizedSearch,
+      q: normalizedSearch,
+      search: normalizedSearch,
     };
 
     const explicitBranchId = branchIdOverride ?? null;

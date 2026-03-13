@@ -1,10 +1,14 @@
 "use client";
 
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import type { StockSummaryResponse } from "@/lib/api-types";
+import type {
+  StockSummaryCategoriesResponse,
+  StockSummaryResponse,
+} from "@/lib/api-types";
 
 interface InventoryKpisCardsProps {
   summary: StockSummaryResponse;
+  categoriesSummary?: StockSummaryCategoriesResponse | null;
 }
 
 const currencyFormatter = new Intl.NumberFormat("es-AR", {
@@ -15,7 +19,26 @@ const currencyFormatter = new Intl.NumberFormat("es-AR", {
 
 const numberFormatter = new Intl.NumberFormat("es-AR");
 
-export function InventoryKpisCards({ summary }: InventoryKpisCardsProps) {
+export function InventoryKpisCards({
+  summary,
+  categoriesSummary,
+}: InventoryKpisCardsProps) {
+  const categoriesCount = Number(
+    categoriesSummary?.total ?? categoriesSummary?.items?.length ?? 0
+  );
+
+  const categoriesWithProducts = Number(
+    (categoriesSummary?.items ?? []).filter(
+      (item) => Number(item.productsTotal ?? 0) > 0
+    ).length
+  );
+
+  const categoriesWithStock = Number(
+    (categoriesSummary?.items ?? []).filter(
+      (item) => Number(item.stockUnitsTotal ?? 0) > 0
+    ).length
+  );
+
   const metrics = [
     {
       title: "Productos Totales",
@@ -45,15 +68,15 @@ export function InventoryKpisCards({ summary }: InventoryKpisCardsProps) {
     },
     {
       title: "Categorias Totales",
-      value: numberFormatter.format(Number(summary.categories.total ?? 0)),
+      value: numberFormatter.format(categoriesCount),
     },
     {
       title: "Categorias con Productos",
-      value: numberFormatter.format(Number(summary.categories.withProducts ?? 0)),
+      value: numberFormatter.format(categoriesWithProducts),
     },
     {
       title: "Categorias con Stock",
-      value: numberFormatter.format(Number(summary.categories.withStock ?? 0)),
+      value: numberFormatter.format(categoriesWithStock),
     },
   ];
 

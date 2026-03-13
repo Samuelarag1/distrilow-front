@@ -65,10 +65,11 @@ export const productsApi = {
   },
 
   search: async (q: string) => {
+    const normalizedQuery = q.trim();
     const page = await backendApi.productsWithStock({
-      name: q,
-      q,
-      search: q,
+      name: normalizedQuery,
+      q: normalizedQuery,
+      search: normalizedQuery,
       take: 20,
       skip: 0,
     });

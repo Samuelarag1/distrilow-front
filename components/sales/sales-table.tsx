@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -60,14 +61,14 @@ function getStatusText(status: string) {
 }
 
 export function SalesTable() {
-  const { sales, isLoading, registerSalePayment, cancelSale } =
+  const { sales, isLoading, registerSalePayment, cancelSale, getSaleDetail } =
     useTransactions();
   const { businessType } = useBusiness();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
-  const [detailSale, setDetailSale] = useState<Sale | null>(null);
+  const [detailSaleId, setDetailSaleId] = useState<string | null>(null);
   const [saleToPay, setSaleToPay] = useState<Sale | null>(null);
   const [isPayDialogOpen, setIsPayDialogOpen] = useState(false);
   const [payAmount, setPayAmount] = useState("");
@@ -77,6 +78,18 @@ export function SalesTable() {
   const [cancelTarget, setCancelTarget] = useState<Sale | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const pageSize = 10;
+  const {
+    data: detailSale,
+    isLoading: isLoadingDetailSale,
+    error: detailSaleError,
+  } = useSWR(
+    detailSaleId ? (["/sales", detailSaleId] as const) : null,
+    () => getSaleDetail(detailSaleId as string),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
 
   const filteredSales = useMemo(
     () =>
@@ -289,7 +302,7 @@ export function SalesTable() {
                                 <Button
                                   variant="outline"
                                   size="sm"
-                                  onClick={() => setDetailSale(sale)}
+                                  onClick={() => setDetailSaleId(sale.id)}
                                 >
                                   <Eye className="h-3.5 w-3.5" />
                                 </Button>
@@ -359,17 +372,27 @@ export function SalesTable() {
       </CardContent>
 
       <Dialog
-        open={Boolean(detailSale)}
+        open={Boolean(detailSaleId)}
         onOpenChange={(open) => {
-          if (!open) setDetailSale(null);
+          if (!open) setDetailSaleId(null);
         }}
       >
         <DialogContent className="max-w-lg">
           <DialogHeader>
             <DialogTitle>Detalle de Venta</DialogTitle>
-            <DialogDescription>ID: {detailSale?.id}</DialogDescription>
+            <DialogDescription>ID: {detailSaleId}</DialogDescription>
           </DialogHeader>
-          {detailSale && (
+          {isLoadingDetailSale && (
+            <p className="text-sm text-muted-foreground">
+              Cargando detalle de venta...
+            </p>
+          )}
+          {!isLoadingDetailSale && detailSaleError && (
+            <p className="text-sm text-destructive">
+              No se pudo cargar el detalle de la venta.
+            </p>
+          )}
+          {!isLoadingDetailSale && !detailSaleError && detailSale && (
             <div className="space-y-3 text-sm">
               <div className="grid grid-cols-2 gap-2">
                 <div>
@@ -401,13 +424,13 @@ export function SalesTable() {
               </div>
               <div className="rounded-md border p-3">
                 <p className="font-semibold mb-2">Pagos</p>
-                {detailSale.payments.length === 0 ? (
+                {(detailSale.payments?.length ?? 0) === 0 ? (
                   <p className="text-muted-foreground">
                     Sin pagos registrados.
                   </p>
                 ) : (
                   <div className="space-y-2">
-                    {detailSale.payments.map((payment, index) => (
+                    {(detailSale.payments ?? []).map((payment, index) => (
                       <div
                         key={`${payment.id ?? index}`}
                         className="flex justify-between gap-2"
@@ -422,7 +445,7 @@ export function SalesTable() {
             </div>
           )}
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDetailSale(null)}>
+            <Button variant="outline" onClick={() => setDetailSaleId(null)}>
               Cerrar
             </Button>
           </DialogFooter>

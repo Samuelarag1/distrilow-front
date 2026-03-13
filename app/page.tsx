@@ -10,7 +10,9 @@ export const dynamic = "force-dynamic";
 
 async function getMetrics(): Promise<DashboardMetrics> {
   try {
-    const snapshot = await serverApi.get("/snapshots/metrics?period=monthly");
+    const snapshot = await serverApi.get(
+      "/reporting/dashboard/summary?period=monthly&scope=active"
+    );
     return normalizeSnapshotMetrics(snapshot);
   } catch {
     return normalizeSnapshotMetrics({});

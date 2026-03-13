@@ -16,7 +16,9 @@ export async function createSaleAction(data: any) {
 
 export async function getSalesMetricsAction() {
   try {
-    return await serverApi.get("/snapshots/metrics?period=monthly");
+    return await serverApi.get(
+      "/reporting/dashboard/summary?period=monthly&scope=active"
+    );
   } catch {
     return { error: "Metrics not available" };
   }

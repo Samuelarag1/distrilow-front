@@ -85,6 +85,7 @@ export function StockReport() {
   const [error, setError] = useState<string | null>(null);
 
   const debouncedSearch = useDebouncedValue(searchQuery, 350);
+  const normalizedSearch = debouncedSearch.trim();
   const limit = 20;
 
   const { data: categoriesData } = useSWR<Category[]>(
@@ -97,7 +98,7 @@ export function StockReport() {
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [debouncedSearch, selectedCategory]);
+  }, [normalizedSearch, selectedCategory]);
 
   useEffect(() => {
     if (!branchId) {
@@ -115,10 +116,10 @@ export function StockReport() {
 
       try {
         const [summaryResponse, lowStockResponse] = await Promise.all([
-          backendApi.reports.inventory.summary(
+          backendApi.reporting.inventory.summary(
             {
               branchId,
-              search: debouncedSearch || undefined,
+              search: normalizedSearch || undefined,
               categoryId:
                 selectedCategory !== "all" ? selectedCategory : undefined,
               lowStockThreshold: 5,
@@ -126,10 +127,10 @@ export function StockReport() {
             branchId,
             { signal: controller.signal }
           ),
-          backendApi.reports.inventory.lowStock(
+          backendApi.reporting.inventory.lowStock(
             {
               branchId,
-              search: debouncedSearch || undefined,
+              search: normalizedSearch || undefined,
               categoryId:
                 selectedCategory !== "all" ? selectedCategory : undefined,
               page: currentPage,
@@ -166,7 +167,7 @@ export function StockReport() {
     return () => {
       controller.abort();
     };
-  }, [branchId, debouncedSearch, selectedCategory, currentPage]);
+  }, [branchId, normalizedSearch, selectedCategory, currentPage]);
 
   const categories = useMemo(
     () =>

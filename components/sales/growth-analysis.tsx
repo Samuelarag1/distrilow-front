@@ -72,7 +72,13 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
 
   const { data, isLoading } = useSWR(
     branchId
-      ? ["growth", branchId, period, ranges.current.from, ranges.current.to]
+      ? [
+          "reporting-sales-growth",
+          branchId,
+          period,
+          ranges.current.from,
+          ranges.current.to,
+        ]
       : null,
     async () => {
       const [
@@ -83,32 +89,32 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
         avgTicketCurrent,
         avgTicketPrev,
       ] = await Promise.all([
-        backendApi.analytics.sales({
+        backendApi.reporting.sales.history({
           ...ranges.current,
           groupBy: ranges.groupBy,
           metric: "revenue",
         }),
-        backendApi.analytics.sales({
+        backendApi.reporting.sales.history({
           ...ranges.previous,
           groupBy: ranges.groupBy,
           metric: "revenue",
         }),
-        backendApi.analytics.sales({
+        backendApi.reporting.sales.history({
           ...ranges.current,
           groupBy: ranges.groupBy,
           metric: "count",
         }),
-        backendApi.analytics.sales({
+        backendApi.reporting.sales.history({
           ...ranges.previous,
           groupBy: ranges.groupBy,
           metric: "count",
         }),
-        backendApi.analytics.sales({
+        backendApi.reporting.sales.history({
           ...ranges.current,
           groupBy: ranges.groupBy,
           metric: "avgTicket",
         }),
-        backendApi.analytics.sales({
+        backendApi.reporting.sales.history({
           ...ranges.previous,
           groupBy: ranges.groupBy,
           metric: "avgTicket",

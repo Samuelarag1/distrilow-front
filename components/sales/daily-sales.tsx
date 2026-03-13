@@ -106,28 +106,32 @@ export function DailySales() {
         const date = new Date(sale.date);
         return isSameCalendarDay(date, today);
       })
-      .map((sale) => ({
-        id: sale.id,
-        time: new Date(sale.date).toLocaleTimeString([], {
-          hour: "2-digit",
-          minute: "2-digit",
-        }),
-        customer: sale.customerName || "Consumidor Final",
-        items: sale.items,
-        total: sale.totalAmount ?? sale.amount,
-        method:
-          sale.payments.length > 0
-            ? sale.payments.map((payment) => payment.method).join(" + ")
-            : "Sin pago",
-        status:
-          sale.lifecycleStatus === "CANCELLED"
-            ? "cancelled"
-            : sale.chargeStatus === "PAID"
-            ? "paid"
-            : sale.chargeStatus === "PARTIALLY_PAID"
-            ? "partial"
-            : "pending",
-      }))
+      .map((sale) => {
+        const paymentMethods =
+          sale.paymentMethods.length > 0
+            ? sale.paymentMethods
+            : Object.keys(sale.paymentBreakdown ?? {});
+        return {
+          id: sale.id,
+          time: new Date(sale.date).toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+          }),
+          customer: sale.customerName || "Consumidor Final",
+          items: sale.items,
+          total: sale.totalAmount ?? sale.amount,
+          method:
+            paymentMethods.length > 0 ? paymentMethods.join(" + ") : "Sin pago",
+          status:
+            sale.lifecycleStatus === "CANCELLED"
+              ? "cancelled"
+              : sale.chargeStatus === "PAID"
+              ? "paid"
+              : sale.chargeStatus === "PARTIALLY_PAID"
+              ? "partial"
+              : "pending",
+        };
+      })
       .sort((a, b) => (a.time < b.time ? 1 : -1));
   }, [sales, branchId]);
 

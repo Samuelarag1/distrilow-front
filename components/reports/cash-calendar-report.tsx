@@ -13,7 +13,6 @@ import {
   CalendarDays,
   ChevronLeft,
   ChevronRight,
-  Receipt,
   RefreshCcw,
   Wallet,
 } from "lucide-react";
@@ -111,7 +110,7 @@ export function CashCalendarReport() {
       setIsMonthlyLoading(true);
       setError(null);
 
-      const payload = await backendApi.reports.cash.monthly(
+      const payload = await backendApi.reporting.cash.monthly(
         {
           branchId,
           fromMonth,
@@ -227,7 +226,7 @@ export function CashCalendarReport() {
                 Cajas del mes
               </CardTitle>
               {/* <p className="text-sm text-muted-foreground">
-                Consolidado desde /reports/cash/monthly y detalle diario desde
+                Consolidado desde /reporting/cash/monthly y detalle diario desde
                 /cash/book/daily.
               </p> */}
             </div>

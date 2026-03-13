@@ -76,7 +76,7 @@ export function ExpensesProjectionReport() {
   const { data, isLoading, error, mutate } = useSWR(
     branchId
       ? [
-          "reports-expenses-projection",
+          "reporting-expenses-projection",
           branchId,
           from,
           to,
@@ -86,7 +86,7 @@ export function ExpensesProjectionReport() {
         ]
       : null,
     () =>
-      backendApi.reports.expenses.projection(
+      backendApi.reporting.expenses.projection(
         {
           branchId,
           from,
@@ -245,7 +245,9 @@ export function ExpensesProjectionReport() {
       <Card>
         <CardHeader>
           <CardTitle>Filtros de proyeccion</CardTitle>
-          <CardDescription>Endpoint: /reports/expenses/projection</CardDescription>
+          <CardDescription>
+            Endpoint: /reporting/expenses/projection
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">

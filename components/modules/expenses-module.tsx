@@ -232,7 +232,7 @@ export function ExpensesModule() {
 
     try {
       setIsLoadingAnalytics(true);
-      const response = await backendApi.expenses.analytics(
+      const response = await backendApi.reporting.expenses.history(
         {
           period: analyticsPeriod,
         },

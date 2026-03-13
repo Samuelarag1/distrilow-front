@@ -33,6 +33,7 @@ const BRANCH_SCOPED_PREFIXES = [
   "/sales",
   "/expenses",
   "/cash",
+  "/reporting",
   "/analytics",
   "/reports",
 ] as const;
@@ -165,6 +166,14 @@ function shouldTryRefresh(path: string, method: string) {
   if (path === "/auth/logout") return false;
   if (method.toUpperCase() === "OPTIONS") return false;
   return true;
+}
+
+function shouldAttachAuthorizationHeader(path: string) {
+  return !(
+    path === "/auth/login" ||
+    path === "/auth/refresh" ||
+    path === "/auth/logout"
+  );
 }
 
 function decodeBase64Url(value: string) {
@@ -396,6 +405,48 @@ async function request<T = unknown>(
   path: string,
   options: RequestOptions = {}
 ): Promise<T> {
+  const res = await executeRequest(path, options);
+  await ensureResponseOkOrThrow(res);
+  return parseResponse<T>(res);
+}
+
+export interface ApiClientResponse<T> {
+  status: number;
+  headers: Headers;
+  data: T | null;
+}
+
+async function requestWithMetadata<T = unknown>(
+  path: string,
+  options: RequestOptions = {},
+  acceptedStatuses: number[] = []
+): Promise<ApiClientResponse<T>> {
+  const res = await executeRequest(path, options);
+  const acceptedStatusSet = new Set(acceptedStatuses);
+
+  if (!res.ok && !acceptedStatusSet.has(res.status)) {
+    await ensureResponseOkOrThrow(res);
+  }
+
+  if (res.status === 204 || res.status === 304) {
+    return {
+      status: res.status,
+      headers: res.headers,
+      data: null,
+    };
+  }
+
+  return {
+    status: res.status,
+    headers: res.headers,
+    data: await parseResponse<T>(res),
+  };
+}
+
+async function executeRequest(
+  path: string,
+  options: RequestOptions = {}
+): Promise<Response> {
   const method = (options.method ?? "GET").toUpperCase();
   const branchScoped =
     options.branchScoped === undefined
@@ -414,7 +465,11 @@ async function request<T = unknown>(
   const tokenToUse = getSessionToken();
   const branchToUse = branchScoped ? getSessionBranchId() : null;
 
-  if (tokenToUse && !headers.has("Authorization")) {
+  if (
+    tokenToUse &&
+    shouldAttachAuthorizationHeader(path) &&
+    !headers.has("Authorization")
+  ) {
     headers.set("Authorization", `Bearer ${tokenToUse}`);
   }
   if (branchScoped && branchToUse && !headers.has("x-branch-id")) {
@@ -439,66 +494,66 @@ async function request<T = unknown>(
   if (res.status === 401 && !options._retried && shouldTryRefresh(path, method)) {
     const refreshed = await refreshSession();
     if (refreshed) {
-      return request<T>(path, { ...options, _retried: true });
+      return executeRequest(path, { ...options, _retried: true });
     }
   }
 
-  if (!res.ok) {
-    if (res.status === 401 && typeof window !== "undefined") {
-      authToken = null;
-      activeBranchId = null;
-      clearSessionCookies();
-      window.location.href = "/login";
-    }
+  return res;
+}
 
-    const contentType = res.headers.get("content-type") ?? "";
-    let bodyText = "";
-    let parsedBody: unknown;
-    let friendlyMessage = "";
+async function ensureResponseOkOrThrow(res: Response): Promise<void> {
+  if (res.ok) return;
 
-    try {
-      if (contentType.includes("application/json")) {
-        parsedBody = await res.json();
-        bodyText =
-          typeof parsedBody === "object" && parsedBody !== null
-            ? JSON.stringify(parsedBody)
-            : String(parsedBody ?? "");
-        friendlyMessage = extractApiMessage(parsedBody, bodyText);
-      } else {
-        bodyText = await res.text();
-        friendlyMessage = bodyText;
-      }
-    } catch {
-      bodyText = "";
-      friendlyMessage = "";
-    }
-
-    const statusHint =
-      res.status === 403
-        ? "No tienes acceso a esta sucursal o no hay sucursal activa en la sesion."
-        : `API request failed (${res.status})`;
-    const publicMessage =
-      res.status >= 500
-        ? "Ocurrio un error del servidor. Intenta nuevamente en unos minutos."
-        : friendlyMessage || bodyText || statusHint;
-    const retryAfterSeconds = parseRetryAfterSeconds(
-      res.headers.get("Retry-After")
-    );
-
-    throw new ApiError(
-      res.status,
-      publicMessage,
-      parsedBody,
-      retryAfterSeconds
-    );
+  if (res.status === 401 && typeof window !== "undefined") {
+    authToken = null;
+    activeBranchId = null;
+    clearSessionCookies();
+    window.location.href = "/login";
   }
 
-  return parseResponse<T>(res);
+  const contentType = res.headers.get("content-type") ?? "";
+  let bodyText = "";
+  let parsedBody: unknown;
+  let friendlyMessage = "";
+
+  try {
+    if (contentType.includes("application/json")) {
+      parsedBody = await res.json();
+      bodyText =
+        typeof parsedBody === "object" && parsedBody !== null
+          ? JSON.stringify(parsedBody)
+          : String(parsedBody ?? "");
+      friendlyMessage = extractApiMessage(parsedBody, bodyText);
+    } else {
+      bodyText = await res.text();
+      friendlyMessage = bodyText;
+    }
+  } catch {
+    bodyText = "";
+    friendlyMessage = "";
+  }
+
+  const statusHint =
+    res.status === 403
+      ? "No tienes acceso a esta sucursal o no hay sucursal activa en la sesion."
+      : `API request failed (${res.status})`;
+  const publicMessage =
+    res.status >= 500
+      ? "Ocurrio un error del servidor. Intenta nuevamente en unos minutos."
+      : friendlyMessage || bodyText || statusHint;
+  const retryAfterSeconds = parseRetryAfterSeconds(res.headers.get("Retry-After"));
+
+  throw new ApiError(res.status, publicMessage, parsedBody, retryAfterSeconds);
 }
 
 export const apiClientFetch = {
   get: <T = unknown>(url: string, options?: Omit<RequestOptions, "method">) =>
     request<T>(url, options),
+  getWithMetadata: <T = unknown>(
+    url: string,
+    options?: Omit<RequestOptions, "method">,
+    acceptedStatuses?: number[]
+  ) => requestWithMetadata<T>(url, options, acceptedStatuses),
   post: <T = unknown>(url: string, body?: unknown, options?: RequestOptions) =>
     request<T>(url, {
       ...options,

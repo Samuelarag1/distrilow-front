@@ -212,6 +212,7 @@ export interface OffsetPaginationMeta {
   limit: number;
   hasMore: boolean;
   page?: number;
+  totalPages?: number;
   hasNextPage?: boolean;
   hasPreviousPage?: boolean;
 }
@@ -245,6 +246,7 @@ export interface Product {
   costReviewPending?: boolean;
   isActive?: boolean;
   categoryId?: string | null;
+  categoryName?: string | null;
   branchId?: string | null;
   brand?: string | null;
   trackStock?: boolean;
@@ -351,16 +353,23 @@ export interface ProductPriceCostHistoryQuery {
 
 export interface BarcodeLookupResolved {
   code?: string;
-  barcodeType?: "STANDARD" | "INTERNAL_EAN13" | "UNKNOWN";
+  barcodeType?: "STANDARD" | "INTERNAL_EAN13";
   rawBarcode?: string;
   barcodeBase?: string;
-  pluCode?: string;
+  pluCode?: string | null;
   quantity?: number;
   unitPrice?: number;
   subtotal?: number;
   priceType?: PriceType;
   pricingSource?: PricingMode;
   product: ProductListItem;
+  stock?: {
+    branchId: string;
+    quantity: number;
+    averageCost: number;
+    lastPurchaseCost: number;
+    updatedAt: string | null;
+  };
 }
 
 export type BarcodeLookupResponse = ProductListItem | BarcodeLookupResolved;
@@ -392,6 +401,58 @@ export interface StockQuery {
   lowStockThreshold?: number;
 }
 
+export type StockLotStatus = "expired" | "today" | "upcoming" | (string & {});
+
+export interface StockLotProductSnapshot {
+  id: string;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  pluCode?: string | null;
+  categoryId?: string | null;
+  categoryName?: string | null;
+}
+
+export interface StockLot {
+  id: string;
+  branchId: string;
+  productId: string;
+  lotCode: string;
+  expiresAt: string;
+  quantity: number;
+  notes?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
+  daysUntilExpiry?: number | null;
+  status?: StockLotStatus | null;
+  product?: StockLotProductSnapshot | null;
+}
+
+export interface StockLotsListQuery {
+  search?: string;
+  productId?: string;
+  categoryId?: string;
+  days?: number;
+  includeExpired?: boolean;
+  onlyPositive?: boolean;
+  page?: number;
+  limit?: number;
+}
+
+export interface StockLotsListResponse {
+  items: StockLot[];
+  filters?: Partial<StockLotsListQuery>;
+  meta: OffsetPaginationMeta;
+}
+
+export interface UpsertStockLotRequest {
+  productId: string;
+  lotCode: string;
+  expiresAt: string;
+  quantity: number;
+  notes?: string;
+}
+
 export interface StockSummaryResponse {
   products: {
     total: number;
@@ -405,12 +466,23 @@ export interface StockSummaryResponse {
   quantity: {
     total: number;
   };
-  categories: {
-    total: number;
-    withProducts: number;
-    withStock: number;
-  };
   [key: string]: unknown;
+}
+
+export interface StockSummaryCategoryItem {
+  categoryId?: string | null;
+  categoryName?: string | null;
+  productsTotal?: number;
+  lowStockTotal?: number;
+  stockUnitsTotal?: number;
+  inventoryValueCost?: number;
+  inventoryValueRetail?: number;
+  inventoryValueWholesale?: number;
+}
+
+export interface StockSummaryCategoriesResponse {
+  items: StockSummaryCategoryItem[];
+  total: number;
 }
 
 export interface Movement {
@@ -475,6 +547,10 @@ export interface SalePayment extends SalePaymentInput {
   updatedAt?: string;
 }
 
+export type SalePaymentBreakdown = Partial<
+  Record<PaymentMethod | string, number>
+>;
+
 export interface CreateSaleRequest {
   branchId?: string;
   clientId?: string;
@@ -482,20 +558,31 @@ export interface CreateSaleRequest {
   payments?: SalePaymentInput[];
 }
 
-export interface Sale {
+export interface SaleSummary {
   id: string;
   branchId: string;
+  userId?: string | null;
   clientId?: string | null;
   total?: number;
   totalAmount?: number;
+  totalCost?: number;
+  profit?: number;
   paidAmount?: number;
   outstandingAmount?: number;
+  paymentStatus?: SaleChargeStatus;
   chargeStatus?: SaleChargeStatus;
   lifecycleStatus?: SaleLifecycleStatus;
   status?: string;
   cancelledAt?: string | null;
+  deletedAt?: string | null;
+  itemsCount?: number;
+  itemsQuantity?: number;
+  paymentBreakdown?: SalePaymentBreakdown;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface SaleDetail extends SaleSummary {
   items: Array<{
     id?: string;
     productId: string;
@@ -513,6 +600,8 @@ export interface Sale {
   }>;
   payments?: SalePayment[];
 }
+
+export type Sale = SaleSummary | SaleDetail;
 
 export interface SaleListQuery {
   // skip?: number;
@@ -643,8 +732,24 @@ export interface CashSession {
   notes?: string;
   openedAt?: string;
   closedAt?: string | null;
+  salesCount?: number;
+  paymentsCount?: number;
+  lastActivityAt?: string | null;
   movements?: CashMovement[];
-  totals?: Record<string, number>;
+  totals?: {
+    cashPayments?: number;
+    transferPayments?: number;
+    movementIn?: number;
+    movementOut?: number;
+    [key: string]: number | undefined;
+  };
+}
+
+export interface CashCurrentSummaryResponse {
+  hasOpenSession: boolean;
+  session: CashSession | null;
+  branchId?: string | null;
+  updatedAt?: string | null;
 }
 
 export interface CashMovement {
@@ -690,9 +795,16 @@ export interface CashBookDailySummary {
 
 export interface CashBookEntry {
   id: string;
-  type: string;
+  sourceType: string;
+  direction: "IN" | "OUT" | "INFO" | (string & {});
   amount: number;
   method?: string | null;
+  receivedAmount?: number | null;
+  changeAmount?: number | null;
+  netAmount?: number | null;
+  notes?: string | null;
+  reference?: string | null;
+  type?: string;
   description?: string | null;
   saleId?: string | null;
   sessionId?: string | null;
@@ -700,11 +812,12 @@ export interface CashBookEntry {
 }
 
 export interface CashBookDailyQuery {
+  page?: number;
+  limit?: number;
+  offset?: number;
   skip?: number;
   take?: number;
   date?: string;
-  offset?: number;
-  limit?: number;
 }
 
 export interface CashBookDailyResponse {
@@ -769,6 +882,60 @@ export interface ReportsTopProductsResponse {
   };
   limit: number;
   items: ReportsTopProductItem[];
+}
+
+export interface ReportsSalesPriceTypesSummaryQuery {
+  branchId?: string;
+  from: string;
+  to: string;
+  categoryId?: string;
+}
+
+export interface ReportsSalesPriceTypesSummaryItem {
+  key: PriceType | string;
+  label?: string | null;
+  unitsTotal: number;
+  revenueTotal: number;
+  salesCount?: number;
+}
+
+export interface ReportsSalesPriceTypesSummaryResponse {
+  range: {
+    from: string;
+    to: string;
+  };
+  filters: {
+    branchId?: string | null;
+    categoryId?: string | null;
+  };
+  items: ReportsSalesPriceTypesSummaryItem[];
+}
+
+export interface ReportsSalesPricingSourcesSummaryQuery {
+  branchId?: string;
+  from: string;
+  to: string;
+  categoryId?: string;
+}
+
+export interface ReportsSalesPricingSourcesSummaryItem {
+  key: PricingMode | string;
+  label?: string | null;
+  unitsTotal: number;
+  revenueTotal: number;
+  salesCount?: number;
+}
+
+export interface ReportsSalesPricingSourcesSummaryResponse {
+  range: {
+    from: string;
+    to: string;
+  };
+  filters: {
+    branchId?: string | null;
+    categoryId?: string | null;
+  };
+  items: ReportsSalesPricingSourcesSummaryItem[];
 }
 
 export interface ReportsInventorySummaryQuery {

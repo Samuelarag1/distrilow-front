@@ -84,7 +84,7 @@ export function usePosProductSearch({
       ? ([
           "pos-product-search",
           branchId,
-          normalizedQuery.toLowerCase(),
+          normalizedQuery,
           safeTake,
         ] as const)
       : null,

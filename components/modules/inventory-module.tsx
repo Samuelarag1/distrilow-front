@@ -39,6 +39,7 @@ import { swrFetcher } from "@/lib/swr-fetcher";
 import type { MovementType, Stock } from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import { backendApi } from "@/lib/backend-api";
+import { InventoryLotsSection } from "@/components/modules/inventory-lots-section";
 
 type SortKey = "name" | "stock" | "category" | "price";
 type SortOrder = "asc" | "desc";
@@ -379,16 +380,36 @@ export function InventoryModule() {
   const [currentPage, setCurrentPage] = useState(1);
   const pageSize = 20;
   const { toast } = useToast();
+  const stockSummaryFilters = useMemo(
+    () => ({
+      branchId: effectiveBranchId,
+      lowStockThreshold: LOW_STOCK_THRESHOLD,
+    }),
+    [effectiveBranchId]
+  );
   const { data: categoriesData } = useSWR<Category[]>(
     "/categories",
     swrFetcher
   );
   const { data: inventorySummary, mutate: mutateInventorySummary } = useSWR(
     effectiveBranchId
-      ? ["stocks-summary", effectiveBranchId, LOW_STOCK_THRESHOLD]
+      ? ["/stocks/summary", stockSummaryFilters]
       : null,
     () =>
       backendApi.stocks.summary(
+        { lowStockThreshold: LOW_STOCK_THRESHOLD },
+        effectiveBranchId
+      )
+  );
+  const {
+    data: inventorySummaryCategories,
+    mutate: mutateInventorySummaryCategories,
+  } = useSWR(
+    effectiveBranchId
+      ? ["/stocks/summary/categories", stockSummaryFilters]
+      : null,
+    () =>
+      backendApi.stocks.summaryCategories(
         { lowStockThreshold: LOW_STOCK_THRESHOLD },
         effectiveBranchId
       )
@@ -525,7 +546,8 @@ export function InventoryModule() {
     inventorySummary?.products.lowStock ?? lowStockRows?.length ?? 0;
   const inventoryValueKpi =
     inventorySummary?.inventoryValue.wholesale ?? totalValueFallback;
-  const categoriesTotalKpi = inventorySummary?.categories.total ?? categories.length;
+  const categoriesTotalKpi =
+    inventorySummaryCategories?.total ?? categories.length;
   const lowStockHiddenCount = Math.max(
     lowStockCountKpi - lowStockNamesPreview.length,
     0
@@ -586,6 +608,7 @@ export function InventoryModule() {
         await Promise.all([
           mutateProducts(),
           mutateInventorySummary(),
+          mutateInventorySummaryCategories(),
           mutateLowStockRows(),
         ]);
 
@@ -957,6 +980,11 @@ export function InventoryModule() {
           )}
         </CardContent>
       </Card>
+
+      <InventoryLotsSection
+        branchId={effectiveBranchId}
+        categories={categories}
+      />
     </div>
   );
 }

@@ -21,6 +21,7 @@ import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import type { ProductPriceCostHistoryRow } from "@/lib/api-types";
+import { Loader2, Printer } from "lucide-react";
 
 type Category = {
   id: string;
@@ -32,6 +33,9 @@ type SortKey = "name" | "cost" | "retail" | "wholesale" | "margin";
 type SortOrder = "asc" | "desc";
 
 const PAGE_SIZE = 25;
+const PRINT_PAGE_SIZE = 200;
+const RETAIL_MARGIN_GOOD_THRESHOLD = 30;
+const WHOLESALE_MARGIN_GOOD_THRESHOLD = 20;
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -55,6 +59,72 @@ function getRetailMarginPercent(product: Product) {
 
 function getWholesaleMarginPercent(product: Product) {
   return getMarginPercentForPrice(product.costPrice, product.wholesalePrice);
+}
+
+function getPerHundredGrPriceFromKg(pricePerKg: unknown) {
+  const parsed = Number(pricePerKg ?? 0);
+  if (!Number.isFinite(parsed) || parsed <= 0) return null;
+  return parsed * 0.1;
+}
+
+function escapeHtml(value: unknown) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
+
+function printTableDocument(input: {
+  title: string;
+  subtitle: string;
+  headers: string[];
+  rows: Array<Array<string | number>>;
+}) {
+  const popup = window.open("", "_blank", "width=1280,height=900");
+  if (!popup) return false;
+
+  const headersHtml = input.headers
+    .map((header) => `<th>${escapeHtml(header)}</th>`)
+    .join("");
+  const rowsHtml = input.rows
+    .map((row) => {
+      const cells = row.map((cell) => `<td>${escapeHtml(cell)}</td>`).join("");
+      return `<tr>${cells}</tr>`;
+    })
+    .join("");
+
+  popup.document.write(`
+    <html>
+      <head>
+        <title>${escapeHtml(input.title)}</title>
+        <style>
+          body { font-family: "Segoe UI", Arial, sans-serif; margin: 24px; color: #0f172a; }
+          h1 { margin: 0; font-size: 22px; }
+          p { margin: 4px 0 14px 0; color: #475569; font-size: 12px; }
+          table { width: 100%; border-collapse: collapse; font-size: 12px; }
+          th, td { border: 1px solid #cbd5e1; padding: 7px; text-align: left; }
+          thead { background: #f1f5f9; }
+          tr:nth-child(even) { background: #f8fafc; }
+          .meta { margin-top: 12px; font-size: 11px; color: #64748b; }
+        </style>
+      </head>
+      <body>
+        <h1>${escapeHtml(input.title)}</h1>
+        <p>${escapeHtml(input.subtitle)}</p>
+        <table>
+          <thead><tr>${headersHtml}</tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+        <div class="meta">Generado: ${escapeHtml(new Date().toLocaleString())}</div>
+      </body>
+    </html>
+  `);
+  popup.document.close();
+  popup.focus();
+  popup.print();
+  return true;
 }
 
 export function ProductsModule() {
@@ -91,6 +161,7 @@ export function ProductsModule() {
   );
   const [historyTotal, setHistoryTotal] = useState(0);
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
+  const [isPrinting, setIsPrinting] = useState(false);
 
   const { products, total, hasMore, isLoading, isError, mutateProducts } =
     useProducts({
@@ -127,19 +198,26 @@ export function ProductsModule() {
     return map;
   }, [categories]);
 
+  const sortProductsForCurrentCriteria = useCallback(
+    (rows: Product[]) => {
+      const factor = sortOrder === "asc" ? 1 : -1;
+      return [...rows].sort((a, b) => {
+        if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
+        if (sortKey === "cost")
+          return (Number(a.costPrice) - Number(b.costPrice)) * factor;
+        if (sortKey === "retail")
+          return (Number(a.retailPrice) - Number(b.retailPrice)) * factor;
+        if (sortKey === "wholesale")
+          return (Number(a.wholesalePrice) - Number(b.wholesalePrice)) * factor;
+        return (getRetailMarginPercent(a) - getRetailMarginPercent(b)) * factor;
+      });
+    },
+    [sortKey, sortOrder]
+  );
+
   const sortedProducts = useMemo(() => {
-    const factor = sortOrder === "asc" ? 1 : -1;
-    return [...products].sort((a, b) => {
-      if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
-      if (sortKey === "cost")
-        return (Number(a.costPrice) - Number(b.costPrice)) * factor;
-      if (sortKey === "retail")
-        return (Number(a.retailPrice) - Number(b.retailPrice)) * factor;
-      if (sortKey === "wholesale")
-        return (Number(a.wholesalePrice) - Number(b.wholesalePrice)) * factor;
-      return (getRetailMarginPercent(a) - getRetailMarginPercent(b)) * factor;
-    });
-  }, [products, sortKey, sortOrder]);
+    return sortProductsForCurrentCriteria(products);
+  }, [products, sortProductsForCurrentCriteria]);
 
   const loadPending = useCallback(async () => {
     if (!activeBranchId) {
@@ -257,6 +335,233 @@ export function ProductsModule() {
     }
   };
 
+  const handlePrintCurrentTable = useCallback(async () => {
+    if (!activeBranchId) {
+      toast({
+        variant: "destructive",
+        title: "Sucursal requerida",
+        description: "Selecciona una sucursal para imprimir.",
+      });
+      return;
+    }
+
+    const fetchAllCatalogRows = async () => {
+      const rows: Product[] = [];
+      let skip = 0;
+
+      while (true) {
+        const payload = await backendApi.products.list(
+          {
+            skip,
+            take: PRINT_PAGE_SIZE,
+            search: debouncedSearch || undefined,
+            categoryId: selectedCategory === "all" ? undefined : selectedCategory,
+          },
+          activeBranchId
+        );
+        rows.push(...(payload.items as Product[]));
+        if (!payload.meta.hasMore || payload.items.length === 0) break;
+        const nextOffset =
+          Number(payload.meta.offset ?? skip) +
+          Number(payload.meta.limit ?? PRINT_PAGE_SIZE);
+        if (nextOffset <= skip) break;
+        skip = nextOffset;
+      }
+
+      return sortProductsForCurrentCriteria(rows);
+    };
+
+    const fetchAllPendingRows = async () => {
+      const rows: Product[] = [];
+      let skip = 0;
+
+      while (true) {
+        const payload = await backendApi.products.reviewPending(
+          {
+            skip,
+            take: PRINT_PAGE_SIZE,
+          },
+          activeBranchId
+        );
+        rows.push(...(payload.items as Product[]));
+        if (!payload.meta.hasMore || payload.items.length === 0) break;
+        const nextOffset =
+          Number(payload.meta.offset ?? skip) +
+          Number(payload.meta.limit ?? PRINT_PAGE_SIZE);
+        if (nextOffset <= skip) break;
+        skip = nextOffset;
+      }
+
+      return rows;
+    };
+
+    const fetchAllHistoryRows = async () => {
+      const rows: ProductPriceCostHistoryRow[] = [];
+      let skip = 0;
+
+      while (true) {
+        const payload = await backendApi.products.priceHistory(
+          {
+            skip,
+            take: PRINT_PAGE_SIZE,
+          },
+          activeBranchId
+        );
+        rows.push(...payload.items);
+        if (!payload.meta.hasMore || payload.items.length === 0) break;
+        const nextOffset =
+          Number(payload.meta.offset ?? skip) +
+          Number(payload.meta.limit ?? PRINT_PAGE_SIZE);
+        if (nextOffset <= skip) break;
+        skip = nextOffset;
+      }
+
+      return rows;
+    };
+
+    try {
+      setIsPrinting(true);
+
+      if (activeTab === "catalog") {
+        const rows = await fetchAllCatalogRows();
+        const didOpen = printTableDocument({
+          title: "Catalogo de productos",
+          subtitle: `Sucursal ${activeBranchId} | Registros: ${rows.length}`,
+          headers: [
+            "PLU",
+            "Nombre",
+            "Categoria",
+            "Costo",
+            "Minorista",
+            "Margen Minorista",
+            "Mayorista",
+            "Margen Mayorista",
+            "Precio por 100gr",
+            "Pendiente",
+          ],
+          rows: rows.map((product) => {
+            const retailMargin = getRetailMarginPercent(product);
+            const wholesaleMargin = getWholesaleMarginPercent(product);
+            const retail100gr = getPerHundredGrPriceFromKg(product.retailPrice);
+            const wholesale100gr = getPerHundredGrPriceFromKg(
+              product.wholesalePrice
+            );
+            return [
+              product.pluCode ?? "-",
+              product.name,
+              product.categoryId
+                ? categoryMap.get(product.categoryId) ?? product.categoryId
+                : "-",
+              formatMoney(Number(product.costPrice ?? 0)),
+              formatMoney(Number(product.retailPrice ?? 0)),
+              `${retailMargin.toFixed(2)}%`,
+              formatMoney(Number(product.wholesalePrice ?? 0)),
+              `${wholesaleMargin.toFixed(2)}%`,
+              product.measurementType === "kg"
+                ? `Min ${formatMoney(retail100gr ?? 0)} | May ${formatMoney(
+                    wholesale100gr ?? 0
+                  )}`
+                : "-",
+              product.priceReviewPending || product.costReviewPending
+                ? [
+                    product.priceReviewPending ? "Precio" : "",
+                    product.costReviewPending ? "Costo" : "",
+                  ]
+                    .filter(Boolean)
+                    .join(" / ")
+                : "-",
+            ];
+          }),
+        });
+        if (!didOpen) {
+          toast({
+            variant: "destructive",
+            title: "Ventana bloqueada",
+            description: "Habilita popups para imprimir.",
+          });
+        }
+        return;
+      }
+
+      if (activeTab === "pending") {
+        const rows = await fetchAllPendingRows();
+        const didOpen = printTableDocument({
+          title: "Productos pendientes de revision",
+          subtitle: `Sucursal ${activeBranchId} | Registros: ${rows.length}`,
+          headers: ["Producto", "SKU", "PLU", "Pendiente"],
+          rows: rows.map((product) => [
+            product.name,
+            product.sku,
+            product.pluCode ?? "-",
+            [
+              product.priceReviewPending ? "Precio" : "",
+              product.costReviewPending ? "Costo" : "",
+            ]
+              .filter(Boolean)
+              .join(" / ") || "-",
+          ]),
+        });
+        if (!didOpen) {
+          toast({
+            variant: "destructive",
+            title: "Ventana bloqueada",
+            description: "Habilita popups para imprimir.",
+          });
+        }
+        return;
+      }
+
+      const rows = await fetchAllHistoryRows();
+      const didOpen = printTableDocument({
+        title: "Historial de precio y costo",
+        subtitle: `Sucursal ${activeBranchId} | Registros: ${rows.length}`,
+        headers: [
+          "Fecha",
+          "Producto",
+          "Costo (antes)",
+          "Costo (despues)",
+          "Minorista (antes)",
+          "Minorista (despues)",
+          "Mayorista (antes)",
+          "Mayorista (despues)",
+        ],
+        rows: rows.map((row) => [
+          row.createdAt ? new Date(row.createdAt).toLocaleString() : "-",
+          row.name ?? row.product?.name ?? "Producto eliminado",
+          formatMoney(Number(row.oldCostPrice ?? 0)),
+          formatMoney(Number(row.newCostPrice ?? 0)),
+          formatMoney(Number(row.oldRetailPrice ?? 0)),
+          formatMoney(Number(row.newRetailPrice ?? 0)),
+          formatMoney(Number(row.oldWholesalePrice ?? 0)),
+          formatMoney(Number(row.newWholesalePrice ?? 0)),
+        ]),
+      });
+      if (!didOpen) {
+        toast({
+          variant: "destructive",
+          title: "Ventana bloqueada",
+          description: "Habilita popups para imprimir.",
+        });
+      }
+    } catch (error: any) {
+      toast({
+        variant: "destructive",
+        title: "No se pudo imprimir",
+        description: error?.message ?? "Intenta nuevamente.",
+      });
+    } finally {
+      setIsPrinting(false);
+    }
+  }, [
+    activeBranchId,
+    activeTab,
+    categoryMap,
+    debouncedSearch,
+    selectedCategory,
+    sortProductsForCurrentCriteria,
+    toast,
+  ]);
+
   const { isSaving, handleSave } = useProductSave({
     editingProduct,
     activeBranchId,
@@ -281,9 +586,23 @@ export function ProductsModule() {
             Productos
           </h1>
         </div>
-        <Button onClick={handleCreate} disabled={!activeBranchId}>
-          Nuevo producto
-        </Button>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="outline"
+            onClick={() => void handlePrintCurrentTable()}
+            disabled={!activeBranchId || isPrinting}
+          >
+            {isPrinting ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Printer className="mr-2 h-4 w-4" />
+            )}
+            Imprimir tabla
+          </Button>
+          <Button onClick={handleCreate} disabled={!activeBranchId || isPrinting}>
+            Nuevo producto
+          </Button>
+        </div>
       </div>
 
       <Tabs value={activeTab} onValueChange={setActiveTab}>
@@ -387,6 +706,9 @@ export function ProductsModule() {
                       <th className="p-2 text-right text-xs font-semibold border-r">
                         Margen Mayorista
                       </th>
+                      <th className="p-2 text-right text-xs font-semibold border-r">
+                        Precio por 100gr
+                      </th>
                       <th className="p-2 text-center text-xs font-semibold border-r">
                         Pendiente
                       </th>
@@ -399,7 +721,7 @@ export function ProductsModule() {
                     {isLoading ? (
                       <tr>
                         <td
-                          colSpan={11}
+                          colSpan={12}
                           className="p-6 text-center text-sm text-muted-foreground"
                         >
                           Cargando productos...
@@ -408,7 +730,7 @@ export function ProductsModule() {
                     ) : sortedProducts.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={11}
+                          colSpan={12}
                           className="p-6 text-center text-sm text-muted-foreground"
                         >
                           Sin productos para los filtros seleccionados.
@@ -418,8 +740,16 @@ export function ProductsModule() {
                       sortedProducts.map((product) => {
                         const retailMargin = getRetailMarginPercent(product);
                         const wholesaleMargin = getWholesaleMarginPercent(product);
-                        const lowRetailMargin = retailMargin < 20;
-                        const lowWholesaleMargin = wholesaleMargin < 20;
+                        const lowRetailMargin =
+                          retailMargin < RETAIL_MARGIN_GOOD_THRESHOLD;
+                        const lowWholesaleMargin =
+                          wholesaleMargin < WHOLESALE_MARGIN_GOOD_THRESHOLD;
+                        const retail100gr = getPerHundredGrPriceFromKg(
+                          product.retailPrice
+                        );
+                        const wholesale100gr = getPerHundredGrPriceFromKg(
+                          product.wholesalePrice
+                        );
                         return (
                           <tr
                             key={product.id}
@@ -459,6 +789,20 @@ export function ProductsModule() {
                               }`}
                             >
                               {wholesaleMargin.toFixed(2)}%
+                            </td>
+                            <td className="p-2 text-right text-xs border-r">
+                              {product.measurementType === "kg" ? (
+                                <div className="flex flex-col items-end">
+                                  <span>
+                                    Min: {formatMoney(retail100gr ?? 0)}
+                                  </span>
+                                  <span className="text-muted-foreground">
+                                    May: {formatMoney(wholesale100gr ?? 0)}
+                                  </span>
+                                </div>
+                              ) : (
+                                "-"
+                              )}
                             </td>
                             <td className="p-2 text-center text-xs border-r">
                               <div className="flex items-center justify-center gap-1">
@@ -566,7 +910,7 @@ export function ProductsModule() {
                         Pendiente
                       </th>
                       <th className="p-2 text-right text-xs font-semibold">
-                        Accion
+                        Acciones
                       </th>
                     </tr>
                   </thead>
@@ -612,13 +956,22 @@ export function ProductsModule() {
                             </div>
                           </td>
                           <td className="p-2 text-right">
-                            <Button
-                              size="sm"
-                              variant="outline"
-                              onClick={() => handleResolvePendingFlags(product)}
-                            >
-                              Marcar revisado
-                            </Button>
+                            <div className="flex justify-end gap-2">
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleEdit(product)}
+                              >
+                                Editar
+                              </Button>
+                              <Button
+                                size="sm"
+                                variant="outline"
+                                onClick={() => handleResolvePendingFlags(product)}
+                              >
+                                Marcar revisado
+                              </Button>
+                            </div>
                           </td>
                         </tr>
                       ))

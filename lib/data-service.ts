@@ -15,8 +15,8 @@ export const getDashboardMetrics = async (
   void type;
   try {
     const response = await apiClientFetch.get<SnapshotMetricsResponse>(
-      `/snapshots/metrics?period=monthly`,
-      { branchScoped: false }
+      `/reporting/dashboard/summary?period=monthly&scope=active`,
+      { branchScoped: true }
     );
 
     return normalizeSnapshotMetrics(response);
