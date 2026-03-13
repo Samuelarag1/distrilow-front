@@ -39,6 +39,8 @@ import type {
   PaginatedResponse,
   Product,
   ProductListItem,
+  PriceType,
+  PricingMode,
   ProductPriceCostHistoryQuery,
   ProductPriceCostHistoryRow,
   ProductReviewPendingQuery,
@@ -94,6 +96,11 @@ export interface ResolvedBarcodeProduct {
   unitPrice?: number;
   subtotal?: number;
   barcodeType?: string;
+  rawBarcode?: string;
+  barcodeBase?: string;
+  pluCode?: string;
+  priceType?: PriceType;
+  pricingSource?: PricingMode;
 }
 
 const STOCK_CACHE_TTL_MS = 10_000;
@@ -334,6 +341,74 @@ function requireActiveBranchId() {
 function normalizeBarcodePayload(
   payload: BarcodeLookupResponse
 ): ResolvedBarcodeProduct {
+  const normalizeProduct = (value: unknown): ProductListItem => {
+    const source = asRecord(value);
+    const id = toOptionalText(source.id);
+    if (!id) {
+      throw new Error("Respuesta invalida al escanear: producto sin id.");
+    }
+
+    const measurementTypeRaw = toOptionalText(source.measurementType);
+    const measurementType =
+      measurementTypeRaw === "kg" ||
+      measurementTypeRaw === "gram" ||
+      measurementTypeRaw === "unit"
+        ? measurementTypeRaw
+        : "unit";
+
+    return {
+      id,
+      sku: toOptionalText(source.sku) ?? id,
+      barcode: toOptionalText(source.barcode),
+      pluCode: toOptionalText(source.pluCode),
+      isWeighable:
+        typeof source.isWeighable === "boolean"
+          ? source.isWeighable
+          : measurementType === "kg" || measurementType === "gram",
+      wholesaleMinQuantity: toOptionalFiniteNumber(source.wholesaleMinQuantity),
+      name: toOptionalText(source.name) ?? "Producto",
+      description: toOptionalText(source.description),
+      costPrice: toFiniteNumber(source.costPrice, 0),
+      wholesalePrice: toFiniteNumber(source.wholesalePrice, 0),
+      retailPrice: toFiniteNumber(source.retailPrice, 0),
+      marginPercent: toOptionalFiniteNumber(source.marginPercent),
+      priceReviewPending:
+        typeof source.priceReviewPending === "boolean"
+          ? source.priceReviewPending
+          : undefined,
+      costReviewPending:
+        typeof source.costReviewPending === "boolean"
+          ? source.costReviewPending
+          : undefined,
+      isActive:
+        typeof source.isActive === "boolean" ? source.isActive : undefined,
+      categoryId: toOptionalText(source.categoryId),
+      branchId: toOptionalText(source.branchId),
+      brand: toOptionalText(source.brand),
+      trackStock:
+        typeof source.trackStock === "boolean" ? source.trackStock : undefined,
+      allowNegativeStock:
+        typeof source.allowNegativeStock === "boolean"
+          ? source.allowNegativeStock
+          : undefined,
+      imageUrl: toOptionalText(source.imageUrl),
+      measurementType,
+      stock: toOptionalFiniteNumber(source.stock) ?? undefined,
+      createdAt: toOptionalText(source.createdAt) ?? undefined,
+      updatedAt: toOptionalText(source.updatedAt) ?? undefined,
+    };
+  };
+
+  const normalizePriceType = (value: unknown): PriceType | undefined => {
+    if (value === "RETAIL" || value === "WHOLESALE") return value;
+    return undefined;
+  };
+
+  const normalizePricingMode = (value: unknown): PricingMode | undefined => {
+    if (value === "AUTO" || value === "MANUAL") return value;
+    return undefined;
+  };
+
   if (
     payload &&
     typeof payload === "object" &&
@@ -346,9 +421,14 @@ function normalizeBarcodePayload(
       unitPrice?: unknown;
       subtotal?: unknown;
       barcodeType?: unknown;
+      rawBarcode?: unknown;
+      barcodeBase?: unknown;
+      pluCode?: unknown;
+      priceType?: unknown;
+      pricingSource?: unknown;
     };
     return {
-      product: barcodePayload.product,
+      product: normalizeProduct(barcodePayload.product),
       quantity: toFiniteNumber(barcodePayload.quantity, NaN),
       unitPrice: toFiniteNumber(barcodePayload.unitPrice, NaN),
       subtotal: toFiniteNumber(barcodePayload.subtotal, NaN),
@@ -356,12 +436,23 @@ function normalizeBarcodePayload(
         typeof barcodePayload.barcodeType === "string"
           ? barcodePayload.barcodeType
           : undefined,
+      rawBarcode: toOptionalText(barcodePayload.rawBarcode) ?? undefined,
+      barcodeBase: toOptionalText(barcodePayload.barcodeBase) ?? undefined,
+      pluCode: toOptionalText(barcodePayload.pluCode) ?? undefined,
+      priceType: normalizePriceType(barcodePayload.priceType),
+      pricingSource: normalizePricingMode(barcodePayload.pricingSource),
     };
   }
 
   return {
-    product: payload as ProductListItem,
+    product: normalizeProduct(payload),
   };
+}
+
+function shouldHydrateScannedProduct(product: ProductListItem) {
+  return ![product.retailPrice, product.wholesalePrice, product.costPrice].some(
+    (value) => Number.isFinite(value) && value > 0
+  );
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -600,11 +691,41 @@ export const backendApi = {
       emitProductsSync(created.branchId ?? body.branchId ?? getApiSession().branchId);
       return created;
     },
-    resolveBarcode: async (code: string) => {
+    resolveBarcode: async (
+      code: string,
+      options?: {
+        pricingMode?: PricingMode;
+        requestedPriceType?: PriceType;
+        manualOverrideReason?: string;
+      }
+    ) => {
+      const normalizedCode = code.trim();
+      const query = options
+        ? buildQuery(options, { preserveLimitAndOffset: true })
+        : "";
       const payload = await apiClientFetch.get<BarcodeLookupResponse>(
-        `/products/barcode/${code}`
+        `/products/pos/scan/${encodeURIComponent(normalizedCode)}${query}`
       );
-      const normalized = normalizeBarcodePayload(payload);
+      let normalized = normalizeBarcodePayload(payload);
+
+      if (shouldHydrateScannedProduct(normalized.product)) {
+        try {
+          const fullProduct = await apiClientFetch.get<ProductListItem>(
+            `/products/${normalized.product.id}`
+          );
+          normalized = {
+            ...normalized,
+            product: {
+              ...normalized.product,
+              ...fullProduct,
+              stock: normalized.product.stock ?? fullProduct.stock,
+            },
+          };
+        } catch {
+          // Keep the scan payload product if enrichment fails.
+        }
+      }
+
       const { branchId } = getApiSession();
       if (!branchId) return normalized;
 

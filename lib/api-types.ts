@@ -350,11 +350,16 @@ export interface ProductPriceCostHistoryQuery {
 }
 
 export interface BarcodeLookupResolved {
-  code: string;
+  code?: string;
   barcodeType?: "STANDARD" | "INTERNAL_EAN13" | "UNKNOWN";
+  rawBarcode?: string;
+  barcodeBase?: string;
+  pluCode?: string;
   quantity?: number;
   unitPrice?: number;
   subtotal?: number;
+  priceType?: PriceType;
+  pricingSource?: PricingMode;
   product: ProductListItem;
 }
 

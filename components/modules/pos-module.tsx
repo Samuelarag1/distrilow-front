@@ -214,7 +214,7 @@ function getEstimatedUnitPrice(item: CartItem): number {
 
 function getDisplayUnitPrice(item: CartItem): number {
   const backendUnitPrice = toSafeNumber(item.backendUnitPrice, NaN);
-  if (Number.isFinite(backendUnitPrice) && backendUnitPrice > 0) {
+  if (Number.isFinite(backendUnitPrice) && backendUnitPrice >= 0) {
     return backendUnitPrice;
   }
   return getEstimatedUnitPrice(item);
@@ -546,7 +546,16 @@ export function POSModule() {
     [categoriesData]
   );
 
-  const addToCart = (product: Product, options?: { quantity?: number }) => {
+  const addToCart = (
+    product: Product,
+    options?: {
+      quantity?: number;
+      backendUnitPrice?: number;
+      backendSubtotal?: number;
+      backendPriceType?: PriceType;
+      backendPricingSource?: PricingMode;
+    }
+  ) => {
     if (branchId && product.branchId && product.branchId !== branchId) {
       toast({
         variant: "destructive",
@@ -573,6 +582,11 @@ export function POSModule() {
         : isWeighableProduct(product)
         ? step
         : 1;
+    const normalizedBackendUnitPrice = toSafeNumber(
+      options?.backendUnitPrice,
+      NaN
+    );
+    const normalizedBackendSubtotal = toSafeNumber(options?.backendSubtotal, NaN);
 
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
@@ -587,8 +601,44 @@ export function POSModule() {
           return prev;
         }
 
+        const nextBackendUnitPrice =
+          Number.isFinite(normalizedBackendUnitPrice) &&
+          existing.pricingMode === "AUTO"
+            ? normalizedBackendUnitPrice
+            : existing.backendUnitPrice;
+        const nextBackendSubtotal =
+          Number.isFinite(normalizedBackendSubtotal) &&
+          existing.pricingMode === "AUTO"
+            ? normalizedBackendSubtotal
+            : Number.isFinite(toSafeNumber(nextBackendUnitPrice, NaN)) &&
+              existing.pricingMode === "AUTO"
+            ? roundTo(toSafeNumber(nextBackendUnitPrice, 0) * nextQuantity, 2)
+            : existing.backendSubtotal;
+
         return prev.map((item) =>
-          item.id === product.id ? { ...item, quantity: nextQuantity } : item
+          item.id === product.id
+            ? {
+                ...item,
+                quantity: nextQuantity,
+                visualPriceType: options?.backendPriceType ?? item.visualPriceType,
+                backendPriceType:
+                  existing.pricingMode === "AUTO"
+                    ? options?.backendPriceType ?? item.backendPriceType
+                    : undefined,
+                backendPricingSource:
+                  existing.pricingMode === "AUTO"
+                    ? options?.backendPricingSource ?? item.backendPricingSource
+                    : undefined,
+                backendUnitPrice:
+                  existing.pricingMode === "AUTO"
+                    ? nextBackendUnitPrice
+                    : undefined,
+                backendSubtotal:
+                  existing.pricingMode === "AUTO"
+                    ? nextBackendSubtotal
+                    : undefined,
+              }
+            : item
         );
       }
 
@@ -601,6 +651,13 @@ export function POSModule() {
         return prev;
       }
 
+      const backendUnitPrice = Number.isFinite(normalizedBackendUnitPrice)
+        ? normalizedBackendUnitPrice
+        : undefined;
+      const backendSubtotal = Number.isFinite(normalizedBackendSubtotal)
+        ? normalizedBackendSubtotal
+        : undefined;
+
       return [
         ...prev,
         {
@@ -609,7 +666,11 @@ export function POSModule() {
           pricingMode: "AUTO",
           requestedPriceType: undefined,
           manualOverrideReason: "",
-          visualPriceType: "RETAIL",
+          visualPriceType: options?.backendPriceType ?? "RETAIL",
+          backendPriceType: options?.backendPriceType,
+          backendPricingSource: options?.backendPricingSource,
+          backendUnitPrice,
+          backendSubtotal,
         },
       ];
     });
@@ -689,6 +750,10 @@ export function POSModule() {
             ...item,
             pricingMode: "AUTO" as const,
             requestedPriceType: undefined,
+            backendPriceType: undefined,
+            backendPricingSource: undefined,
+            backendUnitPrice: undefined,
+            backendSubtotal: undefined,
           };
         }
 
@@ -696,6 +761,11 @@ export function POSModule() {
           ...item,
           pricingMode: "MANUAL" as const,
           requestedPriceType: selection,
+          visualPriceType: selection,
+          backendPriceType: undefined,
+          backendPricingSource: undefined,
+          backendUnitPrice: undefined,
+          backendSubtotal: undefined,
         };
       })
     );
@@ -712,23 +782,7 @@ export function POSModule() {
     if (!code) return;
 
     try {
-      const localMatch =
-        products.find(
-          (product) =>
-            product.barcode === code ||
-            product.sku === code ||
-            product.pluCode === code
-        ) ?? null;
-
-      const resolved = localMatch
-        ? {
-            product: localMatch,
-            quantity: undefined,
-            unitPrice: undefined,
-            subtotal: undefined,
-            barcodeType: "STANDARD",
-          }
-        : await backendApi.products.resolveBarcode(code);
+      const resolved = await backendApi.products.resolveBarcode(code);
       const scanned = resolved?.product ?? null;
 
       if (!scanned || !scanned.id) {
@@ -744,6 +798,14 @@ export function POSModule() {
         quantity: Number.isFinite(resolved.quantity ?? NaN)
           ? resolved.quantity
           : undefined,
+        backendUnitPrice: Number.isFinite(resolved.unitPrice ?? NaN)
+          ? resolved.unitPrice
+          : undefined,
+        backendSubtotal: Number.isFinite(resolved.subtotal ?? NaN)
+          ? resolved.subtotal
+          : undefined,
+        backendPriceType: resolved.priceType,
+        backendPricingSource: resolved.pricingSource,
       });
       setSearchQuery(scanned.name);
       setScanQuery("");
@@ -772,11 +834,17 @@ export function POSModule() {
   };
 
   const getCartLineTotal = (item: CartItem) => {
+    const quantity = toSafeNumber(item.quantity, 0);
+    const backendUnitPrice = toSafeNumber(item.backendUnitPrice, NaN);
+    if (Number.isFinite(backendUnitPrice) && backendUnitPrice >= 0) {
+      return backendUnitPrice * quantity;
+    }
+
     const backendSubtotal = toSafeNumber(item.backendSubtotal, NaN);
     if (Number.isFinite(backendSubtotal) && backendSubtotal >= 0) {
       return backendSubtotal;
     }
-    return getDisplayUnitPrice(item) * toSafeNumber(item.quantity, 0);
+    return getDisplayUnitPrice(item) * quantity;
   };
 
   const total = cart.reduce((sum, item) => sum + getCartLineTotal(item), 0);
