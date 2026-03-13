@@ -41,7 +41,10 @@ import {
 
 import { useUser } from "@/components/providers/user-provider";
 import { Product } from "@/lib/products";
-import { usePosProductSearch, POS_MIN_SEARCH_LENGTH } from "@/hooks/usePosProductSearch";
+import {
+  usePosProductSearch,
+  POS_MIN_SEARCH_LENGTH,
+} from "@/hooks/usePosProductSearch";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { backendApi, type ResolvedBarcodeProduct } from "@/lib/backend-api";
 import { emitProductsSync } from "@/lib/products-live-sync";
@@ -161,6 +164,19 @@ function getLooseCategoryLabel(category: unknown): string {
     if (typeof value.id === "string" && value.id.trim()) return value.id;
   }
   return "Sin categoria";
+}
+
+function isOpaqueIdentifier(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+
+  return (
+    /^[0-9a-f]{24}$/i.test(trimmed) ||
+    /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      trimmed
+    ) ||
+    (/^[a-z0-9_-]{16,}$/i.test(trimmed) && !/\s/.test(trimmed))
+  );
 }
 
 function roundTo(value: number, decimals: number) {
@@ -304,7 +320,9 @@ function normalizeProductForPos(
     wholesalePrice: toSafeNumber(item.wholesalePrice, 0),
     retailPrice: toSafeNumber(item.retailPrice, 0),
     measurementType,
-    isWeighable: item.isWeighable ?? (measurementType === "kg" || measurementType === "gram"),
+    isWeighable:
+      item.isWeighable ??
+      (measurementType === "kg" || measurementType === "gram"),
     stock: Number.isFinite(parsedStock) ? parsedStock : Number.NaN,
     price: pickFirstFinite(
       [item.retailPrice, item.wholesalePrice, item.costPrice],
@@ -513,17 +531,57 @@ export function POSModule() {
     };
   }, [isPaymentConfirmOpen]);
 
-  const searchSuggestions = useMemo(() => searchResults.slice(0, 8), [searchResults]);
+  const searchSuggestions = useMemo(
+    () => searchResults.slice(0, 8),
+    [searchResults]
+  );
   const shouldShowSearchDropdown =
     isSearchDropdownOpen && searchQuery.trim().length > 0;
 
-  const getProductCategoryLabel = (product: Product) => {
-    return getLooseCategoryLabel(
+  const getProductSearchMetaLabel = (product: Product) => {
+    const categoryLabel = getLooseCategoryLabel(
       (product as Product & { category?: unknown }).category
     );
+    if (categoryLabel !== "Sin categoria" && !isOpaqueIdentifier(categoryLabel)) {
+      return categoryLabel;
+    }
+
+    const details: string[] = [];
+    const brand = typeof product.brand === "string" ? product.brand.trim() : "";
+    const sku = typeof product.sku === "string" ? product.sku.trim() : "";
+    const barcode =
+      typeof product.barcode === "string" ? product.barcode.trim() : "";
+    const pluCode =
+      typeof product.pluCode === "string" ? product.pluCode.trim() : "";
+
+    if (brand && !isOpaqueIdentifier(brand)) {
+      details.push(brand);
+    }
+
+    if (sku && sku !== product.id && !isOpaqueIdentifier(sku)) {
+      details.push(`SKU ${sku}`);
+    }
+
+    if (barcode) {
+      details.push(`Cod. ${barcode}`);
+    } else if (pluCode) {
+      details.push(`PLU ${pluCode}`);
+    }
+
+    if (details.length > 0) {
+      return details.slice(0, 2).join(" · ");
+    }
+
+    if (product.measurementType === "kg") return "Venta por kg";
+    if (product.measurementType === "gram") return "Venta por gramos";
+    return "Producto sin categoria";
   };
 
   const getStockBadgeClassName = (product: Product) => {
+    if (product.trackStock === false) {
+      return "border-slate-300 bg-slate-50 text-slate-600";
+    }
+
     const stock = toSafeNumber(product.stock, Number.NaN);
     const minStock = Number(product.minStock ?? 0);
 
@@ -544,8 +602,14 @@ export function POSModule() {
   };
 
   const getStockBadgeLabel = (product: Product) => {
+    if (product.trackStock === false) {
+      return "sin control";
+    }
+
     const stock = toSafeNumber(product.stock, Number.NaN);
-    return Number.isFinite(stock) ? `stock ${stock}` : "stock --";
+    return Number.isFinite(stock)
+      ? `stock ${formatThresholdQuantity(stock)}`
+      : "stock --";
   };
 
   const prepareProductForCart = async (product: Product) => {
@@ -563,7 +627,8 @@ export function POSModule() {
           stock: hasResolvedStock(nextProduct)
             ? nextProduct.stock
             : fullProduct.stock,
-          branchId: nextProduct.branchId ?? fullProduct.branchId ?? branchId ?? null,
+          branchId:
+            nextProduct.branchId ?? fullProduct.branchId ?? branchId ?? null,
         });
       } catch {
         // Keep the partial product when enrichment is unavailable.
@@ -636,7 +701,10 @@ export function POSModule() {
       options?.backendUnitPrice,
       NaN
     );
-    const normalizedBackendSubtotal = toSafeNumber(options?.backendSubtotal, NaN);
+    const normalizedBackendSubtotal = toSafeNumber(
+      options?.backendSubtotal,
+      NaN
+    );
 
     setCart((prev) => {
       const existing = prev.find((item) => item.id === product.id);
@@ -670,7 +738,8 @@ export function POSModule() {
             ? {
                 ...item,
                 quantity: nextQuantity,
-                visualPriceType: options?.backendPriceType ?? item.visualPriceType,
+                visualPriceType:
+                  options?.backendPriceType ?? item.visualPriceType,
                 backendPriceType:
                   existing.pricingMode === "AUTO"
                     ? options?.backendPriceType ?? item.backendPriceType
@@ -960,7 +1029,8 @@ export function POSModule() {
     0
   );
   const previewBranchName =
-    branches.find((branch) => branch.id === branchId)?.name ?? "Sucursal actual";
+    branches.find((branch) => branch.id === branchId)?.name ??
+    "Sucursal actual";
   const previewCashierName =
     currentUser?.name ?? currentUser?.email ?? "Usuario actual";
 
@@ -1123,9 +1193,7 @@ export function POSModule() {
         title: "Venta registrada",
         description:
           outstandingAmount > 0
-            ? `Total $${formatMoney(
-                backendTotal
-              )}. Cobrado $${formatMoney(
+            ? `Total $${formatMoney(backendTotal)}. Cobrado $${formatMoney(
                 paidAmount
               )}. Saldo pendiente $${formatMoney(outstandingAmount)}.`
             : localChangeDue > 0
@@ -1297,7 +1365,7 @@ export function POSModule() {
                                     {product.name}
                                   </p>
                                   <p className="truncate text-[11px] text-muted-foreground">
-                                    {getProductCategoryLabel(product)}
+                                    {getProductSearchMetaLabel(product)}
                                   </p>
                                 </div>
                                 <div className="flex flex-col items-end gap-1">
@@ -1407,6 +1475,14 @@ export function POSModule() {
                               className="h-5 text-[10px]"
                             >
                               {getPriceTypeLabel(getDisplayPriceType(item))}
+                            </Badge>
+                            <Badge
+                              variant="outline"
+                              className={`h-5 text-[10px] ${getStockBadgeClassName(
+                                item
+                              )}`}
+                            >
+                              {getStockBadgeLabel(item)}
                             </Badge>
                           </div>
 
@@ -1698,8 +1774,8 @@ export function POSModule() {
                     Confirmar venta
                   </DialogTitle>
                   <DialogDescription className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                    Revisa el detalle, los pagos cargados y el importe a devolver
-                    antes de registrar definitivamente la venta.
+                    Revisa el detalle, los pagos cargados y el importe a
+                    devolver antes de registrar definitivamente la venta.
                   </DialogDescription>
                 </DialogHeader>
 
@@ -1843,7 +1919,9 @@ export function POSModule() {
                   </div>
                   <div className="flex items-start justify-between gap-3">
                     <span className="text-muted-foreground">Productos</span>
-                    <span className="text-right font-semibold">{itemCount}</span>
+                    <span className="text-right font-semibold">
+                      {itemCount}
+                    </span>
                   </div>
                   <div className="flex items-start justify-between gap-3">
                     <span className="text-muted-foreground">Unidades</span>

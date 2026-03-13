@@ -89,7 +89,7 @@ export function usePosProductSearch({
         ] as const)
       : null,
     async () => {
-      const payload = await backendApi.products.list(
+      const payload = await backendApi.productsWithStock(
         {
           skip: 0,
           take: safeTake,
