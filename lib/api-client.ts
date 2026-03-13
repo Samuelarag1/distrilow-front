@@ -19,7 +19,11 @@ let authToken: string | null = null;
 let activeBranchId: string | null = null;
 let refreshPromise: Promise<boolean> | null = null;
 let lastSuccessfulRefreshAt = 0;
+let lastFailedRefreshAt = 0;
 let lastRefreshPayload: SessionResponse | AuthResponse | null = null;
+
+const REFRESH_FAILURE_COOLDOWN_MS = 30_000;
+const REFRESH_EXPIRY_BUFFER_MS = 2 * 60 * 1000;
 
 const BRANCH_SCOPED_PREFIXES = [
   "/products",
@@ -163,6 +167,39 @@ function shouldTryRefresh(path: string, method: string) {
   return true;
 }
 
+function decodeBase64Url(value: string) {
+  const normalized = value.replace(/-/g, "+").replace(/_/g, "/");
+  const padded = normalized.padEnd(Math.ceil(normalized.length / 4) * 4, "=");
+
+  if (typeof window !== "undefined" && typeof window.atob === "function") {
+    return window.atob(padded);
+  }
+
+  if (typeof Buffer !== "undefined") {
+    return Buffer.from(padded, "base64").toString("utf8");
+  }
+
+  return null;
+}
+
+function getTokenExpiryTime(token: string | null) {
+  if (!token) return null;
+
+  const segments = token.split(".");
+  if (segments.length < 2) return null;
+
+  try {
+    const decoded = decodeBase64Url(segments[1]);
+    if (!decoded) return null;
+    const payload = JSON.parse(decoded) as { exp?: unknown };
+    const expSeconds = Number(payload.exp);
+    if (!Number.isFinite(expSeconds) || expSeconds <= 0) return null;
+    return expSeconds * 1000;
+  } catch {
+    return null;
+  }
+}
+
 async function parseResponse<T>(res: Response): Promise<T> {
   if (res.status === 204) return null as T;
 
@@ -218,11 +255,17 @@ function extractApiMessage(body: unknown, fallback: string) {
 
 async function refreshSession(): Promise<boolean> {
   if (refreshPromise) return refreshPromise;
+  if (Date.now() - lastFailedRefreshAt < REFRESH_FAILURE_COOLDOWN_MS) {
+    return false;
+  }
 
   refreshPromise = (async () => {
     try {
       const refreshToken = getSessionRefreshToken();
       const accessToken = getSessionToken();
+      if (!refreshToken && !accessToken) {
+        return false;
+      }
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
@@ -240,7 +283,10 @@ async function refreshSession(): Promise<boolean> {
         ),
       });
 
-      if (!res.ok) return false;
+      if (!res.ok) {
+        lastFailedRefreshAt = Date.now();
+        return false;
+      }
       const payload = (await parseResponse<SessionResponse | AuthResponse>(
         res
       )) as SessionResponse | AuthResponse | null;
@@ -259,14 +305,17 @@ async function refreshSession(): Promise<boolean> {
 
       const hasUsableToken = Boolean(nextAccessToken || getSessionToken());
       if (!hasUsableToken) {
+        lastFailedRefreshAt = Date.now();
         return false;
       }
 
       lastSuccessfulRefreshAt = Date.now();
+      lastFailedRefreshAt = 0;
 
       return true;
     } catch {
       lastRefreshPayload = null;
+      lastFailedRefreshAt = Date.now();
       return false;
     } finally {
       refreshPromise = null;
@@ -276,9 +325,33 @@ async function refreshSession(): Promise<boolean> {
   return refreshPromise;
 }
 
-export async function refreshSessionIfNeeded(minIntervalMs = 10 * 60 * 1000) {
+export async function refreshSessionIfNeeded(
+  minIntervalMs = 10 * 60 * 1000,
+  expiryBufferMs = REFRESH_EXPIRY_BUFFER_MS
+) {
+  const accessToken = getSessionToken();
+  const refreshToken = getSessionRefreshToken();
+  const tokenExpiryTime = getTokenExpiryTime(accessToken);
+
+  if (!refreshToken) {
+    return Boolean(accessToken);
+  }
+
+  if (
+    accessToken &&
+    tokenExpiryTime !== null &&
+    tokenExpiryTime - Date.now() > expiryBufferMs
+  ) {
+    return true;
+  }
+
   const elapsed = Date.now() - lastSuccessfulRefreshAt;
-  if (lastSuccessfulRefreshAt > 0 && elapsed < minIntervalMs) {
+  if (
+    accessToken &&
+    tokenExpiryTime === null &&
+    lastSuccessfulRefreshAt > 0 &&
+    elapsed < minIntervalMs
+  ) {
     return true;
   }
   return refreshSession();
@@ -293,6 +366,7 @@ export function setApiSession(token: ApiSessionInput, branchId?: string | null) 
     authToken = token;
     if (token) {
       lastSuccessfulRefreshAt = Date.now();
+      lastFailedRefreshAt = 0;
     }
     activeBranchId =
       branchId === undefined ? activeBranchId : sanitizeBranchId(branchId);
@@ -303,6 +377,7 @@ export function setApiSession(token: ApiSessionInput, branchId?: string | null) 
     token?.accessToken === undefined ? authToken : token?.accessToken ?? null;
   if (token?.accessToken) {
     lastSuccessfulRefreshAt = Date.now();
+    lastFailedRefreshAt = 0;
   }
   activeBranchId =
     token?.branchId === undefined

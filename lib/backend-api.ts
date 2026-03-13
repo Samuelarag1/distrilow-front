@@ -697,18 +697,25 @@ export const backendApi = {
         pricingMode?: PricingMode;
         requestedPriceType?: PriceType;
         manualOverrideReason?: string;
+        hydrateProductDetails?: boolean;
+        hydrateStock?: boolean;
       }
     ) => {
       const normalizedCode = code.trim();
-      const query = options
-        ? buildQuery(options, { preserveLimitAndOffset: true })
+      const {
+        hydrateProductDetails = true,
+        hydrateStock = true,
+        ...requestOptions
+      } = options ?? {};
+      const query = Object.keys(requestOptions).length
+        ? buildQuery(requestOptions, { preserveLimitAndOffset: true })
         : "";
       const payload = await apiClientFetch.get<BarcodeLookupResponse>(
         `/products/pos/scan/${encodeURIComponent(normalizedCode)}${query}`
       );
       let normalized = normalizeBarcodePayload(payload);
 
-      if (shouldHydrateScannedProduct(normalized.product)) {
+      if (hydrateProductDetails && shouldHydrateScannedProduct(normalized.product)) {
         try {
           const fullProduct = await apiClientFetch.get<ProductListItem>(
             `/products/${normalized.product.id}`
@@ -727,7 +734,17 @@ export const backendApi = {
       }
 
       const { branchId } = getApiSession();
-      if (!branchId) return normalized;
+      const hasKnownStock = Number.isFinite(
+        toOptionalFiniteNumber(normalized.product.stock)
+      );
+      if (
+        !hydrateStock ||
+        !branchId ||
+        hasKnownStock ||
+        normalized.product.trackStock === false
+      ) {
+        return normalized;
+      }
 
       try {
         const stock = await apiClientFetch.get<Stock>(

@@ -15,6 +15,8 @@ import {
   Search,
   ScanLine,
   Loader2,
+  Clock3,
+  ReceiptText,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import {
@@ -28,16 +30,21 @@ import {
   AlertDialogTitle,
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
-import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { Product } from "@/lib/products";
-import { useProducts } from "@/hooks/useProducts";
+import { usePosProductSearch, POS_MIN_SEARCH_LENGTH } from "@/hooks/usePosProductSearch";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
-import { backendApi } from "@/lib/backend-api";
+import { backendApi, type ResolvedBarcodeProduct } from "@/lib/backend-api";
 import { emitProductsSync } from "@/lib/products-live-sync";
-import useSWR from "swr";
-import { swrFetcher } from "@/lib/swr-fetcher";
 import type { PaymentMethod, PriceType, PricingMode } from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 
@@ -68,13 +75,14 @@ type PersistedPosCart = {
   transferReference: string;
 };
 
-type Category = {
-  id: string;
-  name: string;
-};
-
 const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
 const POS_CART_TTL_MS = 12 * 60 * 60 * 1000;
+const POS_SCAN_CACHE_TTL_MS = 5_000;
+
+type ScanCacheEntry = {
+  cachedAt: number;
+  value: ResolvedBarcodeProduct;
+};
 
 function buildPosCartStorageKey(
   userId: string | null | undefined,
@@ -224,10 +232,6 @@ function getDisplayPriceType(item: CartItem): PriceType {
   return item.backendPriceType ?? getRequestedOrDefaultPriceType(item);
 }
 
-function getDisplayPricingSource(item: CartItem): PricingMode {
-  return item.backendPricingSource ?? item.pricingMode;
-}
-
 function selectorValueFromItem(
   item: CartItem
 ): "AUTO" | "RETAIL" | "WHOLESALE" {
@@ -237,6 +241,23 @@ function selectorValueFromItem(
 
 function getPriceTypeLabel(priceType: PriceType) {
   return priceType === "WHOLESALE" ? "Mayorista" : "Minorista";
+}
+
+function getPaymentMethodLabel(method: PaymentMethod) {
+  switch (method) {
+    case "CASH":
+      return "Efectivo";
+    case "TRANSFER":
+      return "Transferencia";
+    case "DEBIT_CARD":
+      return "Tarjeta de debito";
+    case "CREDIT_CARD":
+      return "Tarjeta de credito";
+    case "MERCADO_PAGO":
+      return "Mercado Pago";
+    default:
+      return "Otro";
+  }
 }
 
 function formatThresholdQuantity(value: number) {
@@ -250,6 +271,55 @@ function getMeasurementLabel(product: Product) {
   return "unidades";
 }
 
+function hasResolvedPricing(product: Product) {
+  return [product.retailPrice, product.wholesalePrice, product.costPrice].some(
+    (value) => {
+      const parsed = toSafeNumber(value, Number.NaN);
+      return Number.isFinite(parsed) && parsed > 0;
+    }
+  );
+}
+
+function hasResolvedStock(product: Product) {
+  return Number.isFinite(toSafeNumber(product.stock, Number.NaN));
+}
+
+function normalizeProductForPos(
+  item: Partial<Product> & { id: string; name: string }
+): Product {
+  const measurementType =
+    item.measurementType === "kg" ||
+    item.measurementType === "gram" ||
+    item.measurementType === "unit"
+      ? item.measurementType
+      : "unit";
+  const parsedStock = toSafeNumber(item.stock, Number.NaN);
+
+  return {
+    ...item,
+    id: item.id,
+    sku: item.sku ?? item.id,
+    name: item.name,
+    costPrice: toSafeNumber(item.costPrice, 0),
+    wholesalePrice: toSafeNumber(item.wholesalePrice, 0),
+    retailPrice: toSafeNumber(item.retailPrice, 0),
+    measurementType,
+    isWeighable: item.isWeighable ?? (measurementType === "kg" || measurementType === "gram"),
+    stock: Number.isFinite(parsedStock) ? parsedStock : Number.NaN,
+    price: pickFirstFinite(
+      [item.retailPrice, item.wholesalePrice, item.costPrice],
+      0
+    ),
+    category:
+      typeof item.category === "string" && item.category.trim()
+        ? item.category
+        : typeof item.categoryId === "string" && item.categoryId.trim()
+        ? item.categoryId
+        : "Sin categoria",
+    unit: measurementType,
+  };
+}
+
 // function getAutoRuleLabel(item: CartItem): string | null {
 //   const threshold = getWholesaleMinQuantity(item);
 //   if (threshold === null) return null;
@@ -259,7 +329,6 @@ function getMeasurementLabel(product: Product) {
 // }
 
 export function POSModule() {
-  const { addSale } = useTransactions();
   const { currentUser, branchId, branches } = useUser();
   const { toast } = useToast();
 
@@ -273,9 +342,6 @@ export function POSModule() {
   const [searchQuery, setSearchQuery] = useState("");
   const [scanQuery, setScanQuery] = useState("");
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState("all");
-  const [currentPage, setCurrentPage] = useState(1);
-  const pageSize = 20;
   const [cashPaymentAmount, setCashPaymentAmount] = useState("");
   const [transferPaymentAmount, setTransferPaymentAmount] = useState("");
   const [transferReference, setTransferReference] = useState("");
@@ -284,41 +350,24 @@ export function POSModule() {
   const [isSaleCommitted, setIsSaleCommitted] = useState(false);
   const previousBranchRef = useRef<string | null>(null);
   const cartPersistenceReadyRef = useRef(false);
+  const scanCacheRef = useRef<Map<string, ScanCacheEntry>>(new Map());
+  const scanInputRef = useRef<HTMLInputElement | null>(null);
   const posCartStorageKey = useMemo(
     () => buildPosCartStorageKey(currentUser?.id ?? null, branchId ?? null),
     [currentUser?.id, branchId]
   );
 
   const debouncedSearch = useDebouncedValue(searchQuery, 250);
-
   const {
-    products,
-    total: productsTotal,
-    hasMore,
-    skip,
-    take,
-    isLoading,
-    mutateProducts,
-  } = useProducts({
-    skip: (currentPage - 1) * pageSize,
-    take: pageSize,
-    search: debouncedSearch,
-    categoryId: selectedCategory === "all" ? null : selectedCategory,
+    products: searchResults,
+    isLoading: isSearchLoading,
+    canSearch,
+    mutateProducts: mutateSearchResults,
+  } = usePosProductSearch({
     branchId: branchId ?? null,
-    resolveStockFromStocksEndpoint: true,
+    query: debouncedSearch,
+    take: 8,
   });
-  const { data: categoriesData } = useSWR<Category[]>(
-    "/categories",
-    swrFetcher
-  );
-
-  const categoryNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    (categoriesData ?? []).forEach((category) => {
-      if (category?.id && category?.name) map.set(category.id, category.name);
-    });
-    return map;
-  }, [categoriesData]);
 
   const moneyFormatter = useMemo(() => new Intl.NumberFormat("es-AR"), []);
 
@@ -418,54 +467,10 @@ export function POSModule() {
   ]);
 
   useEffect(() => {
-    if (cart.length === 0 || products.length === 0) return;
-
-    const productById = new Map(
-      products.map((product) => [product.id, product])
-    );
-    setCart((prev) => {
-      let changed = false;
-      const next = prev.map((item) => {
-        const latest = productById.get(item.id);
-        if (!latest) return item;
-
-        const merged: CartItem = {
-          ...latest,
-          quantity: item.quantity,
-          pricingMode: item.pricingMode,
-          requestedPriceType: item.requestedPriceType,
-          manualOverrideReason: item.manualOverrideReason,
-          visualPriceType: item.visualPriceType,
-          backendPriceType: item.backendPriceType,
-          backendPricingSource: item.backendPricingSource,
-          backendUnitPrice: item.backendUnitPrice,
-          backendSubtotal: item.backendSubtotal,
-          backendBaseRetailPrice: item.backendBaseRetailPrice,
-          backendBaseWholesalePrice: item.backendBaseWholesalePrice,
-          backendPricingRuleSnapshot: item.backendPricingRuleSnapshot,
-          backendManualOverrideReason: item.backendManualOverrideReason,
-        };
-
-        const sameSnapshot =
-          merged.stock === item.stock &&
-          merged.costPrice === item.costPrice &&
-          merged.retailPrice === item.retailPrice &&
-          merged.wholesalePrice === item.wholesalePrice &&
-          merged.branchId === item.branchId &&
-          merged.updatedAt === item.updatedAt;
-
-        if (sameSnapshot) return item;
-        changed = true;
-        return merged;
-      });
-
-      return changed ? next : prev;
-    });
-  }, [products, cart.length]);
-
-  useEffect(() => {
     if (!branchId) {
       previousBranchRef.current = null;
+      scanCacheRef.current.clear();
+      setIsPaymentConfirmOpen(false);
       return;
     }
 
@@ -474,9 +479,18 @@ export function POSModule() {
       return;
     }
 
-    if (previousBranchRef.current !== branchId && cart.length > 0) {
+    const branchChanged = previousBranchRef.current !== branchId;
+    if (branchChanged) {
+      scanCacheRef.current.clear();
+      setIsPaymentConfirmOpen(false);
+    }
+
+    if (branchChanged && cart.length > 0) {
       setCart([]);
       setIsSaleCommitted(false);
+      setSearchQuery("");
+      setScanQuery("");
+      setIsSearchDropdownOpen(false);
       toast({
         title: "Sucursal cambiada",
         description:
@@ -484,43 +498,38 @@ export function POSModule() {
       });
     }
 
-    if (previousBranchRef.current !== branchId) {
-      setCurrentPage(1);
-    }
-
     previousBranchRef.current = branchId;
   }, [branchId, cart.length, toast]);
 
-  const filteredProducts = useMemo(() => {
-    return products.filter((product) => {
-      const matchesSearch = product.name
-        .toLowerCase()
-        .includes(searchQuery.toLowerCase());
-      const matchesCategory =
-        selectedCategory === "all" || product.categoryId === selectedCategory;
-      return matchesSearch && matchesCategory;
-    });
-  }, [products, searchQuery, selectedCategory]);
-  const searchSuggestions = useMemo(
-    () => filteredProducts.slice(0, 8),
-    [filteredProducts]
-  );
+  useEffect(() => {
+    if (isPaymentConfirmOpen) return;
+
+    const timeoutId = window.setTimeout(() => {
+      scanInputRef.current?.focus();
+    }, 80);
+
+    return () => {
+      window.clearTimeout(timeoutId);
+    };
+  }, [isPaymentConfirmOpen]);
+
+  const searchSuggestions = useMemo(() => searchResults.slice(0, 8), [searchResults]);
   const shouldShowSearchDropdown =
     isSearchDropdownOpen && searchQuery.trim().length > 0;
 
   const getProductCategoryLabel = (product: Product) => {
-    if (product.categoryId) {
-      return categoryNameById.get(product.categoryId) ?? product.categoryId;
-    }
-
     return getLooseCategoryLabel(
       (product as Product & { category?: unknown }).category
     );
   };
 
   const getStockBadgeClassName = (product: Product) => {
-    const stock = Number(product.stock ?? 0);
+    const stock = toSafeNumber(product.stock, Number.NaN);
     const minStock = Number(product.minStock ?? 0);
+
+    if (!Number.isFinite(stock)) {
+      return "border-slate-300 bg-slate-50 text-slate-600";
+    }
 
     if (stock <= minStock) {
       return "border-red-300 bg-red-50 text-red-700";
@@ -534,17 +543,55 @@ export function POSModule() {
     return "border-emerald-300 bg-emerald-50 text-emerald-700";
   };
 
-  const categories = useMemo(
-    () =>
-      (categoriesData ?? [])
-        .filter((category) => Boolean(category?.id) && Boolean(category?.name))
-        .map((category) => ({
-          value: category.id,
-          label: category.name,
-        }))
-        .sort((a, b) => a.label.localeCompare(b.label)),
-    [categoriesData]
-  );
+  const getStockBadgeLabel = (product: Product) => {
+    const stock = toSafeNumber(product.stock, Number.NaN);
+    return Number.isFinite(stock) ? `stock ${stock}` : "stock --";
+  };
+
+  const prepareProductForCart = async (product: Product) => {
+    let nextProduct = normalizeProductForPos({
+      ...product,
+      branchId: product.branchId ?? branchId ?? null,
+    });
+
+    if (!hasResolvedPricing(nextProduct)) {
+      try {
+        const fullProduct = await backendApi.products.getById(nextProduct.id);
+        nextProduct = normalizeProductForPos({
+          ...nextProduct,
+          ...fullProduct,
+          stock: hasResolvedStock(nextProduct)
+            ? nextProduct.stock
+            : fullProduct.stock,
+          branchId: nextProduct.branchId ?? fullProduct.branchId ?? branchId ?? null,
+        });
+      } catch {
+        // Keep the partial product when enrichment is unavailable.
+      }
+    }
+
+    if (
+      !hasResolvedStock(nextProduct) &&
+      nextProduct.trackStock !== false &&
+      branchId
+    ) {
+      try {
+        const stock = await backendApi.stocks.getByBranchAndProduct(
+          branchId,
+          nextProduct.id
+        );
+        nextProduct = normalizeProductForPos({
+          ...nextProduct,
+          stock: Number(stock.quantity ?? 0),
+          branchId: nextProduct.branchId ?? branchId,
+        });
+      } catch {
+        // Allow checkout to be validated by backend if stock could not be hydrated.
+      }
+    }
+
+    return nextProduct;
+  };
 
   const addToCart = (
     product: Product,
@@ -565,8 +612,11 @@ export function POSModule() {
       return;
     }
 
-    const stock = Number(product.stock ?? 0);
-    if (stock <= 0) {
+    const stock = toSafeNumber(product.stock, Number.NaN);
+    const hasKnownStock = Number.isFinite(stock);
+    const trackStock = product.trackStock !== false;
+
+    if (trackStock && hasKnownStock && stock <= 0) {
       toast({
         title: "Sin stock",
         description: `No hay unidades disponibles de ${product.name}`,
@@ -592,7 +642,7 @@ export function POSModule() {
       const existing = prev.find((item) => item.id === product.id);
       if (existing) {
         const nextQuantity = roundTo(existing.quantity + requestedQuantity, 3);
-        if (nextQuantity > stock) {
+        if (trackStock && hasKnownStock && nextQuantity > stock) {
           toast({
             title: "Stock limitado",
             description: `Solo hay ${stock} disponibles de ${product.name}`,
@@ -642,7 +692,7 @@ export function POSModule() {
         );
       }
 
-      if (requestedQuantity > stock) {
+      if (trackStock && hasKnownStock && requestedQuantity > stock) {
         toast({
           title: "Stock limitado",
           description: `Solo hay ${stock} disponibles de ${product.name}`,
@@ -680,7 +730,7 @@ export function POSModule() {
   const updateQuantity = (id: string, quantity: number) => {
     const inCart = cart.find((product) => product.id === id);
     const normalizedQuantity = roundTo(quantity, 3);
-    const stockFromProductsList = products.find(
+    const stockFromProductsList = searchResults.find(
       (product) => product.id === id
     )?.stock;
     const maxStock = pickFirstFinite(
@@ -782,8 +832,21 @@ export function POSModule() {
     if (!code) return;
 
     try {
-      const resolved = await backendApi.products.resolveBarcode(code);
-      const scanned = resolved?.product ?? null;
+      const cacheKey = `${branchId ?? "no-branch"}:${code}`;
+      const cached = scanCacheRef.current.get(cacheKey);
+      const isCachedFresh =
+        cached && Date.now() - cached.cachedAt < POS_SCAN_CACHE_TTL_MS;
+      const resolved =
+        isCachedFresh && cached
+          ? cached.value
+          : await backendApi.products.resolveBarcode(code);
+      const scanned = resolved?.product
+        ? await prepareProductForCart(
+            normalizeProductForPos(
+              resolved.product as Product & { id: string; name: string }
+            )
+          )
+        : null;
 
       if (!scanned || !scanned.id) {
         toast({
@@ -793,6 +856,14 @@ export function POSModule() {
         });
         return;
       }
+
+      scanCacheRef.current.set(cacheKey, {
+        cachedAt: Date.now(),
+        value: {
+          ...resolved,
+          product: scanned,
+        },
+      });
 
       addToCart(scanned as Product, {
         quantity: Number.isFinite(resolved.quantity ?? NaN)
@@ -807,8 +878,8 @@ export function POSModule() {
         backendPriceType: resolved.priceType,
         backendPricingSource: resolved.pricingSource,
       });
-      setSearchQuery(scanned.name);
       setScanQuery("");
+      setIsSearchDropdownOpen(false);
     } catch (error: any) {
       const message = String(error?.message ?? "");
       const normalizedMessage = message.toLowerCase();
@@ -857,12 +928,41 @@ export function POSModule() {
   const totalInitialPayments = cashPaymentPreview + transferPaymentPreview;
   const pendingAfterInitialPayments = Math.max(0, total - totalInitialPayments);
   const changeDuePreview = Math.max(0, totalInitialPayments - total);
-  const totalPages = Math.max(
-    1,
-    Math.ceil((productsTotal || 0) / Math.max(take, 1))
+  const paymentPreviewRows: Array<{
+    method: PaymentMethod;
+    amount: number;
+    reference?: string;
+  }> = [];
+
+  if (Number.isFinite(cashPaymentPreview) && cashPaymentPreview > 0) {
+    paymentPreviewRows.push({ method: "CASH", amount: cashPaymentPreview });
+  }
+  if (Number.isFinite(transferPaymentPreview) && transferPaymentPreview > 0) {
+    paymentPreviewRows.push({
+      method: "TRANSFER",
+      amount: transferPaymentPreview,
+      reference: transferReference.trim() || undefined,
+    });
+  }
+
+  const previewItems = cart.map((item) => ({
+    id: item.id,
+    name: item.name,
+    quantity: toSafeNumber(item.quantity, 0),
+    measurementType: item.measurementType,
+    lineTotal: roundTo(getCartLineTotal(item), 2),
+    unitPrice: roundTo(getDisplayUnitPrice(item), 2),
+    priceType: getDisplayPriceType(item),
+    pricingMode: item.pricingMode,
+  }));
+  const previewTotalUnits = previewItems.reduce(
+    (sum, item) => sum + toSafeNumber(item.quantity, 0),
+    0
   );
-  const showingFrom = productsTotal === 0 ? 0 : skip + 1;
-  const showingTo = productsTotal === 0 ? 0 : skip + filteredProducts.length;
+  const previewBranchName =
+    branches.find((branch) => branch.id === branchId)?.name ?? "Sucursal actual";
+  const previewCashierName =
+    currentUser?.name ?? currentUser?.email ?? "Usuario actual";
 
   const ensureOpenCashSession = async () => {
     if (!canManageCash) return true;
@@ -993,9 +1093,9 @@ export function POSModule() {
       setIsPaymentConfirmOpen(false);
       clearCart({ silent: true });
 
-      const createdSale = await addSale({
-        customerName: "Consumidor Final",
-        lineItems: cartSnapshot.map((item) => {
+      const createdSale = await backendApi.sales.create({
+        branchId: saleBranchId,
+        items: cartSnapshot.map((item) => {
           const quantity = toSafeNumber(item.quantity, 0);
 
           return {
@@ -1013,32 +1113,31 @@ export function POSModule() {
           };
         }),
         payments,
-        branchId: saleBranchId,
       });
 
       const paidAmount = Number(createdSale.paidAmount ?? 0);
       const outstandingAmount = Number(createdSale.outstandingAmount ?? 0);
       const backendTotal = Number(createdSale.totalAmount ?? total);
       const localChangeDue = Math.max(0, totalInitialPayments - backendTotal);
-
       toast({
-        title: "Venta exitosa",
+        title: "Venta registrada",
         description:
           outstandingAmount > 0
-            ? `Venta por $${formatMoney(
+            ? `Total $${formatMoney(
                 backendTotal
-              )} registrada. Pagado: $${formatMoney(
+              )}. Cobrado $${formatMoney(
                 paidAmount
-              )}. Saldo pendiente: $${formatMoney(outstandingAmount)}.`
+              )}. Saldo pendiente $${formatMoney(outstandingAmount)}.`
             : localChangeDue > 0
-            ? `Venta por $${formatMoney(
+            ? `Total $${formatMoney(
                 backendTotal
-              )} registrada y pagada. Vuelto sugerido: $${formatMoney(
-                localChangeDue
-              )}.`
-            : `Venta por $${formatMoney(backendTotal)} registrada y pagada.`,
+              )}. Vuelto sugerido $${formatMoney(localChangeDue)}.`
+            : `Total $${formatMoney(backendTotal)} registrado correctamente.`,
       });
-      await mutateProducts();
+      scanCacheRef.current.clear();
+      if (debouncedSearch.trim().length >= POS_MIN_SEARCH_LENGTH) {
+        await mutateSearchResults();
+      }
       emitProductsSync(saleBranchId);
     } catch (error: any) {
       if (rollbackState) {
@@ -1046,6 +1145,7 @@ export function POSModule() {
         setCashPaymentAmount(rollbackState.cashPaymentAmount);
         setTransferPaymentAmount(rollbackState.transferPaymentAmount);
         setTransferReference(rollbackState.transferReference);
+        setIsPaymentConfirmOpen(true);
       }
       toast({
         variant: "destructive",
@@ -1071,11 +1171,11 @@ export function POSModule() {
     }
   };
 
-  const handleSelectSearchProduct = (product: Product) => {
+  const handleSelectSearchProduct = async (product: Product) => {
     if (isSaleCommitted) return;
-    addToCart(product);
+    const preparedProduct = await prepareProductForCart(product);
+    addToCart(preparedProduct);
     setSearchQuery("");
-    setCurrentPage(1);
     setIsSearchDropdownOpen(false);
   };
 
@@ -1101,6 +1201,7 @@ export function POSModule() {
                   <div className="relative flex-1">
                     <ScanLine className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
                     <Input
+                      ref={scanInputRef}
                       autoFocus
                       placeholder="Escanear o escribir codigo de barras"
                       value={scanQuery}
@@ -1137,7 +1238,6 @@ export function POSModule() {
                       }}
                       onChange={(event) => {
                         setSearchQuery(event.target.value);
-                        setCurrentPage(1);
                         setIsSearchDropdownOpen(true);
                       }}
                       onKeyDown={(event) => {
@@ -1149,17 +1249,21 @@ export function POSModule() {
                         if (
                           event.key === "Enter" &&
                           searchSuggestions.length > 0 &&
-                          !isLoading
+                          !isSearchLoading
                         ) {
                           event.preventDefault();
-                          handleSelectSearchProduct(searchSuggestions[0]);
+                          void handleSelectSearchProduct(searchSuggestions[0]);
                         }
                       }}
                       className="pl-8"
                     />
                     {shouldShowSearchDropdown ? (
                       <div className="absolute z-40 mt-2 w-full overflow-hidden rounded-xl border bg-popover shadow-xl">
-                        {isLoading ? (
+                        {!canSearch ? (
+                          <p className="px-3 py-3 text-sm text-muted-foreground">
+                            Escribe al menos {POS_MIN_SEARCH_LENGTH} caracteres.
+                          </p>
+                        ) : isSearchLoading ? (
                           <div className="flex items-center gap-2 px-3 py-3 text-sm text-muted-foreground">
                             <Loader2 className="h-4 w-4 animate-spin" />
                             Buscando productos...
@@ -1172,9 +1276,9 @@ export function POSModule() {
                                 type="button"
                                 className="flex w-full items-center gap-3 rounded-lg px-2 py-2 text-left transition-colors hover:bg-muted"
                                 onMouseDown={(event) => event.preventDefault()}
-                                onClick={() =>
-                                  handleSelectSearchProduct(product)
-                                }
+                                onClick={() => {
+                                  void handleSelectSearchProduct(product);
+                                }}
                               >
                                 <div className="h-10 w-10 shrink-0 overflow-hidden rounded-md bg-muted ring-1 ring-border/60">
                                   <img
@@ -1203,7 +1307,7 @@ export function POSModule() {
                                       product
                                     )}`}
                                   >
-                                    stock {product.stock ?? 0}
+                                    {getStockBadgeLabel(product)}
                                   </Badge>
                                   <span className="text-xs font-bold text-primary">
                                     ${formatMoney(getRetailPrice(product))}
@@ -1572,42 +1676,293 @@ export function POSModule() {
         </div>
       </div>
 
-      <AlertDialog
+      <Dialog
         open={isPaymentConfirmOpen}
-        onOpenChange={setIsPaymentConfirmOpen}
+        onOpenChange={(open) => {
+          if (isProcessingPayment) return;
+          setIsPaymentConfirmOpen(open);
+        }}
       >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirmar Pago</AlertDialogTitle>
-            <AlertDialogDescription>
-              Total venta: <strong>${formatMoney(total)}</strong>. Pagos
-              iniciales: <strong>${formatMoney(totalInitialPayments)}</strong>.
-              Saldo pendiente:{" "}
-              <strong>${formatMoney(pendingAfterInitialPayments)}</strong>.
-              {changeDuePreview > 0 ? (
-                <>
-                  {" "}
-                  Vuelto a entregar:{" "}
-                  <strong>${formatMoney(changeDuePreview)}</strong>.
-                </>
-              ) : null}
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={processPayment}
-              className="bg-primary hover:bg-primary/90"
-              disabled={isProcessingPayment}
-            >
-              {isProcessingPayment && (
-                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              )}
-              Confirmar y Registrar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        <DialogContent className="flex max-h-[92vh] w-[min(96vw,1120px)] max-w-5xl flex-col gap-0 overflow-hidden border-0 bg-background p-0 shadow-2xl sm:max-h-[90vh]">
+          <div className="shrink-0 border-b bg-gradient-to-br from-[#E74E7F]/10 via-background to-[#E74E7F]/5 p-5 sm:p-6">
+            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
+              <div className="min-w-0 flex-1">
+                <Badge className="rounded-full bg-[#E74E7F]/70 px-3 py-1 text-xs font-semibold text-white hover:bg-[#E74E7F]/70">
+                  Confirmacion previa
+                </Badge>
+                <DialogHeader className="mt-4 text-left">
+                  <DialogTitle className="flex items-center gap-3 text-2xl font-black tracking-tight sm:text-3xl">
+                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#E74E7F]/15 text-[#E74E7F]">
+                      <ReceiptText className="h-6 w-6" />
+                    </span>
+                    Confirmar venta
+                  </DialogTitle>
+                  <DialogDescription className="max-w-2xl text-sm leading-6 text-muted-foreground">
+                    Revisa el detalle, los pagos cargados y el importe a devolver
+                    antes de registrar definitivamente la venta.
+                  </DialogDescription>
+                </DialogHeader>
+
+                <div className="mt-4 grid gap-3 sm:grid-cols-3">
+                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Total
+                    </p>
+                    <p className="mt-2 text-2xl font-black tracking-tight">
+                      ${formatMoney(total)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Cobrado
+                    </p>
+                    <p className="mt-2 text-2xl font-black tracking-tight">
+                      ${formatMoney(totalInitialPayments)}
+                    </p>
+                  </div>
+                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                      Items
+                    </p>
+                    <p className="mt-2 text-2xl font-black tracking-tight">
+                      {itemCount}
+                    </p>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {formatThresholdQuantity(previewTotalUnits)} unidades
+                      totales
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              <div className="xl:w-[310px]">
+                <div className="rounded-[28px] border border-[#E74E7F]/25 bg-[#E74E7F]/70 p-5 text-white shadow-xl shadow-[#E74E7F]/20 sm:p-6">
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/90">
+                    {changeDuePreview > 0
+                      ? "Vuelto a entregar"
+                      : pendingAfterInitialPayments > 0
+                      ? "Saldo pendiente"
+                      : "Pago exacto"}
+                  </p>
+                  <p className="mt-4 text-4xl font-black tracking-tight sm:text-5xl">
+                    $
+                    {formatMoney(
+                      changeDuePreview > 0
+                        ? changeDuePreview
+                        : pendingAfterInitialPayments > 0
+                        ? pendingAfterInitialPayments
+                        : 0
+                    )}
+                  </p>
+                  <p className="mt-3 text-sm leading-6 text-white/90">
+                    {changeDuePreview > 0
+                      ? "Este es el importe que deberias devolver al cliente al cerrar la operacion."
+                      : pendingAfterInitialPayments > 0
+                      ? "La venta se registrara con saldo pendiente si continuas."
+                      : "El importe cargado coincide exactamente con el total."}
+                  </p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto p-5 sm:p-6 xl:grid-cols-[1.5fr_1fr]">
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <ReceiptText className="h-4 w-4 text-muted-foreground" />
+                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                  Detalle vendido
+                </h3>
+              </div>
+
+              <div className="max-h-[34vh] space-y-3 overflow-y-auto pr-1 sm:max-h-[38vh]">
+                {previewItems.map((item) => (
+                  <div
+                    key={item.id}
+                    className="rounded-2xl border bg-card p-4 shadow-sm"
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className="truncate text-sm font-bold">
+                          {item.name}
+                        </p>
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <Badge variant="outline" className="text-[11px]">
+                            {formatThresholdQuantity(item.quantity)}{" "}
+                            {item.measurementType === "kg"
+                              ? "kg"
+                              : item.measurementType === "gram"
+                              ? "gr"
+                              : "un"}
+                          </Badge>
+                          <Badge variant="outline" className="text-[11px]">
+                            {getPriceTypeLabel(item.priceType)}
+                          </Badge>
+                          {item.pricingMode === "MANUAL" ? (
+                            <Badge className="bg-[#E74E7F]/15 text-[11px] font-semibold text-[#C43C69] hover:bg-[#E74E7F]/15">
+                              Manual
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <p className="text-sm font-black">
+                          ${formatMoney(item.lineTotal)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          ${formatMoney(item.unitPrice)} c/u
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border bg-muted/20 p-5">
+                <div className="flex items-center gap-2">
+                  <Clock3 className="h-4 w-4 text-muted-foreground" />
+                  <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                    Datos de la operacion
+                  </h3>
+                </div>
+
+                <div className="mt-4 space-y-3 text-sm">
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-muted-foreground">Sucursal</span>
+                    <span className="text-right font-semibold">
+                      {previewBranchName}
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-muted-foreground">Cajero</span>
+                    <span className="text-right font-semibold">
+                      {previewCashierName}
+                    </span>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-muted-foreground">Productos</span>
+                    <span className="text-right font-semibold">{itemCount}</span>
+                  </div>
+                  <div className="flex items-start justify-between gap-3">
+                    <span className="text-muted-foreground">Unidades</span>
+                    <span className="text-right font-semibold">
+                      {formatThresholdQuantity(previewTotalUnits)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <div className="rounded-2xl border bg-card p-5 shadow-sm">
+                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                  Pagos cargados
+                </h3>
+                <div className="mt-4 space-y-3">
+                  {paymentPreviewRows.length > 0 ? (
+                    paymentPreviewRows.map((payment, index) => (
+                      <div
+                        key={`${payment.method}-${index}`}
+                        className="rounded-xl border bg-muted/20 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="text-sm font-semibold">
+                              {getPaymentMethodLabel(payment.method)}
+                            </p>
+                            {payment.reference ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Ref: {payment.reference}
+                              </p>
+                            ) : null}
+                          </div>
+                          <p className="text-sm font-black">
+                            ${formatMoney(payment.amount)}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      No cargaste pagos iniciales. La venta se registrara con
+                      saldo pendiente.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              <div className="rounded-2xl border bg-card p-5 shadow-sm">
+                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                  Totales
+                </h3>
+                <div className="mt-4 space-y-3 text-sm">
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Total venta</span>
+                    <span className="font-semibold">${formatMoney(total)}</span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Cobrado</span>
+                    <span className="font-semibold">
+                      ${formatMoney(totalInitialPayments)}
+                    </span>
+                  </div>
+                  <div className="flex justify-between gap-3">
+                    <span className="text-muted-foreground">Pendiente</span>
+                    <span className="font-semibold">
+                      ${formatMoney(pendingAfterInitialPayments)}
+                    </span>
+                  </div>
+                  <Separator />
+                  <div className="flex justify-between gap-3 text-base font-black">
+                    <span>
+                      {changeDuePreview > 0
+                        ? "Vuelto"
+                        : pendingAfterInitialPayments > 0
+                        ? "Saldo"
+                        : "Diferencia"}
+                    </span>
+                    <span>
+                      $
+                      {formatMoney(
+                        changeDuePreview > 0
+                          ? changeDuePreview
+                          : pendingAfterInitialPayments > 0
+                          ? pendingAfterInitialPayments
+                          : 0
+                      )}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter className="shrink-0 border-t bg-muted/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:space-x-0 sm:px-6">
+            <p className="text-sm text-muted-foreground">
+              Si todo esta correcto, confirma para registrar la venta.
+            </p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button
+                variant="outline"
+                onClick={() => setIsPaymentConfirmOpen(false)}
+                disabled={isProcessingPayment}
+              >
+                Volver
+              </Button>
+              <Button
+                onClick={processPayment}
+                className="min-w-[220px]"
+                disabled={isProcessingPayment}
+              >
+                {isProcessingPayment ? (
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                ) : null}
+                Confirmar y Registrar
+              </Button>
+            </div>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

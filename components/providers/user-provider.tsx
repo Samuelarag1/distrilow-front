@@ -1,5 +1,6 @@
 "use client";
 
+import { usePathname } from "next/navigation";
 import {
   getLastRefreshPayload,
   getApiSession,
@@ -166,12 +167,14 @@ function writeSessionCookies(payload: {
 }
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
+  const pathname = usePathname();
   const [currentUser, setCurrentUserState] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [branchId, setBranchIdState] = useState<string | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [needsOnboarding, setNeedsOnboarding] = useState<boolean>(false);
   const [sessionBootstrapped, setSessionBootstrapped] = useState(false);
+  const isPosRoute = pathname === "/pos" || pathname.startsWith("/pos/");
 
   const hydrateUserAvatar = useCallback((input: User): User => {
     const normalized: User = {
@@ -425,6 +428,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   }, [branchId, token, branches, needsOnboarding, currentUser?.role, setBranchId]);
 
   useEffect(() => {
+    if (isPosRoute) return;
+
     const hasRefreshCookie = Boolean(
       getCookie("refreshToken") ?? getCookie("refresh_token")
     );
@@ -473,7 +478,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       window.removeEventListener("focus", handleFocus);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [currentUser, token, branchId, setBranchId]);
+  }, [currentUser, token, branchId, setBranchId, isPosRoute]);
 
   const logout = useCallback(async () => {
     try {

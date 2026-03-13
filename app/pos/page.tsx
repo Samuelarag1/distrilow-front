@@ -4,7 +4,6 @@ import { AppSidebar } from "@/components/layout/app-sidebar"
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar"
 import { Header } from "@/components/layout/header"
 import { POSModule } from "@/components/modules/pos-module"
-import { BusinessProvider } from "@/components/providers/business-provider"
 
 export default function POSPage() {
   return (
