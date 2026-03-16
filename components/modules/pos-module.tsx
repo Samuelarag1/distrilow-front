@@ -316,16 +316,56 @@ function getEstimatedUnitPrice(item: CartItem): number {
     : getRetailPrice(item);
 }
 
-function getDisplayUnitPrice(item: CartItem): number {
-  const backendUnitPrice = toSafeNumber(item.backendUnitPrice, NaN);
-  if (Number.isFinite(backendUnitPrice) && backendUnitPrice >= 0) {
-    return backendUnitPrice;
+function hasUsableBackendPricing(item: CartItem): boolean {
+  if (item.pricingMode !== "AUTO") return false;
+
+  const expectedPriceType = getAutoPriceType(item);
+  if (item.backendPriceType && item.backendPriceType !== expectedPriceType) {
+    return false;
   }
+
+  const expectedUnitPrice =
+    expectedPriceType === "WHOLESALE"
+      ? getWholesalePrice(item)
+      : getRetailPrice(item);
+  const backendUnitPrice = toSafeNumber(item.backendUnitPrice, NaN);
+  if (Number.isFinite(backendUnitPrice)) {
+    return roundTo(backendUnitPrice, 2) === roundTo(expectedUnitPrice, 2);
+  }
+
+  const quantity = toSafeNumber(item.quantity, 0);
+  const backendSubtotal = toSafeNumber(item.backendSubtotal, NaN);
+  if (!Number.isFinite(backendSubtotal) || quantity <= 0) {
+    return false;
+  }
+
+  return (
+    roundTo(backendSubtotal / quantity, 2) === roundTo(expectedUnitPrice, 2)
+  );
+}
+
+function getDisplayUnitPrice(item: CartItem): number {
+  if (hasUsableBackendPricing(item)) {
+    const backendUnitPrice = toSafeNumber(item.backendUnitPrice, NaN);
+    if (Number.isFinite(backendUnitPrice) && backendUnitPrice >= 0) {
+      return backendUnitPrice;
+    }
+
+    const quantity = toSafeNumber(item.quantity, 0);
+    const backendSubtotal = toSafeNumber(item.backendSubtotal, NaN);
+    if (Number.isFinite(backendSubtotal) && quantity > 0) {
+      return backendSubtotal / quantity;
+    }
+  }
+
   return getEstimatedUnitPrice(item);
 }
 
 function getDisplayPriceType(item: CartItem): PriceType {
-  return item.backendPriceType ?? getRequestedOrDefaultPriceType(item);
+  if (hasUsableBackendPricing(item) && item.backendPriceType) {
+    return item.backendPriceType;
+  }
+  return getRequestedOrDefaultPriceType(item);
 }
 
 function selectorValueFromItem(
@@ -499,14 +539,16 @@ function getStockBadgeLabel(product: Product) {
 
 function getCartLineTotal(item: CartItem) {
   const quantity = toSafeNumber(item.quantity, 0);
-  const backendUnitPrice = toSafeNumber(item.backendUnitPrice, NaN);
-  if (Number.isFinite(backendUnitPrice) && backendUnitPrice >= 0) {
-    return backendUnitPrice * quantity;
-  }
+  if (hasUsableBackendPricing(item)) {
+    const backendUnitPrice = toSafeNumber(item.backendUnitPrice, NaN);
+    if (Number.isFinite(backendUnitPrice) && backendUnitPrice >= 0) {
+      return backendUnitPrice * quantity;
+    }
 
-  const backendSubtotal = toSafeNumber(item.backendSubtotal, NaN);
-  if (Number.isFinite(backendSubtotal) && backendSubtotal >= 0) {
-    return backendSubtotal;
+    const backendSubtotal = toSafeNumber(item.backendSubtotal, NaN);
+    if (Number.isFinite(backendSubtotal) && backendSubtotal >= 0) {
+      return backendSubtotal;
+    }
   }
 
   return getDisplayUnitPrice(item) * quantity;
@@ -1756,6 +1798,16 @@ export function POSModule() {
           item.id === product.id
             ? {
                 ...item,
+                costPrice: toSafeNumber(product.costPrice, item.costPrice),
+                wholesalePrice: toSafeNumber(
+                  product.wholesalePrice,
+                  item.wholesalePrice
+                ),
+                retailPrice: toSafeNumber(product.retailPrice, item.retailPrice),
+                price: pickFirstFinite(
+                  [product.retailPrice, product.wholesalePrice, product.costPrice],
+                  item.price
+                ),
                 quantity: nextQuantity,
                 visualPriceType:
                   options?.backendPriceType ?? item.visualPriceType,
@@ -1930,6 +1982,7 @@ export function POSModule() {
         isCachedFresh && cached
           ? cached.value
           : await backendApi.products.resolveBarcode(normalizedCode, {
+              hydrateProductDetails: true,
               branchId,
             });
       const scanned = resolved?.product
