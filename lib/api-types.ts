@@ -530,6 +530,7 @@ export interface SaleItemInput {
   pricingMode?: PricingMode;
   requestedPriceType?: PriceType;
   manualOverrideReason?: string;
+  linkedProductId?: string;
 }
 
 export interface SalePaymentInput {
@@ -597,6 +598,7 @@ export interface SaleDetail extends SaleSummary {
     baseWholesalePrice?: number;
     pricingRuleSnapshot?: unknown;
     manualOverrideReason?: string | null;
+    linkedProductId?: string;
   }>;
   payments?: SalePayment[];
 }

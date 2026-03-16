@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Clock, DollarSign, ShoppingCart } from "lucide-react";
@@ -19,6 +19,8 @@ import {
 } from "recharts";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
+import { SalesDetailModal } from "@/components/sales/sales-detail-modal";
+import type { Sale } from "@/components/providers/transactions-provider";
 
 const chartConfig = {
   ventas: {
@@ -60,6 +62,8 @@ const getStatusColor = (status: string) => {
 export function DailySales() {
   const { sales, isLoading } = useTransactions();
   const { branchId } = useUser();
+  const [selectedSale, setSelectedSale] = useState<Sale | null>(null);
+  const [isDetailModalOpen, setIsDetailModalOpen] = useState(false);
 
   const dailyTrend = (() => {
     const today = new Date();
@@ -113,6 +117,7 @@ export function DailySales() {
             : Object.keys(sale.paymentBreakdown ?? {});
         return {
           id: sale.id,
+          saleObject: sale,
           time: new Date(sale.date).toLocaleTimeString([], {
             hour: "2-digit",
             minute: "2-digit",
@@ -191,7 +196,11 @@ export function DailySales() {
               {todaySales.map((sale) => (
                 <div
                   key={sale.id}
-                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors"
+                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                  onClick={() => {
+                    setSelectedSale(sale.saleObject);
+                    setIsDetailModalOpen(true);
+                  }}
                 >
                   <div className="flex items-center gap-3">
                     <div className="text-center">
@@ -269,5 +278,12 @@ export function DailySales() {
         </div>
       </div>
     </div>
+
+    <SalesDetailModal
+      sale={selectedSale}
+      open={isDetailModalOpen}
+      onOpenChange={setIsDetailModalOpen}
+    />
+
   );
 }

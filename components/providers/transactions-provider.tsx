@@ -55,6 +55,7 @@ export interface SaleLineItem {
   quantity: number;
   price: number;
   subtotal?: number;
+  linkedProductId?: string;
   pricingMode?: PricingMode;
   requestedPriceType?: PriceType;
   priceType?: PriceType;
@@ -230,6 +231,7 @@ function normalizeSale(
           quantity: toFiniteNumber(item.quantity, 0),
           price: toFiniteNumber(item.unitPrice, 0),
           subtotal: toOptionalFiniteNumber(item.subtotal),
+          linkedProductId: item.linkedProductId,
           pricingMode: item.pricingMode,
           requestedPriceType: item.requestedPriceType,
           priceType: item.priceType,
