@@ -53,7 +53,10 @@ export function useProductSave(opts: {
           throw new Error("Selecciona una sucursal antes de guardar.");
         }
 
-        const payload = normalizeProductPayload(baseProductData);
+        const payload = normalizeProductPayload({
+          ...baseProductData,
+          branchId: resolvedBranchId,
+        });
 
         let productId = opts.editingProduct?.id ?? null;
 

@@ -32,7 +32,7 @@ type Category = {
 type SortKey = "name" | "cost" | "retail" | "wholesale" | "margin";
 type SortOrder = "asc" | "desc";
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 20;
 const PRINT_PAGE_SIZE = 200;
 const RETAIL_MARGIN_GOOD_THRESHOLD = 30;
 const WHOLESALE_MARGIN_GOOD_THRESHOLD = 20;
@@ -163,7 +163,7 @@ export function ProductsModule() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isPrinting, setIsPrinting] = useState(false);
 
-  const { products, total, hasMore, isLoading, isError, mutateProducts } =
+  const { products, total, take, hasMore, isLoading, isError, mutateProducts } =
     useProducts({
       skip: (currentPage - 1) * PAGE_SIZE,
       take: PAGE_SIZE,
@@ -572,11 +572,13 @@ export function ProductsModule() {
     onClearEditing: () => setEditingProduct(null),
   });
 
-  const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const resolvedPageSize = Math.max(1, Number(take ?? PAGE_SIZE) || PAGE_SIZE);
+  const totalPages = Math.max(1, Math.ceil(total / resolvedPageSize));
   const currentPageSafe = Math.min(currentPage, totalPages);
-  const showingFrom = total === 0 ? 0 : (currentPageSafe - 1) * PAGE_SIZE + 1;
+  const showingFrom =
+    total === 0 ? 0 : (currentPageSafe - 1) * resolvedPageSize + 1;
   const showingTo =
-    total === 0 ? 0 : Math.min(currentPageSafe * PAGE_SIZE, total);
+    total === 0 ? 0 : Math.min(currentPageSafe * resolvedPageSize, total);
 
   return (
     <div className="space-y-6">

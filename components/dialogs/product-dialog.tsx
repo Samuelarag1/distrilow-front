@@ -26,6 +26,7 @@ import {
 import { Switch } from "@/components/ui/switch";
 
 import { useBranch } from "@/components/providers/business-provider";
+import { useToast } from "@/hooks/use-toast";
 import { Product } from "@/lib/products";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import type { ProductSaveInput } from "@/components/products/hooks/useProductSave";
@@ -96,6 +97,7 @@ export function ProductDialog({
   isSaving = false,
 }: ProductDialogProps) {
   const { activeBranchId } = useBranch();
+  const { toast } = useToast();
   const { data: categoriesData } = useSWR<Category[]>(
     "/categories",
     swrFetcher
@@ -229,13 +231,18 @@ export function ProductDialog({
     e.preventDefault();
 
     if (!activeBranchId) {
+      toast({
+        variant: "destructive",
+        title: "Sucursal requerida",
+        description: "Selecciona una sucursal antes de crear el producto.",
+      });
       return;
     }
-    if (!formData.sku.trim()) return;
     if (!formData.name.trim()) return;
     const costPrice = Number(formData.costPrice);
     const wholesalePrice = Number(formData.wholesalePrice);
     const retailPrice = Number(formData.retailPrice);
+    const normalizedPluCode = formData.pluCode.trim();
 
     if (
       !Number.isFinite(costPrice) ||
@@ -250,9 +257,9 @@ export function ProductDialog({
     const marginPercent = computeMargin(costPrice, retailPrice);
 
     await onSave({
-      sku: formData.sku.trim(),
+      sku: normalizedPluCode,
       barcode: formData.barcode?.trim() || undefined,
-      pluCode: formData.pluCode?.trim() || undefined,
+      pluCode: normalizedPluCode || undefined,
       isWeighable: formData.isWeighable,
       name: formData.name.trim(),
       description: formData.description?.trim() || undefined,

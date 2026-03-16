@@ -4,13 +4,18 @@ import { Product } from "@/lib/products";
 export function normalizeProductPayload(productData: Partial<Product>) {
   const rawPlu = (productData as any).pluCode?.trim() || "";
   const normalizedPlu = /^\d{5}$/.test(rawPlu) ? rawPlu : undefined;
+  const normalizedSku =
+    normalizedPlu ??
+    (typeof productData.sku === "string" && productData.sku.trim()
+      ? productData.sku.trim()
+      : undefined);
   const barcode = (productData as any).barcode?.trim() || undefined;
   const categoryId = (productData as any).categoryId?.trim() || undefined;
   const description = (productData as any).description?.trim() || undefined;
   const brand = (productData as any).brand?.trim() || undefined;
 
   return {
-    sku: productData.sku,
+    sku: normalizedSku,
     name: productData.name,
     barcode,
     pluCode: normalizedPlu,
