@@ -61,10 +61,8 @@ function getWholesaleMarginPercent(product: Product) {
   return getMarginPercentForPrice(product.costPrice, product.wholesalePrice);
 }
 
-function getPerHundredGrPriceFromKg(pricePerKg: unknown) {
-  const parsed = Number(pricePerKg ?? 0);
-  if (!Number.isFinite(parsed) || parsed <= 0) return null;
-  return parsed * 0.1;
+function hasSameRetailAndWholesalePrice(product: Product) {
+  return Number(product.retailPrice ?? 0) === Number(product.wholesalePrice ?? 0);
 }
 
 function escapeHtml(value: unknown) {
@@ -436,16 +434,13 @@ export function ProductsModule() {
             "Margen Minorista",
             "Mayorista",
             "Margen Mayorista",
-            "Precio por 100gr",
             "Pendiente",
           ],
           rows: rows.map((product) => {
             const retailMargin = getRetailMarginPercent(product);
             const wholesaleMargin = getWholesaleMarginPercent(product);
-            const retail100gr = getPerHundredGrPriceFromKg(product.retailPrice);
-            const wholesale100gr = getPerHundredGrPriceFromKg(
-              product.wholesalePrice
-            );
+            const sameRetailAndWholesalePrice =
+              hasSameRetailAndWholesalePrice(product);
             return [
               product.pluCode ?? "-",
               product.name,
@@ -454,14 +449,9 @@ export function ProductsModule() {
                 : "-",
               formatMoney(Number(product.costPrice ?? 0)),
               formatMoney(Number(product.retailPrice ?? 0)),
-              `${retailMargin.toFixed(2)}%`,
+              sameRetailAndWholesalePrice ? "-" : `${retailMargin.toFixed(2)}%`,
               formatMoney(Number(product.wholesalePrice ?? 0)),
               `${wholesaleMargin.toFixed(2)}%`,
-              product.measurementType === "kg"
-                ? `Min ${formatMoney(retail100gr ?? 0)} | May ${formatMoney(
-                    wholesale100gr ?? 0
-                  )}`
-                : "-",
               product.priceReviewPending || product.costReviewPending
                 ? [
                     product.priceReviewPending ? "Precio" : "",
@@ -708,9 +698,6 @@ export function ProductsModule() {
                       <th className="p-2 text-right text-xs font-semibold border-r">
                         Margen Mayorista
                       </th>
-                      <th className="p-2 text-right text-xs font-semibold border-r">
-                        Precio por 100gr
-                      </th>
                       <th className="p-2 text-center text-xs font-semibold border-r">
                         Pendiente
                       </th>
@@ -723,7 +710,7 @@ export function ProductsModule() {
                     {isLoading ? (
                       <tr>
                         <td
-                          colSpan={12}
+                          colSpan={10}
                           className="p-6 text-center text-sm text-muted-foreground"
                         >
                           Cargando productos...
@@ -732,7 +719,7 @@ export function ProductsModule() {
                     ) : sortedProducts.length === 0 ? (
                       <tr>
                         <td
-                          colSpan={12}
+                          colSpan={10}
                           className="p-6 text-center text-sm text-muted-foreground"
                         >
                           Sin productos para los filtros seleccionados.
@@ -742,16 +729,13 @@ export function ProductsModule() {
                       sortedProducts.map((product) => {
                         const retailMargin = getRetailMarginPercent(product);
                         const wholesaleMargin = getWholesaleMarginPercent(product);
+                        const sameRetailAndWholesalePrice =
+                          hasSameRetailAndWholesalePrice(product);
                         const lowRetailMargin =
+                          !sameRetailAndWholesalePrice &&
                           retailMargin < RETAIL_MARGIN_GOOD_THRESHOLD;
                         const lowWholesaleMargin =
                           wholesaleMargin < WHOLESALE_MARGIN_GOOD_THRESHOLD;
-                        const retail100gr = getPerHundredGrPriceFromKg(
-                          product.retailPrice
-                        );
-                        const wholesale100gr = getPerHundredGrPriceFromKg(
-                          product.wholesalePrice
-                        );
                         return (
                           <tr
                             key={product.id}
@@ -777,10 +761,16 @@ export function ProductsModule() {
                             </td>
                             <td
                               className={`p-2 text-right text-xs border-r font-semibold ${
-                                lowRetailMargin ? "text-red-600" : "text-emerald-600"
+                                sameRetailAndWholesalePrice
+                                  ? "text-muted-foreground"
+                                  : lowRetailMargin
+                                    ? "text-red-600"
+                                    : "text-emerald-600"
                               }`}
                             >
-                              {retailMargin.toFixed(2)}%
+                              {sameRetailAndWholesalePrice
+                                ? "-"
+                                : `${retailMargin.toFixed(2)}%`}
                             </td>
                             <td className="p-2 text-right text-xs border-r">
                               {formatMoney(Number(product.wholesalePrice ?? 0))}
@@ -791,20 +781,6 @@ export function ProductsModule() {
                               }`}
                             >
                               {wholesaleMargin.toFixed(2)}%
-                            </td>
-                            <td className="p-2 text-right text-xs border-r">
-                              {product.measurementType === "kg" ? (
-                                <div className="flex flex-col items-end">
-                                  <span>
-                                    Min: {formatMoney(retail100gr ?? 0)}
-                                  </span>
-                                  <span className="text-muted-foreground">
-                                    May: {formatMoney(wholesale100gr ?? 0)}
-                                  </span>
-                                </div>
-                              ) : (
-                                "-"
-                              )}
                             </td>
                             <td className="p-2 text-center text-xs border-r">
                               <div className="flex items-center justify-center gap-1">
