@@ -52,6 +52,7 @@ export interface SalePayment {
 
 export interface SaleLineItem {
   productId: string;
+  productName?: string;
   quantity: number;
   price: number;
   subtotal?: number;
@@ -188,8 +189,13 @@ function deriveBusinessTypeFromContext(
   return fallbackType;
 }
 
-function normalizeExpense(row: any, fallbackBusinessType: BusinessType): Expense {
-  const context = String(row.context ?? "GENERAL").toUpperCase() as ExpenseContext;
+function normalizeExpense(
+  row: any,
+  fallbackBusinessType: BusinessType
+): Expense {
+  const context = String(
+    row.context ?? "GENERAL"
+  ).toUpperCase() as ExpenseContext;
   return {
     id: String(row.id),
     branchId: String(row.branchId ?? ""),
@@ -202,15 +208,15 @@ function normalizeExpense(row: any, fallbackBusinessType: BusinessType): Expense
   };
 }
 
-function normalizePaymentBreakdown(
-  value: unknown
-): Record<string, number> {
+function normalizePaymentBreakdown(value: unknown): Record<string, number> {
   if (!value || typeof value !== "object") return {};
   const source = value as Record<string, unknown>;
   const normalized: Record<string, number> = {};
 
   Object.entries(source).forEach(([method, amount]) => {
-    const cleanMethod = String(method ?? "").trim().toUpperCase();
+    const cleanMethod = String(method ?? "")
+      .trim()
+      .toUpperCase();
     if (!cleanMethod) return;
     const parsedAmount = toFiniteNumber(amount, Number.NaN);
     if (!Number.isFinite(parsedAmount)) return;
@@ -224,24 +230,31 @@ function normalizeSale(
   row: ApiSaleSummary | ApiSaleDetail,
   businessType: BusinessType
 ): Sale {
-  const lineItems: SaleLineItem[] =
-    Array.isArray((row as ApiSaleDetail).items)
-      ? (row as ApiSaleDetail).items.map((item) => ({
+  const lineItems: SaleLineItem[] = Array.isArray((row as ApiSaleDetail).items)
+    ? (row as ApiSaleDetail).items.map((item) => {
+        const productName =
+          (item as any).name ??
+          (item as any).productName ??
+          (item as any).product?.name ??
+          "Producto";
+        return {
           productId: item.productId,
+          productName,
           quantity: toFiniteNumber(item.quantity, 0),
           price: toFiniteNumber(item.unitPrice, 0),
           subtotal: toOptionalFiniteNumber(item.subtotal),
-          linkedProductId: item.linkedProductId,
-          pricingMode: item.pricingMode,
-          requestedPriceType: item.requestedPriceType,
-          priceType: item.priceType,
-          pricingSource: item.pricingSource,
-          baseRetailPrice: toOptionalFiniteNumber(item.baseRetailPrice),
-          baseWholesalePrice: toOptionalFiniteNumber(item.baseWholesalePrice),
-          pricingRuleSnapshot: item.pricingRuleSnapshot,
-          manualOverrideReason: item.manualOverrideReason ?? null,
-        }))
-      : [];
+        linkedProductId: item.linkedProductId,
+        pricingMode: item.pricingMode,
+        requestedPriceType: item.requestedPriceType,
+        priceType: item.priceType,
+        pricingSource: item.pricingSource,
+        baseRetailPrice: toOptionalFiniteNumber(item.baseRetailPrice),
+        baseWholesalePrice: toOptionalFiniteNumber(item.baseWholesalePrice),
+        pricingRuleSnapshot: item.pricingRuleSnapshot,
+        manualOverrideReason: item.manualOverrideReason ?? null,
+      };
+    })
+    : [];
 
   const paymentBreakdownFromSummary = normalizePaymentBreakdown(
     (row as ApiSaleSummary).paymentBreakdown
@@ -254,7 +267,10 @@ function normalizeSale(
         : item.quantity * item.price),
     0
   );
-  const totalAmount = toFiniteNumber(row.totalAmount ?? row.total, computedTotal);
+  const totalAmount = toFiniteNumber(
+    row.totalAmount ?? row.total,
+    computedTotal
+  );
   const detailPayments = (row as ApiSaleDetail).payments;
   const payments = Array.isArray(detailPayments)
     ? detailPayments.map((payment) => ({
@@ -263,16 +279,24 @@ function normalizeSale(
         method: String(payment.method ?? "OTHER"),
         reference: payment.reference ?? undefined,
         notes: payment.notes ?? undefined,
-        date: String(payment.createdAt ?? payment.updatedAt ?? row.createdAt ?? new Date().toISOString()),
+        date: String(
+          payment.createdAt ??
+            payment.updatedAt ??
+            row.createdAt ??
+            new Date().toISOString()
+        ),
       }))
     : [];
   const paymentBreakdown =
     Object.keys(paymentBreakdownFromSummary).length > 0
       ? paymentBreakdownFromSummary
       : payments.reduce<Record<string, number>>((acc, payment) => {
-          const method = String(payment.method ?? "OTHER").trim().toUpperCase();
+          const method = String(payment.method ?? "OTHER")
+            .trim()
+            .toUpperCase();
           if (!method) return acc;
-          acc[method] = toFiniteNumber(acc[method], 0) + toFiniteNumber(payment.amount, 0);
+          acc[method] =
+            toFiniteNumber(acc[method], 0) + toFiniteNumber(payment.amount, 0);
           return acc;
         }, {});
   const paidAmount = toFiniteNumber(
@@ -296,10 +320,15 @@ function normalizeSale(
     (String(row.status ?? "").toUpperCase() === "CANCELLED"
       ? "CANCELLED"
       : "ACTIVE");
-  const itemsFromDetail = lineItems.reduce((sum, item) => sum + item.quantity, 0);
+  const itemsFromDetail = lineItems.reduce(
+    (sum, item) => sum + item.quantity,
+    0
+  );
   const itemsCount = Math.max(
     0,
-    Math.round(toFiniteNumber((row as ApiSaleSummary).itemsCount, lineItems.length))
+    Math.round(
+      toFiniteNumber((row as ApiSaleSummary).itemsCount, lineItems.length)
+    )
   );
   const itemsQuantity = Math.max(
     0,
@@ -328,7 +357,9 @@ function normalizeSale(
     date: String(row.createdAt ?? row.updatedAt ?? new Date().toISOString()),
     businessType,
     userId: String((row as any).userId ?? "unknown"),
-    userName: String((row as any).user?.email ?? (row as any).userName ?? "Usuario"),
+    userName: String(
+      (row as any).user?.email ?? (row as any).userName ?? "Usuario"
+    ),
     branchId: String(row.branchId ?? ""),
     status: chargeStatus === "PENDING" ? "PENDING" : "COMPLETED",
   };
@@ -350,7 +381,10 @@ function ensureDetailSale(sale: Sale): Sale {
 }
 
 async function collectAllPages<T>(
-  fetchPage: (skip: number, take: number) => Promise<{
+  fetchPage: (
+    skip: number,
+    take: number
+  ) => Promise<{
     items: T[];
     meta: { hasMore: boolean; limit: number; offset?: number };
   }>,
@@ -405,10 +439,7 @@ export function TransactionsProvider({
     }),
     [branchId]
   );
-  const {
-    data: salesSummaryData,
-    mutate: mutateSalesSummary,
-  } = useSWR<Sale[]>(
+  const { data: salesSummaryData, mutate: mutateSalesSummary } = useSWR<Sale[]>(
     token && branchId ? (["/sales", salesListFilters] as const) : null,
     async () => {
       const apiSales = await collectAllPages((skip, take) =>
@@ -417,7 +448,9 @@ export function TransactionsProvider({
       return dedupeById(
         apiSales
           .map((sale) => normalizeSale(sale, businessType))
-          .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+          .sort(
+            (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+          )
       );
     },
     {
@@ -469,7 +502,9 @@ export function TransactionsProvider({
     try {
       const [, apiExpenses] = await Promise.all([
         mutateSalesSummary(),
-        collectAllPages((skip, take) => backendApi.expenses.list({ skip, take }, branchId)),
+        collectAllPages((skip, take) =>
+          backendApi.expenses.list({ skip, take }, branchId)
+        ),
       ]);
 
       if (requestId !== refreshRequestIdRef.current) return;
@@ -478,7 +513,9 @@ export function TransactionsProvider({
         dedupeById(
           apiExpenses
             .map((expense) => normalizeExpense(expense, businessType))
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            .sort(
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+            )
         )
       );
     } catch (e) {
@@ -513,7 +550,9 @@ export function TransactionsProvider({
         dedupeById(
           apiExpenses
             .map((expense) => normalizeExpense(expense, businessType))
-            .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
+            .sort(
+              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+            )
         )
       );
     } catch (e) {
@@ -546,7 +585,11 @@ export function TransactionsProvider({
       }
 
       const amount = toFiniteNumber(newExpense.amount, NaN);
-      if (!Number.isFinite(amount) || amount <= 0 || amount > MAX_EXPENSE_AMOUNT) {
+      if (
+        !Number.isFinite(amount) ||
+        amount <= 0 ||
+        amount > MAX_EXPENSE_AMOUNT
+      ) {
         throw new Error(
           `El monto debe ser mayor a 0 y menor o igual a ${MAX_EXPENSE_AMOUNT}.`
         );
@@ -575,7 +618,9 @@ export function TransactionsProvider({
       logEvent(
         "create",
         "expense",
-        `Registro un gasto de $${normalized.amount.toLocaleString()}: ${normalized.description}`,
+        `Registro un gasto de $${normalized.amount.toLocaleString()}: ${
+          normalized.description
+        }`,
         normalized.id
       );
     },
@@ -599,11 +644,14 @@ export function TransactionsProvider({
             : item.requestedPriceType === "RETAIL"
             ? "RETAIL"
             : undefined;
-        const manualOverrideReason = item.manualOverrideReason?.trim() || undefined;
+        const manualOverrideReason =
+          item.manualOverrideReason?.trim() || undefined;
 
         if (quantity === null || quantity <= 0 || quantity > MAX_QUANTITY) {
           throw new Error(
-            `Cantidad invalida en item ${index + 1}. Debe ser mayor a 0 y menor o igual a ${MAX_QUANTITY}.`
+            `Cantidad invalida en item ${
+              index + 1
+            }. Debe ser mayor a 0 y menor o igual a ${MAX_QUANTITY}.`
           );
         }
 
@@ -647,7 +695,9 @@ export function TransactionsProvider({
       logEvent(
         "create",
         "sale",
-        `Registro una venta de $${normalized.amount.toLocaleString()} (${normalized.items} items)`,
+        `Registro una venta de $${normalized.amount.toLocaleString()} (${
+          normalized.items
+        } items)`,
         normalized.id
       );
 
@@ -678,7 +728,9 @@ export function TransactionsProvider({
         notes: payment.notes?.trim() || undefined,
       });
       const updatedSale = await backendApi.sales.getById(saleId);
-      const normalized = ensureDetailSale(normalizeSale(updatedSale, businessType));
+      const normalized = ensureDetailSale(
+        normalizeSale(updatedSale, businessType)
+      );
       upsertSale(normalized);
       return normalized;
     },
@@ -766,7 +818,9 @@ export function TransactionsProvider({
 export function useTransactions() {
   const context = useContext(TransactionsContext);
   if (context === undefined) {
-    throw new Error("useTransactions must be used within a TransactionsProvider");
+    throw new Error(
+      "useTransactions must be used within a TransactionsProvider"
+    );
   }
   return context;
 }

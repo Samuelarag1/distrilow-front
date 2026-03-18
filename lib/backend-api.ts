@@ -560,12 +560,16 @@ function normalizeCashBookEntry(row: unknown, index: number): CashBookEntry {
 
   const sourceType = sourceTypeRaw ?? "UNKNOWN";
   const directionCandidate = directionRaw?.toUpperCase();
-  const direction =
+  let direction =
     directionCandidate === "IN" ||
     directionCandidate === "OUT" ||
     directionCandidate === "INFO"
       ? directionCandidate
       : "INFO";
+
+  if (sourceType === "SALE_PAYMENT" && direction === "INFO") {
+    direction = "IN";
+  }
 
   const combinedType = [sourceTypeRaw, directionRaw]
     .filter((value): value is string => Boolean(value))
@@ -938,12 +942,14 @@ function normalizeCashSessionFromUnknown(value: unknown): CashSession | null {
     branchId: toOptionalText(source.branchId) ?? "",
     status,
     openingFloat: toFiniteNumber(source.openingFloat, 0),
+    openedByUserId: toTrimmedOrUndefined(source.openedByUserId),
+    closedByUserId: toTrimmedOrUndefined(source.closedByUserId),
+    openedAt: toOptionalText(source.openedAt) ?? undefined,
+    closedAt: toOptionalText(source.closedAt),
     expectedCash: toOptionalFiniteNumber(source.expectedCash) ?? undefined,
     countedCash: toOptionalFiniteNumber(source.countedCash) ?? undefined,
     difference: toOptionalFiniteNumber(source.difference) ?? undefined,
     notes: toOptionalText(source.notes) ?? undefined,
-    openedAt: toOptionalText(source.openedAt) ?? undefined,
-    closedAt: toOptionalText(source.closedAt),
     salesCount: toOptionalFiniteNumber(source.salesCount) ?? undefined,
     paymentsCount: toOptionalFiniteNumber(source.paymentsCount) ?? undefined,
     lastActivityAt: toOptionalText(source.lastActivityAt),
@@ -2293,7 +2299,13 @@ export const backendApi = {
       const differenceSource =
         toOptionalText(summarySource.differenceSource) ?? undefined;
 
+      const sessionsRaw = Array.isArray(payload.sessions) ? payload.sessions : [];
+      const sessions = sessionsRaw
+        .map((s) => normalizeCashSessionFromUnknown(s))
+        .filter((s): s is CashSession => s !== null);
+
       return {
+        branchId: effectiveBranchId,
         date: String(payload.date ?? new Date().toISOString().slice(0, 10)),
         summary: {
           openingFloat,
@@ -2311,7 +2323,9 @@ export const backendApi = {
             movementOut,
           },
         },
-        entries,
+        sessions,
+        entries: entries.items,
+        meta: entries.meta,
       } satisfies CashBookDailyResponse;
     },
   },

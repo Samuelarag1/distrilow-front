@@ -17,6 +17,15 @@ export type MovementType =
   | "RETURN"
   | "LOSS"
   | "EXPIRED";
+export type SaleMode = "FIXED_CONSUMPTION" | "VARIABLE_QUANTITY";
+
+export interface InventoryItem {
+  id: string;
+  name: string;
+  stockBaseQuantity: number;
+  branchId?: string | null;
+}
+
 export type ExpenseCategoryKnown =
   | "RENT"
   | "SERVICES"
@@ -253,7 +262,13 @@ export interface Product {
   allowNegativeStock?: boolean;
   imageUrl?: string | null;
   measurementType: MeasurementType;
+  linkedProductId?: string | null;
   stock?: number;
+  inventoryItemId?: string | null;
+  saleMode?: SaleMode;
+  consumptionPerSale?: number;
+  inventoryStockBaseQuantity?: number;
+  inventoryItem?: InventoryItem | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -280,6 +295,10 @@ export interface CreateProductRequest {
   allowNegativeStock?: boolean;
   imageUrl?: string;
   measurementType: MeasurementType;
+  linkedProductId?: string;
+  inventoryItemId?: string;
+  saleMode?: SaleMode;
+  consumptionPerSale?: number;
 }
 
 export interface UpdateProductReviewFlagsRequest {
@@ -342,8 +361,8 @@ export interface ProductPriceCostHistoryRow {
 }
 
 export interface ProductPriceCostHistoryQuery {
-  // skip?: number;
-  // take?: number;
+  skip?: number;
+  take?: number;
   offset?: number;
   limit?: number;
   productId?: string;
@@ -587,6 +606,7 @@ export interface SaleDetail extends SaleSummary {
   items: Array<{
     id?: string;
     productId: string;
+    productName?: string;
     quantity: number;
     unitPrice: number;
     subtotal?: number;
@@ -727,13 +747,15 @@ export interface CashSession {
   id: string;
   branchId: string;
   status: "OPEN" | "CLOSED";
+  openedByUserId?: string | null;
+  openedAt?: string;
   openingFloat: number;
+  closedByUserId?: string | null;
+  closedAt?: string | null;
   expectedCash?: number;
   countedCash?: number;
   difference?: number;
-  notes?: string;
-  openedAt?: string;
-  closedAt?: string | null;
+  notes?: string | null;
   salesCount?: number;
   paymentsCount?: number;
   lastActivityAt?: string | null;
@@ -824,8 +846,11 @@ export interface CashBookDailyQuery {
 
 export interface CashBookDailyResponse {
   date: string;
+  branchId: string;
   summary: CashBookDailySummary;
-  entries: PaginatedResponse<CashBookEntry>;
+  sessions: CashSession[];
+  entries: CashBookEntry[];
+  meta: OffsetPaginationMeta;
 }
 
 export interface AnalyticsPoint {

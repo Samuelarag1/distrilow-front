@@ -131,10 +131,10 @@ export function DailySales() {
             sale.lifecycleStatus === "CANCELLED"
               ? "cancelled"
               : sale.chargeStatus === "PAID"
-              ? "paid"
-              : sale.chargeStatus === "PARTIALLY_PAID"
-              ? "partial"
-              : "pending",
+                ? "paid"
+                : sale.chargeStatus === "PARTIALLY_PAID"
+                  ? "partial"
+                  : "pending",
         };
       })
       .sort((a, b) => (a.time < b.time ? 1 : -1));
@@ -145,7 +145,7 @@ export function DailySales() {
   const avgOrder = totalOrders > 0 ? totalSales / totalOrders : 0;
 
   return (
-    <div className="space-y-6">
+    <><div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle>Evolucion diaria (ultimos 14 dias)</CardTitle>
@@ -168,8 +168,7 @@ export function DailySales() {
                     stroke="var(--color-ventas)"
                     strokeWidth={3}
                     dot={{ fill: "var(--color-ventas)", strokeWidth: 2, r: 4 }}
-                    activeDot={{ r: 6 }}
-                  />
+                    activeDot={{ r: 6 }} />
                 </LineChart>
               </ResponsiveContainer>
             </ChartContainer>
@@ -179,63 +178,63 @@ export function DailySales() {
 
       <div className="grid gap-6 lg:grid-cols-3">
         <div className="lg:col-span-2">
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Clock className="h-5 w-5" />
-              Ventas de Hoy
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            {isLoading && (
-              <div className="text-sm text-muted-foreground">
-                Cargando ventas de hoy...
-              </div>
-            )}
-            <div className="space-y-3">
-              {todaySales.map((sale) => (
-                <div
-                  key={sale.id}
-                  className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
-                  onClick={() => {
-                    setSelectedSale(sale.saleObject);
-                    setIsDetailModalOpen(true);
-                  }}
-                >
-                  <div className="flex items-center gap-3">
-                    <div className="text-center">
-                      <p className="text-sm font-medium">{sale.time}</p>
-                    </div>
-                    <div>
-                      <p className="font-medium">{sale.customer}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {sale.items} productos
-                      </p>
-                    </div>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="text-right">
-                      <p className="font-bold">${sale.total.toFixed(2)}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {sale.method}
-                      </p>
-                    </div>
-                    <Badge className={getStatusColor(sale.status)}>
-                      {sale.status === "paid"
-                        ? "Pagada"
-                        : sale.status === "partial"
-                        ? "Parcial"
-                        : sale.status === "pending"
-                        ? "Pendiente"
-                        : "Cancelada"}
-                    </Badge>
-                  </div>
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center gap-2">
+                <Clock className="h-5 w-5" />
+                Ventas de Hoy
+              </CardTitle>
+            </CardHeader>
+            <CardContent>
+              {isLoading && (
+                <div className="text-sm text-muted-foreground">
+                  Cargando ventas de hoy...
                 </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      </div>
+              )}
+              <div className="space-y-3">
+                {todaySales.map((sale) => (
+                  <div
+                    key={sale.id}
+                    className="flex items-center justify-between p-3 border rounded-lg hover:bg-muted/50 transition-colors cursor-pointer"
+                    onClick={() => {
+                      setSelectedSale(sale.saleObject);
+                      setIsDetailModalOpen(true);
+                    }}
+                  >
+                    <div className="flex items-center gap-3">
+                      <div className="text-center">
+                        <p className="text-sm font-medium">{sale.time}</p>
+                      </div>
+                      <div>
+                        <p className="font-medium">{sale.customer}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {sale.items} productos
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right">
+                        <p className="font-bold">${sale.total.toFixed(2)}</p>
+                        <p className="text-xs text-muted-foreground">
+                          {sale.method}
+                        </p>
+                      </div>
+                      <Badge className={getStatusColor(sale.status)}>
+                        {sale.status === "paid"
+                          ? "Pagada"
+                          : sale.status === "partial"
+                            ? "Parcial"
+                            : sale.status === "pending"
+                              ? "Pendiente"
+                              : "Cancelada"}
+                      </Badge>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </div>
 
         <div className="space-y-4">
           <Card>
@@ -277,13 +276,10 @@ export function DailySales() {
           </Card>
         </div>
       </div>
-    </div>
-
-    <SalesDetailModal
-      sale={selectedSale}
-      open={isDetailModalOpen}
-      onOpenChange={setIsDetailModalOpen}
-    />
+    </div><SalesDetailModal
+        sale={selectedSale}
+        open={isDetailModalOpen}
+        onOpenChange={setIsDetailModalOpen} /></>
 
   );
 }

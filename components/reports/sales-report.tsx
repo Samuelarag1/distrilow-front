@@ -100,42 +100,42 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     async () => {
       const [salesTrend, topProducts, priceTypesSummary, pricingSourcesSummary] =
         await Promise.all([
-        backendApi.reporting.sales.history({
-          from: range.fromYmd,
-          to: range.toYmd,
-          groupBy: "day",
-          metric: "revenue",
-        }),
-        backendApi.reporting.sales.topProducts.report(
-          {
+          backendApi.reporting.sales.history({
             from: range.fromYmd,
             to: range.toYmd,
-            limit: 50,
-            branchId: branchId ?? undefined,
-          },
-          branchId
-        ),
-        backendApi.reporting.sales.priceTypes
-          .summary(
+            groupBy: "day",
+            metric: "revenue",
+          }),
+          backendApi.reporting.sales.topProducts.report(
             {
               from: range.fromYmd,
               to: range.toYmd,
+              limit: 50,
               branchId: branchId ?? undefined,
             },
             branchId
-          )
-          .catch(() => null),
-        backendApi.reporting.sales.pricingSources
-          .summary(
-            {
-              from: range.fromYmd,
-              to: range.toYmd,
-              branchId: branchId ?? undefined,
-            },
-            branchId
-          )
-          .catch(() => null),
-      ]);
+          ),
+          backendApi.reporting.sales.priceTypes
+            .summary(
+              {
+                from: range.fromYmd,
+                to: range.toYmd,
+                branchId: branchId ?? undefined,
+              },
+              branchId
+            )
+            .catch(() => null),
+          backendApi.reporting.sales.pricingSources
+            .summary(
+              {
+                from: range.fromYmd,
+                to: range.toYmd,
+                branchId: branchId ?? undefined,
+              },
+              branchId
+            )
+            .catch(() => null),
+        ]);
 
       return {
         salesTrend,
@@ -486,14 +486,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
               <CardTitle>
                 Top productos: ingresos por minorista/mayorista
               </CardTitle>
-              <CardDescription>
-                Endpoint: /reporting/sales/top-products/report
-              </CardDescription>
             </CardHeader>
             <CardContent>
               <div className="h-[280px] sm:h-[360px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topProductsByPriceType}>
+                  <BarChart data={topProductsByPriceType} >
                     <XAxis
                       dataKey="name"
                       stroke="#888888"

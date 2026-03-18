@@ -2,7 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardHeader,
+  CardTitle,
+  CardDescription,
+} from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { useAudit } from "@/components/providers/audit-provider";
 import { useTransactions } from "@/components/providers/transactions-provider";
@@ -150,7 +156,9 @@ export function ReportsModule() {
     return map;
   }, [products]);
 
-  const currentSales = sales.filter((sale) => sale.businessType === businessType);
+  const currentSales = sales.filter(
+    (sale) => sale.businessType === businessType
+  );
 
   const salesByCashier = currentSales.reduce((acc, sale) => {
     if (!acc[sale.userName]) {
@@ -189,10 +197,13 @@ export function ReportsModule() {
           currency: "ARS",
         }),
         operaciones: data.count,
-        ticketPromedio: Number(data.total / data.count).toLocaleString("es-AR", {
-          style: "currency",
-          currency: "ARS",
-        }),
+        ticketPromedio: Number(data.total / data.count).toLocaleString(
+          "es-AR",
+          {
+            style: "currency",
+            currency: "ARS",
+          }
+        ),
       })),
     [salesByCashier]
   );
@@ -203,7 +214,8 @@ export function ReportsModule() {
         .slice()
         .sort(
           (a, b) =>
-            new Date(b.openedAt ?? 0).getTime() - new Date(a.openedAt ?? 0).getTime()
+            new Date(b.openedAt ?? 0).getTime() -
+            new Date(a.openedAt ?? 0).getTime()
         )
         .map((session) => ({
           fecha: session.openedAt
@@ -215,10 +227,13 @@ export function ReportsModule() {
           cierre: session.closedAt
             ? new Date(session.closedAt).toLocaleTimeString()
             : "Abierta",
-          fondoInicial: Number(session.openingFloat ?? 0).toLocaleString("es-AR", {
-            style: "currency",
-            currency: "ARS",
-          }),
+          fondoInicial: Number(session.openingFloat ?? 0).toLocaleString(
+            "es-AR",
+            {
+              style: "currency",
+              currency: "ARS",
+            }
+          ),
           esperado: Number(session.expectedCash ?? 0).toLocaleString("es-AR", {
             style: "currency",
             currency: "ARS",
@@ -243,12 +258,15 @@ export function ReportsModule() {
   );
 
   const lastClosedSession = useMemo(() => {
-    return cashSessions
-      .filter((session) => !!session.closedAt)
-      .sort(
-        (a, b) =>
-          new Date(b.closedAt ?? 0).getTime() - new Date(a.closedAt ?? 0).getTime()
-      )[0] ?? null;
+    return (
+      cashSessions
+        .filter((session) => !!session.closedAt)
+        .sort(
+          (a, b) =>
+            new Date(b.closedAt ?? 0).getTime() -
+            new Date(a.closedAt ?? 0).getTime()
+        )[0] ?? null
+    );
   }, [cashSessions]);
 
   const loadCashSessions = useCallback(async () => {
@@ -260,7 +278,10 @@ export function ReportsModule() {
     setCashLoading(true);
     setCashError(null);
     try {
-      const sessions = await backendApi.cash.listSessions({ skip: 0, take: 100 }, branchId);
+      const sessions = await backendApi.cash.listSessions(
+        { skip: 0, take: 100 },
+        branchId
+      );
       setCashSessions(sessions.items);
     } catch (err: any) {
       setCashError(err?.message || "No se pudieron cargar sesiones de caja.");
@@ -389,11 +410,16 @@ export function ReportsModule() {
           Reportes de Auditoria
         </h1>
         <p className="text-muted-foreground">
-          Visualiza actividad del sistema, detalle de movimientos y sesiones de caja.
+          Visualiza actividad del sistema, detalle de movimientos y sesiones de
+          caja.
         </p>
       </div>
 
-      <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="space-y-4"
+      >
         <TabsList className="grid h-auto w-full grid-cols-3 gap-1 rounded-xl bg-muted p-1 sm:w-auto sm:grid-cols-none sm:flex sm:flex-row">
           <TabsTrigger value="audit" className="rounded-lg px-4 py-2">
             <History className="mr-2 h-4 w-4" />
@@ -423,18 +449,29 @@ export function ReportsModule() {
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={() => exportAudit("csv")}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => exportAudit("csv")}
+                  >
                     <Download className="mr-2 h-4 w-4" />
                     CSV
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => exportAudit("pdf")}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => exportAudit("pdf")}
+                  >
                     <Download className="mr-2 h-4 w-4" />
                     PDF
                   </Button>
                 </div>
               </div>
               <div className="max-w-xs">
-                <Select value={eventTypeFilter} onValueChange={setEventTypeFilter}>
+                <Select
+                  value={eventTypeFilter}
+                  onValueChange={setEventTypeFilter}
+                >
                   <SelectTrigger>
                     <SelectValue placeholder="Filtrar por tipo de evento" />
                   </SelectTrigger>
@@ -459,7 +496,9 @@ export function ReportsModule() {
                   )}
 
                   {!isLoading && error && (
-                    <div className="py-10 text-center text-destructive">{error}</div>
+                    <div className="py-10 text-center text-destructive">
+                      {error}
+                    </div>
                   )}
 
                   {!isLoading && !error && filteredEvents.length === 0 && (
@@ -480,24 +519,42 @@ export function ReportsModule() {
                         >
                           <div className="flex items-start gap-4">
                             <div className="mt-1 rounded-full border bg-background p-2 shadow-sm">
-                              {auditIcons[event.action] || <History className="h-4 w-4" />}
+                              {auditIcons[event.action] || (
+                                <History className="h-4 w-4" />
+                              )}
                             </div>
                             <div className="flex-1 space-y-1">
                               <div className="flex items-center justify-between">
-                                <span className="text-sm font-semibold">{event.description}</span>
-                                <Badge variant="outline" className="font-mono text-[10px]">
-                                  {new Date(event.timestamp).toLocaleTimeString()}
+                                <span className="text-sm font-semibold">
+                                  {event.description}
+                                </span>
+                                <Badge
+                                  variant="outline"
+                                  className="font-mono text-[10px]"
+                                >
+                                  {new Date(
+                                    event.timestamp
+                                  ).toLocaleTimeString()}
                                 </Badge>
                               </div>
                               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                                 <UserIcon className="h-3 w-3" />
-                                <span className="font-medium text-foreground">{event.userName}</span>
+                                <span className="font-medium text-foreground">
+                                  {event.userName}
+                                </span>
                                 <span>-</span>
-                                <Badge variant="secondary" className="h-4 px-1 text-[9px] uppercase">
+                                <Badge
+                                  variant="secondary"
+                                  className="h-4 px-1 text-[9px] uppercase"
+                                >
                                   {event.entityType}
                                 </Badge>
                                 <span>-</span>
-                                <span>{new Date(event.timestamp).toLocaleDateString()}</span>
+                                <span>
+                                  {new Date(
+                                    event.timestamp
+                                  ).toLocaleDateString()}
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -505,20 +562,29 @@ export function ReportsModule() {
                           {movement && (
                             <div className="mt-3 grid gap-1 rounded-md border bg-background/80 p-2 text-xs">
                               <div>
-                                <span className="font-semibold">Producto:</span> {movement.producto}
+                                <span className="font-semibold">Producto:</span>{" "}
+                                {movement.producto}
                               </div>
                               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                                 <span>
-                                  <span className="font-semibold">Tipo:</span> {movement.tipo}
+                                  <span className="font-semibold">Tipo:</span>{" "}
+                                  {movement.tipo}
                                 </span>
                                 <span>
-                                  <span className="font-semibold">Cantidad:</span> {movement.cantidad}
+                                  <span className="font-semibold">
+                                    Cantidad:
+                                  </span>{" "}
+                                  {movement.cantidad}
                                 </span>
                                 <span>
-                                  <span className="font-semibold">Stock:</span> {movement.stock}
+                                  <span className="font-semibold">Stock:</span>{" "}
+                                  {movement.stock}
                                 </span>
                                 <span>
-                                  <span className="font-semibold">Sucursal:</span> {movement.sucursal}
+                                  <span className="font-semibold">
+                                    Sucursal:
+                                  </span>{" "}
+                                  {movement.sucursal}
                                 </span>
                               </div>
                             </div>
@@ -534,18 +600,29 @@ export function ReportsModule() {
 
         <TabsContent value="cashiers" className="space-y-4">
           <div className="flex justify-end gap-2">
-            <Button variant="outline" size="sm" onClick={() => exportCashiers("csv")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportCashiers("csv")}
+            >
               <Download className="mr-2 h-4 w-4" />
               CSV
             </Button>
-            <Button variant="outline" size="sm" onClick={() => exportCashiers("pdf")}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => exportCashiers("pdf")}
+            >
               <Download className="mr-2 h-4 w-4" />
               PDF
             </Button>
           </div>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {Object.entries(salesByCashier).map(([name, data]) => (
-              <Card key={name} className="overflow-hidden border-t-4 border-t-primary shadow-lg">
+              <Card
+                key={name}
+                className="overflow-hidden border-t-4 border-t-primary shadow-lg"
+              >
                 <CardHeader className="pb-2">
                   <Badge variant="outline" className="mb-2 w-fit">
                     Usuario activo
@@ -560,18 +637,26 @@ export function ReportsModule() {
                 <CardContent>
                   <div className="mt-2 space-y-4">
                     <div className="flex items-center justify-between border-b border-dashed py-2">
-                      <span className="text-sm font-medium text-muted-foreground">Total vendido</span>
+                      <span className="text-sm font-medium text-muted-foreground">
+                        Total vendido
+                      </span>
                       <span className="text-xl font-black text-primary">
                         ${data.total.toLocaleString()}
                       </span>
                     </div>
                     <div className="flex items-center justify-between border-b border-dashed py-2">
-                      <span className="text-sm font-medium text-muted-foreground">Operaciones</span>
+                      <span className="text-sm font-medium text-muted-foreground">
+                        Operaciones
+                      </span>
                       <span className="font-bold">{data.count} ventas</span>
                     </div>
                     <div className="flex items-center justify-between py-2">
-                      <span className="text-sm font-medium text-muted-foreground">Ticket promedio</span>
-                      <span className="font-bold">${(data.total / data.count).toLocaleString()}</span>
+                      <span className="text-sm font-medium text-muted-foreground">
+                        Ticket promedio
+                      </span>
+                      <span className="font-bold">
+                        ${(data.total / data.count).toLocaleString()}
+                      </span>
                     </div>
                   </div>
                 </CardContent>
@@ -598,19 +683,32 @@ export function ReportsModule() {
                     Aperturas y cierres diarios de caja
                   </CardTitle>
                   <CardDescription>
-                    Historial de sesiones de caja con montos esperados y diferencias.
+                    Historial de sesiones de caja con montos esperados y
+                    diferencias.
                   </CardDescription>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="outline" size="sm" onClick={loadCashSessions}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={loadCashSessions}
+                  >
                     <RefreshCcw className="mr-2 h-4 w-4" />
                     Actualizar
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => exportCashDaily("csv")}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => exportCashDaily("csv")}
+                  >
                     <Download className="mr-2 h-4 w-4" />
                     CSV
                   </Button>
-                  <Button variant="outline" size="sm" onClick={() => exportCashDaily("pdf")}>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => exportCashDaily("pdf")}
+                  >
                     <Download className="mr-2 h-4 w-4" />
                     PDF
                   </Button>
@@ -619,7 +717,9 @@ export function ReportsModule() {
             </CardHeader>
             <CardContent>
               {cashLoading && (
-                <div className="py-6 text-sm text-muted-foreground">Cargando sesiones de caja...</div>
+                <div className="py-6 text-sm text-muted-foreground">
+                  Cargando sesiones de caja...
+                </div>
               )}
 
               {!cashLoading && cashError && (
@@ -627,36 +727,50 @@ export function ReportsModule() {
               )}
 
               {!cashLoading && !cashError && cashDailyRows.length === 0 && (
-                <div className="py-6 text-sm text-muted-foreground">No hay sesiones de caja registradas.</div>
+                <div className="py-6 text-sm text-muted-foreground">
+                  No hay sesiones de caja registradas.
+                </div>
               )}
 
               {!cashLoading && !cashError && cashDailyRows.length > 0 && (
                 <div className="space-y-3">
                   {lastClosedSession && (
                     <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-xs">
-                      <div className="font-semibold text-emerald-800">Ultimo cierre registrado</div>
+                      <div className="font-semibold text-emerald-800">
+                        Ultimo cierre registrado
+                      </div>
                       <div className="mt-1 grid gap-1 sm:grid-cols-4">
                         <span>
-                          <span className="font-semibold">Cierre:</span>{" "}
-                          {new Date(lastClosedSession.closedAt ?? "").toLocaleString()}
+                          <span className="font-semibold ">Cierre:</span>{" "}
+                          {new Date(
+                            lastClosedSession.closedAt ?? ""
+                          ).toLocaleString()}
                         </span>
                         <span>
-                          <span className="font-semibold">Esperado:</span>{" "}
-                          {Number(lastClosedSession.expectedCash ?? 0).toLocaleString("es-AR", {
+                          <span className="font-semibold text-red-500">
+                            Esperado:
+                          </span>{" "}
+                          {Number(
+                            lastClosedSession.expectedCash ?? 0
+                          ).toLocaleString("es-AR", {
                             style: "currency",
                             currency: "ARS",
                           })}
                         </span>
                         <span>
                           <span className="font-semibold">Contado:</span>{" "}
-                          {Number(lastClosedSession.countedCash ?? 0).toLocaleString("es-AR", {
+                          {Number(
+                            lastClosedSession.countedCash ?? 0
+                          ).toLocaleString("es-AR", {
                             style: "currency",
                             currency: "ARS",
                           })}
                         </span>
                         <span>
                           <span className="font-semibold">Diferencia:</span>{" "}
-                          {Number(lastClosedSession.difference ?? 0).toLocaleString("es-AR", {
+                          {Number(
+                            lastClosedSession.difference ?? 0
+                          ).toLocaleString("es-AR", {
                             style: "currency",
                             currency: "ARS",
                           })}
@@ -672,28 +786,36 @@ export function ReportsModule() {
                         className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-8"
                       >
                         <div>
-                          <span className="font-semibold">Fecha:</span> {row.fecha}
+                          <span className="font-semibold">Fecha:</span>{" "}
+                          {row.fecha}
                         </div>
                         <div>
-                          <span className="font-semibold">Apertura:</span> {row.apertura}
+                          <span className="font-semibold">Apertura:</span>{" "}
+                          {row.apertura}
                         </div>
                         <div>
-                          <span className="font-semibold">Cierre:</span> {row.cierre}
+                          <span className="font-semibold">Cierre:</span>{" "}
+                          {row.cierre}
                         </div>
                         <div>
-                          <span className="font-semibold">Inicial:</span> {row.fondoInicial}
+                          <span className="font-semibold">Inicial:</span>{" "}
+                          {row.fondoInicial}
                         </div>
                         <div>
-                          <span className="font-semibold">Esperado:</span> {row.esperado}
+                          <span className="font-semibold">Esperado:</span>{" "}
+                          {row.esperado}
                         </div>
                         <div>
-                          <span className="font-semibold">Contado:</span> {row.contado}
+                          <span className="font-semibold">Contado:</span>{" "}
+                          {row.contado}
                         </div>
                         <div>
-                          <span className="font-semibold">Diferencia:</span> {row.diferencia}
+                          <span className="font-semibold">Diferencia:</span>{" "}
+                          {row.diferencia}
                         </div>
                         <div>
-                          <span className="font-semibold">Estado:</span> {row.estado}
+                          <span className="font-semibold">Estado:</span>{" "}
+                          {row.estado}
                         </div>
                       </div>
                     ))}

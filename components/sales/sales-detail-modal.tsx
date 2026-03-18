@@ -124,7 +124,9 @@ export function SalesDetailModal({
                     <tr>
                       <th className="text-left p-3 font-medium">Producto</th>
                       <th className="text-right p-3 font-medium">Cantidad</th>
-                      <th className="text-right p-3 font-medium">Precio Unit.</th>
+                      <th className="text-right p-3 font-medium">
+                        Precio Unit.
+                      </th>
                       <th className="text-right p-3 font-medium">Subtotal</th>
                       <th className="text-center p-3 font-medium">Tipo</th>
                       <th className="text-center p-3 font-medium">Vinculado</th>
@@ -133,13 +135,17 @@ export function SalesDetailModal({
                   <tbody className="divide-y">
                     {lineItems.length === 0 ? (
                       <tr>
-                        <td colSpan={6} className="text-center p-4 text-muted-foreground">
+                        <td
+                          colSpan={6}
+                          className="text-center p-4 text-muted-foreground"
+                        >
                           Sin productos registrados
                         </td>
                       </tr>
                     ) : (
                       lineItems.map((item, index) => {
-                        const subtotal = item.subtotal ?? item.quantity * item.price;
+                        const subtotal =
+                          item.subtotal ?? item.quantity * item.price;
                         return (
                           <tr
                             key={`${item.productId}-${index}`}
@@ -147,7 +153,9 @@ export function SalesDetailModal({
                           >
                             <td className="p-3">
                               <div className="space-y-1">
-                                <p className="font-medium text-sm">Producto</p>
+                                <p className="font-medium text-sm">
+                                  {item.productName || "Producto"}
+                                </p>
                                 <p className="text-xs text-muted-foreground">
                                   {item.productId.slice(0, 8)}
                                 </p>
@@ -184,9 +192,17 @@ export function SalesDetailModal({
                             </td>
                             <td className="text-center p-3">
                               {item.linkedProductId ? (
-                                <div className="flex items-center justify-center gap-1" title={`Vinculado a: ${item.linkedProductId.slice(0, 8)}`}>
+                                <div
+                                  className="flex items-center justify-center gap-1"
+                                  title={`Vinculado a: ${item.linkedProductId.slice(
+                                    0,
+                                    8
+                                  )}`}
+                                >
                                   <Link className="h-4 w-4 text-green-600" />
-                                  <span className="text-xs text-green-600 font-medium">Sí</span>
+                                  <span className="text-xs text-green-600 font-medium">
+                                    Sí
+                                  </span>
                                 </div>
                               ) : (
                                 "-"
@@ -212,8 +228,12 @@ export function SalesDetailModal({
                     key={`${payment.id ?? index}`}
                     className="rounded-lg border p-3 bg-muted/25 flex justify-between items-center text-sm"
                   >
-                    <span className="font-medium uppercase">{payment.method}</span>
-                    <span className="font-semibold">{formatMoney(payment.amount)}</span>
+                    <span className="font-medium uppercase">
+                      {payment.method}
+                    </span>
+                    <span className="font-semibold">
+                      {formatMoney(payment.amount)}
+                    </span>
                   </div>
                 ))}
               </div>

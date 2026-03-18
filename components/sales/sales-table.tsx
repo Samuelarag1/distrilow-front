@@ -30,6 +30,7 @@ import {
   useTransactions,
   type Sale,
 } from "@/components/providers/transactions-provider";
+import { SalesDetailModal } from "./sales-detail-modal";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useToast } from "@/hooks/use-toast";
 import type { PaymentMethod } from "@/lib/api-types";
@@ -78,6 +79,7 @@ export function SalesTable() {
   const [cancelTarget, setCancelTarget] = useState<Sale | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const pageSize = 10;
+  
   const {
     data: detailSale,
     isLoading: isLoadingDetailSale,
@@ -371,86 +373,13 @@ export function SalesTable() {
         </div>
       </CardContent>
 
-      <Dialog
+      <SalesDetailModal
         open={Boolean(detailSaleId)}
         onOpenChange={(open) => {
           if (!open) setDetailSaleId(null);
         }}
-      >
-        <DialogContent className="max-w-lg">
-          <DialogHeader>
-            <DialogTitle>Detalle de Venta</DialogTitle>
-            <DialogDescription>ID: {detailSaleId}</DialogDescription>
-          </DialogHeader>
-          {isLoadingDetailSale && (
-            <p className="text-sm text-muted-foreground">
-              Cargando detalle de venta...
-            </p>
-          )}
-          {!isLoadingDetailSale && detailSaleError && (
-            <p className="text-sm text-destructive">
-              No se pudo cargar el detalle de la venta.
-            </p>
-          )}
-          {!isLoadingDetailSale && !detailSaleError && detailSale && (
-            <div className="space-y-3 text-sm">
-              <div className="grid grid-cols-2 gap-2">
-                <div>
-                  <p className="text-muted-foreground">Total</p>
-                  <p className="font-semibold">
-                    {formatMoney(detailSale.totalAmount)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Pagado</p>
-                  <p className="font-semibold">
-                    {formatMoney(detailSale.paidAmount)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Saldo pendiente</p>
-                  <p className="font-semibold">
-                    {formatMoney(detailSale.outstandingAmount)}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-muted-foreground">Estado</p>
-                  <Badge
-                    className={getStatusColor(getSaleRowStatus(detailSale))}
-                  >
-                    {getStatusText(getSaleRowStatus(detailSale))}
-                  </Badge>
-                </div>
-              </div>
-              <div className="rounded-md border p-3">
-                <p className="font-semibold mb-2">Pagos</p>
-                {(detailSale.payments?.length ?? 0) === 0 ? (
-                  <p className="text-muted-foreground">
-                    Sin pagos registrados.
-                  </p>
-                ) : (
-                  <div className="space-y-2">
-                    {(detailSale.payments ?? []).map((payment, index) => (
-                      <div
-                        key={`${payment.id ?? index}`}
-                        className="flex justify-between gap-2"
-                      >
-                        <span className="uppercase">{payment.method}</span>
-                        <span>{formatMoney(payment.amount)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          )}
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDetailSaleId(null)}>
-              Cerrar
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        sale={detailSale ?? null}
+      />
 
       <Dialog
         open={isPayDialogOpen}
