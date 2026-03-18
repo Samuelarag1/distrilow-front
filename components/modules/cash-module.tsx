@@ -112,12 +112,12 @@ export function CashModule() {
     1,
     Number(
       dailyBookMeta?.totalPages ??
-        Math.ceil(dailyBookTotal / Math.max(1, dailyBookLimit))
+      Math.ceil(dailyBookTotal / Math.max(1, dailyBookLimit))
     )
   );
   const hasNextDailyBookPage = Boolean(
     dailyBookMeta?.hasNextPage ??
-      resolvedDailyBookPage < resolvedDailyBookTotalPages
+    resolvedDailyBookPage < resolvedDailyBookTotalPages
   );
 
   const loadCurrentCashSession = useCallback(
@@ -214,12 +214,12 @@ export function CashModule() {
         );
       } catch (error: any) {
         setDailyBook(null);
-        toast({
-          variant: "destructive",
-          title: "Error en libro diario",
-          description:
-            error?.message || "No se pudo obtener el libro diario de caja.",
-        });
+        // toast({
+        //   variant: "destructive",
+        //   title: "Error en libro diario",
+        //   description:
+        //     error?.message || "No se pudo obtener el libro diario de caja.",
+        // });
       } finally {
         setIsLoadingDailyBook(false);
       }
