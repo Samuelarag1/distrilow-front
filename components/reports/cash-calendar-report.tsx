@@ -1056,14 +1056,6 @@ export function CashCalendarReport() {
                     <div className="grid gap-3">
                       <div className="flex justify-between items-center text-sm">
                         <span className="text-muted-foreground">
-                          Apertura Inicial
-                        </span>
-                        <span className="font-bold">
-                          {formatMoney(dailyPayload.summary.openingFloat)}
-                        </span>
-                      </div>
-                      <div className="flex justify-between items-center text-sm">
-                        <span className="text-muted-foreground">
                           Ventas (Efectivo)
                         </span>
                         <span className="font-semibold text-foreground">
