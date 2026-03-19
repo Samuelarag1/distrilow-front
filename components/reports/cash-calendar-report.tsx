@@ -341,7 +341,8 @@ export function CashCalendarReport() {
       (sum, session) => sum + session.withdrawalsOut,
       0
     );
-    const totalIncome = totalCashIncome + totalTransferIncome + totalManualIncome;
+    const totalIncome =
+      totalCashIncome + totalTransferIncome + totalManualIncome;
     const totalNetDay = totalIncome - totalWithdrawals;
 
     const rows: Array<Record<string, unknown>> = [
@@ -1116,6 +1117,20 @@ export function CashCalendarReport() {
                             }`}
                           >
                             {formatMoney(dailyIncomeResult)}
+                          </p>
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase">
+                            Resultado diario de ingresos (Transferencias)
+                          </p>
+                          <p
+                            className={`text-2xl font-black ${
+                              dailyIncomeResult >= 0
+                                ? "text-emerald-600"
+                                : "text-red-600"
+                            }`}
+                          >
+                            {formatMoney(
+                              dailyPayload.summary.income.transferFromPayments
+                            )}
                           </p>
                           <p className="text-[10px] text-muted-foreground">
                             Resultado total: {formatMoney(dailyNetResult)}

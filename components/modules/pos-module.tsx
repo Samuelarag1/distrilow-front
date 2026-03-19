@@ -555,8 +555,22 @@ function getCartLineTotal(item: CartItem) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
+  const normalizeStockMessage = (message: string) => {
+    const normalized = message.trim().toLowerCase();
+    const isStockError =
+      normalized.includes("not enouth stock") ||
+      normalized.includes("not enough stock") ||
+      normalized.includes("insufficient stock");
+
+    if (isStockError) {
+      return "No hay stock suficiente para completar la venta.";
+    }
+
+    return message;
+  };
+
   if (error instanceof Error && error.message.trim()) {
-    return error.message;
+    return normalizeStockMessage(error.message);
   }
 
   if (
@@ -566,7 +580,7 @@ function getErrorMessage(error: unknown, fallback: string) {
     typeof error.message === "string" &&
     error.message.trim()
   ) {
-    return error.message;
+    return normalizeStockMessage(error.message);
   }
 
   return fallback;

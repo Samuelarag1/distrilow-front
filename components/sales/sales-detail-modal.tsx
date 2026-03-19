@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Link } from "lucide-react";
 import type { Sale } from "@/components/providers/transactions-provider";
-import { useProducts } from "@/components/providers/product-provider";
+import { backendApi } from "@/lib/backend-api";
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -37,18 +37,74 @@ export function SalesDetailModal({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { products } = useProducts({
-    take: 1000,
-    skip: 0,
-    resolveStockFromStocksEndpoint: false,
-  });
-  const productNameById = useMemo(() => {
-    const map = new Map<string, string>();
-    products.forEach((product) => {
-      map.set(product.id, product.name);
+  const nameCacheRef = useRef<Map<string, string>>(new Map());
+  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
+  const saleId = sale?.id ?? "";
+  const lineItems = useMemo(() => sale?.lineItems ?? [], [sale]);
+  const uniqueProductCount = new Set(lineItems.map((item) => item.productId)).size;
+  const hasLinkedProducts = lineItems.some((item) => item.linkedProductId);
+
+  const missingProductIds = useMemo(() => {
+    const ids = new Set<string>();
+    lineItems.forEach((item) => {
+      const currentName = String(item.productName ?? "").trim();
+      const isPlaceholder =
+        currentName.length === 0 || currentName.toLowerCase() === "producto";
+      if (isPlaceholder && item.productId) {
+        ids.add(item.productId);
+      }
     });
-    return map;
-  }, [products]);
+    return [...ids];
+  }, [lineItems]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const hydrateFromCache = () => {
+      const cachedNames: Record<string, string> = {};
+      lineItems.forEach((item) => {
+        const cached = nameCacheRef.current.get(item.productId);
+        if (cached) {
+          cachedNames[item.productId] = cached;
+        }
+      });
+      setResolvedNames(cachedNames);
+    };
+
+    const pendingIds = missingProductIds.filter(
+      (productId) => !nameCacheRef.current.has(productId)
+    );
+
+    if (pendingIds.length === 0) {
+      hydrateFromCache();
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    const loadMissingNames = async () => {
+      const responses = await Promise.allSettled(
+        pendingIds.map((productId) => backendApi.products.getById(productId))
+      );
+
+      if (cancelled) return;
+
+      responses.forEach((response, index) => {
+        if (response.status !== "fulfilled") return;
+        const productName = String(response.value?.name ?? "").trim();
+        if (!productName) return;
+        nameCacheRef.current.set(pendingIds[index], productName);
+      });
+
+      hydrateFromCache();
+    };
+
+    void loadMissingNames();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lineItems, missingProductIds, saleId]);
 
   if (!sale) return null;
 
@@ -60,9 +116,15 @@ export function SalesDetailModal({
     day: "numeric",
   });
 
-  const lineItems = sale.lineItems || [];
-  const uniqueProductCount = new Set(lineItems.map((item) => item.productId)).size;
-  const hasLinkedProducts = lineItems.some((item) => item.linkedProductId);
+  const getDisplayProductName = (productId: string, providedName?: string) => {
+    const rawName = String(providedName ?? "").trim();
+    if (rawName.length > 0 && rawName.toLowerCase() !== "producto") {
+      return rawName;
+    }
+    const resolved = resolvedNames[productId]?.trim();
+    if (resolved) return resolved;
+    return `ID ${productId.slice(0, 8)}`;
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -169,9 +231,7 @@ export function SalesDetailModal({
                             <td className="p-3">
                               <div className="space-y-1">
                                 <p className="font-medium text-sm">
-                                  {item.productName ||
-                                    productNameById.get(item.productId) ||
-                                    "Producto"}
+                                  {getDisplayProductName(item.productId, item.productName)}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
                                   {item.productId.slice(0, 8)}
