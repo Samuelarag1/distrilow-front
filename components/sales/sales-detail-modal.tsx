@@ -1,5 +1,6 @@
 "use client";
 
+import { useMemo } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -12,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Link } from "lucide-react";
 import type { Sale } from "@/components/providers/transactions-provider";
+import { useProducts } from "@/components/providers/product-provider";
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -35,6 +37,19 @@ export function SalesDetailModal({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
+  const { products } = useProducts({
+    take: 1000,
+    skip: 0,
+    resolveStockFromStocksEndpoint: false,
+  });
+  const productNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    products.forEach((product) => {
+      map.set(product.id, product.name);
+    });
+    return map;
+  }, [products]);
+
   if (!sale) return null;
 
   const saleDate = new Date(sale.date);
@@ -46,7 +61,7 @@ export function SalesDetailModal({
   });
 
   const lineItems = sale.lineItems || [];
-  const totalQuantity = lineItems.reduce((sum, item) => sum + item.quantity, 0);
+  const uniqueProductCount = new Set(lineItems.map((item) => item.productId)).size;
   const hasLinkedProducts = lineItems.some((item) => item.linkedProductId);
 
   return (
@@ -82,7 +97,7 @@ export function SalesDetailModal({
             </div>
             <div className="rounded-lg border p-3 bg-muted/50">
               <p className="text-xs text-muted-foreground">Productos</p>
-              <p className="text-lg font-bold">{totalQuantity}</p>
+              <p className="text-lg font-bold">{uniqueProductCount}</p>
             </div>
           </div>
 
@@ -154,7 +169,9 @@ export function SalesDetailModal({
                             <td className="p-3">
                               <div className="space-y-1">
                                 <p className="font-medium text-sm">
-                                  {item.productName || "Producto"}
+                                  {item.productName ||
+                                    productNameById.get(item.productId) ||
+                                    "Producto"}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
                                   {item.productId.slice(0, 8)}

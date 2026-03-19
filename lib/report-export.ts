@@ -121,5 +121,4 @@ export function exportRowsToPdf(input: ExportTableInput) {
 
   popup.document.close();
   popup.focus();
-  popup.print();
 }

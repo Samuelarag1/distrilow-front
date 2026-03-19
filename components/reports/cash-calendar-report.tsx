@@ -14,6 +14,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock,
+  Download,
   History,
   Info,
   RefreshCcw,
@@ -39,8 +40,10 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import { exportRowsToPdf } from "@/lib/report-export";
 
 import type {
+  CashBookEntry,
   CashBookDailyResponse,
   ReportsCashMonthlyItem,
   ReportsCashMonthlyResponse,
@@ -82,6 +85,25 @@ function emptyDailyResponse(date: string): CashBookDailyResponse {
       hasMore: false,
     },
   };
+}
+
+const DAILY_MOVEMENTS_LIMIT = 5;
+
+function getEntryMethodLabel(method?: string | null) {
+  if (method === "CASH") return "Efectivo";
+  if (method === "TRANSFER") return "Transferencia";
+  return method || "Otro";
+}
+
+function getEntryLabel(entry: CashBookEntry) {
+  if (entry.sourceType === "SALE_PAYMENT") {
+    const reference = entry.saleId || entry.reference || entry.id;
+    return `Venta #${String(reference).slice(0, 6)}`;
+  }
+  if (entry.direction === "OUT") {
+    return entry.notes?.trim() || "Retiro de caja";
+  }
+  return entry.notes?.trim() || "Movimiento de caja";
 }
 
 export function CashCalendarReport() {
@@ -241,6 +263,173 @@ export function CashCalendarReport() {
     [monthlyItems]
   );
 
+  const latestClosedSession = useMemo(() => {
+    if (!dailyPayload) return null;
+    return (
+      dailyPayload.sessions
+        .filter((session) => session.status === "CLOSED" && !!session.closedAt)
+        .sort(
+          (a, b) =>
+            new Date(b.closedAt ?? 0).getTime() -
+            new Date(a.closedAt ?? 0).getTime()
+        )[0] ?? null
+    );
+  }, [dailyPayload]);
+
+  const dailyIncomeResult = useMemo(() => {
+    if (!dailyPayload) return 0;
+    return (
+      Number(dailyPayload.summary.income.cashFromPayments ?? 0) +
+      Number(dailyPayload.summary.income.movementIn ?? 0)
+    );
+  }, [dailyPayload]);
+
+  const dailyNetResult = useMemo(() => {
+    if (!dailyPayload) return 0;
+    return (
+      dailyIncomeResult +
+      Number(dailyPayload.summary.income.transferFromPayments ?? 0)
+    );
+  }, [dailyPayload, dailyIncomeResult]);
+
+  const nextShiftAmount = useMemo(() => {
+    if (!dailyPayload) return 0;
+    if (
+      latestClosedSession?.countedCash !== undefined &&
+      latestClosedSession?.countedCash !== null
+    ) {
+      return Number(latestClosedSession.countedCash);
+    }
+    return Number(dailyPayload.summary.countedCash ?? 0);
+  }, [dailyPayload, latestClosedSession]);
+
+  const exportDailyPdf = useCallback(() => {
+    if (!dailyPayload) return;
+
+    const sessionsSummary = dailyPayload.sessions.map((session, index) => {
+      const cashIncome = Number(session.totals?.cashPayments ?? 0);
+      const transferIncome = Number(session.totals?.transferPayments ?? 0);
+      const manualIncome = Number(session.totals?.movementIn ?? 0);
+      const withdrawalsOut = Number(session.totals?.movementOut ?? 0);
+      const sessionIncomeTotal = cashIncome + transferIncome + manualIncome;
+      const sessionNetTotal = sessionIncomeTotal - withdrawalsOut;
+
+      return {
+        label: `Sesion ${index + 1}`,
+        cashIncome,
+        transferIncome,
+        manualIncome,
+        withdrawalsOut,
+        sessionIncomeTotal,
+        sessionNetTotal,
+      };
+    });
+
+    const totalCashIncome = sessionsSummary.reduce(
+      (sum, session) => sum + session.cashIncome,
+      0
+    );
+    const totalTransferIncome = sessionsSummary.reduce(
+      (sum, session) => sum + session.transferIncome,
+      0
+    );
+    const totalManualIncome = sessionsSummary.reduce(
+      (sum, session) => sum + session.manualIncome,
+      0
+    );
+    const totalWithdrawals = sessionsSummary.reduce(
+      (sum, session) => sum + session.withdrawalsOut,
+      0
+    );
+    const totalIncome = totalCashIncome + totalTransferIncome + totalManualIncome;
+    const totalNetDay = totalIncome - totalWithdrawals;
+
+    const rows: Array<Record<string, unknown>> = [
+      {
+        seccion: "Resumen general",
+        detalle: "Total ingreso efectivo",
+        valor: formatMoney(totalCashIncome),
+      },
+      {
+        seccion: "Resumen general",
+        detalle: "Total ingreso transferencia",
+        valor: formatMoney(totalTransferIncome),
+      },
+      {
+        seccion: "Resumen general",
+        detalle: "Total ingresos manuales",
+        valor: formatMoney(totalManualIncome),
+      },
+      {
+        seccion: "Resumen general",
+        detalle: "Total retiros de caja",
+        valor: `-${formatMoney(totalWithdrawals)}`,
+      },
+      {
+        seccion: "Resumen general",
+        detalle: "Total ingresos del dia",
+        valor: formatMoney(totalIncome),
+      },
+      {
+        seccion: "Resumen general",
+        detalle: "Neto total del dia",
+        valor: formatMoney(totalNetDay),
+      },
+      {
+        seccion: "Resumen general",
+        detalle: "Monto para proximo turno",
+        valor: formatMoney(nextShiftAmount),
+      },
+    ];
+
+    sessionsSummary.forEach((session) => {
+      rows.push(
+        {
+          seccion: session.label,
+          detalle: "Ingreso efectivo",
+          valor: formatMoney(session.cashIncome),
+        },
+        {
+          seccion: session.label,
+          detalle: "Ingreso transferencia",
+          valor: formatMoney(session.transferIncome),
+        },
+        {
+          seccion: session.label,
+          detalle: "Ingresos manuales",
+          valor: formatMoney(session.manualIncome),
+        },
+        {
+          seccion: session.label,
+          detalle: "Retiro de caja",
+          valor: `-${formatMoney(session.withdrawalsOut)}`,
+        },
+        {
+          seccion: session.label,
+          detalle: "Total ingresos sesion",
+          valor: formatMoney(session.sessionIncomeTotal),
+        },
+        {
+          seccion: session.label,
+          detalle: "Neto sesion",
+          valor: formatMoney(session.sessionNetTotal),
+        }
+      );
+    });
+
+    exportRowsToPdf({
+      filename: `reporte-caja-dia-${dailyPayload.date}`,
+      title: `Reporte Diario de Caja (${dailyPayload.date})`,
+      subtitle: "Resumen por sesiones y total consolidado del dia.",
+      columns: [
+        { key: "seccion", label: "Seccion" },
+        { key: "detalle", label: "Detalle" },
+        { key: "valor", label: "Valor" },
+      ],
+      rows,
+    });
+  }, [dailyPayload, nextShiftAmount]);
+
   return (
     <div className="space-y-4">
       <Card>
@@ -305,10 +494,11 @@ export function CashCalendarReport() {
                 Diferencia del mes
               </p>
               <p
-                className={`text-2xl font-bold ${selectedMonth.difference < 0
+                className={`text-2xl font-bold ${
+                  selectedMonth.difference < 0
                     ? "text-red-600"
                     : "text-emerald-600"
-                  }`}
+                }`}
               >
                 {formatMoney(selectedMonth.difference, 0)}
               </p>
@@ -322,7 +512,7 @@ export function CashCalendarReport() {
               <p className="text-2xl font-bold">
                 {formatMoney(
                   Number(selectedMonth.cashFromSales ?? 0) +
-                  Number(selectedMonth.transferFromSales ?? 0),
+                    Number(selectedMonth.transferFromSales ?? 0),
                   0
                 )}
               </p>
@@ -368,13 +558,23 @@ export function CashCalendarReport() {
                       tickLine={false}
                       axisLine={false}
                       fontSize={11}
-                      tickFormatter={(val) => format(new Date(val + "-01T12:00:00"), "MMM yy", { locale: es })}
+                      tickFormatter={(val) =>
+                        format(new Date(val + "-01T12:00:00"), "MMM yy", {
+                          locale: es,
+                        })
+                      }
                     />
                     <YAxis tickLine={false} axisLine={false} fontSize={11} />
                     <Tooltip
-                      cursor={{ fill: 'hsl(var(--muted)/0.3)' }}
-                      contentStyle={{ borderRadius: '12px', border: '1px solid hsl(var(--border))', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
-                      formatter={(value: number) => formatMoney(Number(value ?? 0), 0)}
+                      cursor={{ fill: "hsl(var(--muted)/0.3)" }}
+                      contentStyle={{
+                        borderRadius: "12px",
+                        border: "1px solid hsl(var(--border))",
+                        boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
+                      }}
+                      formatter={(value: number) =>
+                        formatMoney(Number(value ?? 0), 0)
+                      }
                     />
                     <Legend iconType="circle" />
                     <Bar
@@ -410,7 +610,9 @@ export function CashCalendarReport() {
                       <th className="px-4 py-3">Mes</th>
                       <th className="px-4 py-3 text-right">Efectivo</th>
                       <th className="px-4 py-3 text-right">Transf.</th>
-                      <th className="px-4 py-3 text-right">Ing/Eg. Man.</th>
+                      <th className="px-4 py-3 text-right">
+                        Ing./Retiros Man.
+                      </th>
                       <th className="px-4 py-3 text-right">Esperado</th>
                       <th className="px-4 py-3 text-right">Diferencia</th>
                       <th className="px-4 py-3 text-center">Sesiones</th>
@@ -418,17 +620,46 @@ export function CashCalendarReport() {
                   </thead>
                   <tbody className="divide-y divide-border/50 bg-background">
                     {monthlyItems.map((item) => (
-                      <tr key={item.month} className={item.month === selectedMonthKey ? "bg-primary/5 font-semibold" : "hover:bg-muted/30"}>
+                      <tr
+                        key={item.month}
+                        className={
+                          item.month === selectedMonthKey
+                            ? "bg-primary/5 font-semibold"
+                            : "hover:bg-muted/30"
+                        }
+                      >
                         <td className="px-4 py-3 uppercase">
-                          {format(new Date(item.month + "-01T12:00:00"), "MMMM yyyy", { locale: es })}
+                          {format(
+                            new Date(item.month + "-01T12:00:00"),
+                            "MMMM yyyy",
+                            { locale: es }
+                          )}
                         </td>
-                        <td className="px-4 py-3 text-right">{formatMoney(item.cashFromSales, 0)}</td>
-                        <td className="px-4 py-3 text-right">{formatMoney(item.transferFromSales, 0)}</td>
                         <td className="px-4 py-3 text-right">
-                          <span className="text-emerald-600">+{formatMoney(item.manualIn, 0)}</span> / <span className="text-red-600">-{formatMoney(item.manualOut, 0)}</span>
+                          {formatMoney(item.cashFromSales, 0)}
                         </td>
-                        <td className="px-4 py-3 text-right font-bold">{formatMoney(item.expectedCashClose, 0)}</td>
-                        <td className={`px-4 py-3 text-right font-bold ${item.difference < 0 ? "text-red-600" : "text-emerald-600"}`}>
+                        <td className="px-4 py-3 text-right">
+                          {formatMoney(item.transferFromSales, 0)}
+                        </td>
+                        <td className="px-4 py-3 text-right">
+                          <span className="text-emerald-600">
+                            +{formatMoney(item.manualIn, 0)}
+                          </span>{" "}
+                          /{" "}
+                          <span className="text-red-600">
+                            -{formatMoney(item.manualOut, 0)}
+                          </span>
+                        </td>
+                        <td className="px-4 py-3 text-right font-bold">
+                          {formatMoney(item.expectedCashClose, 0)}
+                        </td>
+                        <td
+                          className={`px-4 py-3 text-right font-bold ${
+                            item.difference < 0
+                              ? "text-red-600"
+                              : "text-emerald-600"
+                          }`}
+                        >
                           {formatMoney(item.difference, 0)}
                         </td>
                         <td className="px-4 py-3 text-center">
@@ -471,6 +702,15 @@ export function CashCalendarReport() {
               <RefreshCcw className="mr-2 h-4 w-4" />
               Recargar dia
             </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={exportDailyPdf}
+              disabled={!dailyPayload}
+            >
+              <Download className="mr-2 h-4 w-4" />
+              Exportar PDF del dia
+            </Button>
           </div>
 
           {isDailyLoading && (
@@ -499,110 +739,209 @@ export function CashCalendarReport() {
                         </p>
                       </div>
                     ) : (
-                      dailyPayload.sessions.map((session) => (
-                        <div
-                          key={session.id}
-                          className="group relative overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-all hover:shadow-md"
-                        >
-                          <div
-                            className={`absolute left-0 top-0 h-full w-1.5 ${session.status === "OPEN"
-                                ? "bg-emerald-500"
-                                : "bg-blue-600"
-                              }`}
-                          />
-                          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                            <div className="space-y-1.5">
-                              <div className="flex items-center gap-2">
-                                <Badge
-                                  className={
-                                    session.status === "OPEN"
-                                      ? "bg-emerald-500 hover:bg-emerald-600"
-                                      : "bg-blue-600 hover:bg-blue-700"
-                                  }
-                                >
-                                  {session.status === "OPEN"
-                                    ? "ABIERTA"
-                                    : "CERRADA"}
-                                </Badge>
-                                <span className="text-[10px] font-mono text-muted-foreground">
-                                  {session.id.slice(0, 8)}
-                                </span>
-                              </div>
-                              <div className="text-lg font-bold tracking-tight">
-                                {format(new Date(session.openedAt!), "HH:mm", {
-                                  locale: es,
-                                })}{" "}
-                                <span className="mx-1 text-muted-foreground/50">
-                                  →
-                                </span>{" "}
-                                {session.closedAt
-                                  ? format(new Date(session.closedAt), "HH:mm", {
-                                    locale: es,
-                                  })
-                                  : "En curso"}
-                              </div>
-                            </div>
+                      dailyPayload.sessions.map((session) => {
+                        const cashIncome = Number(
+                          session.totals?.cashPayments ?? 0
+                        );
+                        const transferIncome = Number(
+                          session.totals?.transferPayments ?? 0
+                        );
+                        const manualIncome = Number(
+                          session.totals?.movementIn ?? 0
+                        );
+                        const withdrawalsOut = Number(
+                          session.totals?.movementOut ?? 0
+                        );
+                        const sessionIncomeTotal =
+                          cashIncome + transferIncome + manualIncome;
+                        const sessionNetTotal =
+                          sessionIncomeTotal - withdrawalsOut;
+                        const projectedOperational =
+                          Number(session.expectedCash ?? 0) + withdrawalsOut;
+                        const countedOperational =
+                          session.status === "CLOSED"
+                            ? Number(session.countedCash ?? 0) + withdrawalsOut
+                            : null;
+                        const differenceOperational =
+                          countedOperational === null
+                            ? Number(session.difference ?? 0)
+                            : countedOperational - projectedOperational;
 
-                            <div className="grid grid-cols-2 gap-4 sm:flex sm:items-center sm:gap-6">
-                              <div className="text-right sm:border-r sm:pr-6">
-                                <p className="text-[10px] font-bold uppercase text-muted-foreground">
-                                  Apertura
-                                </p>
-                                <p className="text-sm font-semibold">
-                                  {formatMoney(session.openingFloat, 0)}
-                                </p>
+                        return (
+                          <div
+                            key={session.id}
+                            className="group relative overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-all hover:shadow-md"
+                          >
+                            <div
+                              className={`absolute left-0 top-0 h-full w-1.5 ${
+                                session.status === "OPEN"
+                                  ? "bg-emerald-500"
+                                  : "bg-blue-600"
+                              }`}
+                            />
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="space-y-1.5">
+                                <div className="flex items-center gap-2">
+                                  <Badge
+                                    className={
+                                      session.status === "OPEN"
+                                        ? "bg-emerald-500 hover:bg-emerald-600"
+                                        : "bg-blue-600 hover:bg-blue-700"
+                                    }
+                                  >
+                                    {session.status === "OPEN"
+                                      ? "ABIERTA"
+                                      : "CERRADA"}
+                                  </Badge>
+                                  <span className="text-[10px] font-mono text-muted-foreground">
+                                    {session.id.slice(0, 8)}
+                                  </span>
+                                </div>
+                                <div className="text-lg font-bold tracking-tight">
+                                  {format(
+                                    new Date(session.openedAt!),
+                                    "HH:mm",
+                                    {
+                                      locale: es,
+                                    }
+                                  )}{" "}
+                                  <span className="mx-1 text-muted-foreground/50">
+                                    →
+                                  </span>{" "}
+                                  {session.closedAt
+                                    ? format(
+                                        new Date(session.closedAt),
+                                        "HH:mm",
+                                        {
+                                          locale: es,
+                                        }
+                                      )
+                                    : "En curso"}
+                                </div>
                               </div>
-                              <div className="text-right sm:border-r sm:pr-6">
-                                <p className="text-[10px] font-bold uppercase text-muted-foreground">
-                                  Proyectado
-                                </p>
-                                <p className="text-sm font-semibold text-blue-600">
-                                  {formatMoney(session.expectedCash ?? 0, 0)}
-                                </p>
-                              </div>
-                              {session.status === "CLOSED" && (
-                                <>
-                                  <div className="text-right sm:border-r sm:pr-6">
-                                    <p className="text-[10px] font-bold uppercase text-muted-foreground">
-                                      Contado
-                                    </p>
-                                    <p className="text-sm font-semibold">
-                                      {formatMoney(session.countedCash ?? 0, 0)}
-                                    </p>
-                                  </div>
-                                  <div className="text-right">
-                                    <p className="text-[10px] font-bold uppercase text-muted-foreground">
-                                      Diferencia
-                                    </p>
-                                    <p
-                                      className={`text-sm font-bold ${(session.difference ?? 0) < 0
-                                          ? "text-red-600"
-                                          : (session.difference ?? 0) > 0
+
+                              <div className="grid grid-cols-2 gap-4 sm:flex sm:items-center sm:gap-6">
+                                <div className="text-right sm:border-r sm:pr-6">
+                                  <p className="text-[10px] font-bold uppercase text-muted-foreground">
+                                    Apertura
+                                  </p>
+                                  <p className="text-sm font-semibold">
+                                    {formatMoney(session.openingFloat, 0)}
+                                  </p>
+                                </div>
+                                <div className="text-right sm:border-r sm:pr-6">
+                                  <p className="text-[10px] font-bold uppercase text-muted-foreground">
+                                    Proyectado
+                                  </p>
+                                  <p className="text-sm font-semibold text-blue-600">
+                                    {formatMoney(projectedOperational, 0)}
+                                  </p>
+                                </div>
+                                {session.status === "CLOSED" && (
+                                  <>
+                                    <div className="text-right sm:border-r sm:pr-6">
+                                      <p className="text-[10px] font-bold uppercase text-muted-foreground">
+                                        Contado
+                                      </p>
+                                      <p className="text-sm font-semibold">
+                                        {formatMoney(
+                                          countedOperational ?? 0,
+                                          0
+                                        )}
+                                      </p>
+                                    </div>
+                                    <div className="text-right">
+                                      <p className="text-[10px] font-bold uppercase text-muted-foreground">
+                                        Diferencia
+                                      </p>
+                                      <p
+                                        className={`text-sm font-bold ${
+                                          differenceOperational < 0
+                                            ? "text-red-600"
+                                            : differenceOperational > 0
                                             ? "text-emerald-600"
                                             : "text-blue-600"
                                         }`}
-                                    >
-                                      {formatMoney(session.difference ?? 0, 0)}
-                                    </p>
-                                  </div>
-                                </>
-                              )}
+                                      >
+                                        {formatMoney(differenceOperational, 0)}
+                                      </p>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            </div>
+
+                            <div className="mt-4 flex flex-wrap items-center gap-4 border-t pt-3 text-xs text-muted-foreground">
+                              <span className="flex items-center gap-1.5 rounded-full bg-muted/50 px-2.5 py-1">
+                                <Ticket className="h-3.5 w-3.5" />
+                                {session.salesCount} Ventas
+                              </span>
+                              <span className="flex items-center gap-1.5 rounded-full bg-muted/50 px-2.5 py-1">
+                                <Users className="h-3.5 w-3.5" />
+                                ID Usuario:{" "}
+                                {session.openedByUserId?.slice(0, 8) ?? "N/A"}
+                              </span>
+                            </div>
+
+                            <div className="mt-3 grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
+                              <div className="rounded-md border bg-background p-2">
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                  Ingreso efectivo
+                                </p>
+                                <p className="font-bold text-emerald-600">
+                                  {formatMoney(cashIncome, 0)}
+                                </p>
+                              </div>
+                              <div className="rounded-md border bg-background p-2">
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                  Ingreso transferencia
+                                </p>
+                                <p className="font-bold text-sky-600">
+                                  {formatMoney(transferIncome, 0)}
+                                </p>
+                              </div>
+                              <div className="rounded-md border bg-background p-2">
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                  Ingresos manuales
+                                </p>
+                                <p className="font-bold text-emerald-600">
+                                  {formatMoney(manualIncome, 0)}
+                                </p>
+                              </div>
+                              <div className="rounded-md border bg-background p-2">
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                  Retiro de caja
+                                </p>
+                                <p className="font-bold text-red-600">
+                                  -{formatMoney(withdrawalsOut, 0)}
+                                </p>
+                              </div>
+                              <div className="rounded-md border bg-background p-2">
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                  Total ingresos
+                                </p>
+                                <p className="font-bold text-foreground">
+                                  {formatMoney(sessionIncomeTotal, 0)}
+                                </p>
+                              </div>
+                              <div className="rounded-md border bg-background p-2">
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                  Neto sesion
+                                </p>
+                                <p
+                                  className={`font-bold ${
+                                    sessionNetTotal >= 0
+                                      ? "text-emerald-600"
+                                      : "text-red-600"
+                                  }`}
+                                >
+                                  {formatMoney(sessionNetTotal, 0)}
+                                </p>
+                              </div>
                             </div>
                           </div>
-
-                          <div className="mt-4 flex flex-wrap items-center gap-4 border-t pt-3 text-xs text-muted-foreground">
-                            <span className="flex items-center gap-1.5 rounded-full bg-muted/50 px-2.5 py-1">
-                              <Ticket className="h-3.5 w-3.5" />
-                              {session.salesCount} Ventas
-                            </span>
-                            <span className="flex items-center gap-1.5 rounded-full bg-muted/50 px-2.5 py-1">
-                              <Users className="h-3.5 w-3.5" />
-                              ID Usuario:{" "}
-                              {session.openedByUserId?.slice(0, 8) ?? "N/A"}
-                            </span>
-                          </div>
-                        </div>
-                      ))
+                        );
+                      })
                     )}
                   </div>
                 </div>
@@ -619,64 +958,62 @@ export function CashCalendarReport() {
                           No hay movimientos detallados.
                         </div>
                       ) : (
-                        dailyPayload.entries.slice(0, 20).map((entry) => (
-                          <div
-                            key={entry.id}
-                            className="flex items-center justify-between p-4 transition-colors hover:bg-muted/30"
-                          >
-                            <div className="flex items-center gap-4">
-                              <div
-                                className={`flex h-10 w-10 items-center justify-center rounded-xl shadow-sm ${entry.direction === "IN"
-                                    ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
-                                    : "bg-red-50 text-red-600 border border-red-100"
+                        dailyPayload.entries
+                          .slice(0, DAILY_MOVEMENTS_LIMIT)
+                          .map((entry) => (
+                            <div
+                              key={entry.id}
+                              className="flex items-center justify-between p-4 transition-colors hover:bg-muted/30"
+                            >
+                              <div className="flex items-center gap-4">
+                                <div
+                                  className={`flex h-10 w-10 items-center justify-center rounded-xl shadow-sm ${
+                                    entry.direction === "IN"
+                                      ? "bg-emerald-50 text-emerald-600 border border-emerald-100"
+                                      : "bg-red-50 text-red-600 border border-red-100"
                                   }`}
-                              >
-                                {entry.direction === "IN" ? (
-                                  <span className="text-lg font-bold">↓</span>
-                                ) : (
-                                  <span className="text-lg font-bold">↑</span>
-                                )}
-                              </div>
-                              <div>
-                                <p className="text-sm font-semibold">
-                                  {entry.sourceType === "SALE_PAYMENT"
-                                    ? "Venta #" + entry.id.slice(0, 6)
-                                    : entry.notes || "Movimiento de caja"}
-                                </p>
-                                <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
-                                  <span className="font-medium">
-                                    {entry.createdAt
-                                      ? format(
-                                        new Date(entry.createdAt),
-                                        "HH:mm",
-                                        { locale: es }
-                                      )
-                                      : "--:--"}
-                                  </span>
-                                  <span>•</span>
-                                  <span className="uppercase tracking-wider">
-                                    {entry.method === "CASH"
-                                      ? "Efectivo"
-                                      : entry.method === "TRANSFER"
-                                        ? "Transferencia"
-                                        : entry.method || "Otro"}
-                                  </span>
+                                >
+                                  {entry.direction === "IN" ? (
+                                    <span className="text-lg font-bold">↓</span>
+                                  ) : (
+                                    <span className="text-lg font-bold">↑</span>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-sm font-semibold">
+                                    {getEntryLabel(entry)}
+                                  </p>
+                                  <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+                                    <span className="font-medium">
+                                      {entry.createdAt
+                                        ? format(
+                                            new Date(entry.createdAt),
+                                            "HH:mm",
+                                            { locale: es }
+                                          )
+                                        : "--:--"}
+                                    </span>
+                                    <span>•</span>
+                                    <span className="uppercase tracking-wider">
+                                      {getEntryMethodLabel(entry.method)}
+                                    </span>
+                                  </div>
                                 </div>
                               </div>
-                            </div>
-                            <div className="text-right">
-                              <p
-                                className={`text-base font-black ${entry.direction === "IN"
-                                    ? "text-emerald-600"
-                                    : "text-red-500"
+                              <div className="text-right">
+                                <p
+                                  className={`text-base font-black ${
+                                    entry.direction === "IN"
+                                      ? "text-emerald-600"
+                                      : "text-red-500"
                                   }`}
-                              >
-                                {entry.direction === "IN" ? "+" : "-"}
-                                {formatMoney(entry.amount)}
-                              </p>
+                                >
+                                  {entry.direction === "IN" ? "+" : "-"}
+                                  {formatMoney(entry.amount)}
+                                </p>
+                              </div>
                             </div>
-                          </div>
-                        ))
+                          ))
                       )}
                     </div>
                   </div>
@@ -688,7 +1025,10 @@ export function CashCalendarReport() {
                 <div className="rounded-2xl border bg-gradient-to-br from-background via-muted/20 to-muted/40 p-5 shadow-sm space-y-6">
                   <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center justify-between">
                     Resumen Consolidado
-                    <Badge variant="outline" className="bg-background font-mono">
+                    <Badge
+                      variant="outline"
+                      className="bg-background font-mono"
+                    >
                       {dailyPayload.date}
                     </Badge>
                   </h3>
@@ -697,38 +1037,88 @@ export function CashCalendarReport() {
                     <div className="space-y-1.5">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase flex items-center justify-between">
                         Total Ingresos
-                        <span className="text-emerald-600">{formatMoney(dailyPayload.summary.income.cashFromPayments + dailyPayload.summary.income.movementIn)}</span>
+                        <span className="text-emerald-600">
+                          {formatMoney(
+                            dailyPayload.summary.income.cashFromPayments +
+                              dailyPayload.summary.income.movementIn
+                          )}
+                        </span>
                       </p>
                       <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
-                        <div className="h-full bg-emerald-500 rounded-full" style={{ width: '100%' }} />
+                        <div
+                          className="h-full bg-emerald-500 rounded-full"
+                          style={{ width: "100%" }}
+                        />
                       </div>
                     </div>
 
                     <div className="grid gap-3">
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-muted-foreground">Apertura Inicial</span>
-                        <span className="font-bold">{formatMoney(dailyPayload.summary.openingFloat)}</span>
-                      </div>
-                      <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
-                        <span className="text-muted-foreground">Ventas (Efectivo)</span>
-                        <span className="font-semibold text-foreground">{formatMoney(dailyPayload.summary.income.cashFromPayments)}</span>
+                        <span className="text-muted-foreground">
+                          Apertura Inicial
+                        </span>
+                        <span className="font-bold">
+                          {formatMoney(dailyPayload.summary.openingFloat)}
+                        </span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-muted-foreground font-medium">Entradas Extras</span>
-                        <span className="text-emerald-600 font-bold">+{formatMoney(dailyPayload.summary.income.movementIn)}</span>
+                        <span className="text-muted-foreground">
+                          Ventas (Efectivo)
+                        </span>
+                        <span className="font-semibold text-foreground">
+                          {formatMoney(
+                            dailyPayload.summary.income.cashFromPayments
+                          )}
+                        </span>
                       </div>
                       <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
-                        <span className="text-muted-foreground font-medium">Salidas Extras</span>
-                        <span className="text-red-600 font-bold">-{formatMoney(dailyPayload.summary.outflow.movementOut)}</span>
+                        <span className="text-muted-foreground">
+                          Ventas (Transferencias)
+                        </span>
+                        <span className="font-semibold text-foreground">
+                          {formatMoney(
+                            dailyPayload.summary.income.transferFromPayments
+                          )}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm">
+                        <span className="text-muted-foreground font-medium">
+                          Entradas Extras
+                        </span>
+                        <span className="text-emerald-600 font-bold">
+                          +{formatMoney(dailyPayload.summary.income.movementIn)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
+                        <span className="text-muted-foreground font-medium">
+                          Retiros de caja (OUT - transferencia interna)
+                        </span>
+                        <span className="text-red-600 font-bold">
+                          -
+                          {formatMoney(
+                            dailyPayload.summary.outflow.movementOut
+                          )}
+                        </span>
                       </div>
                     </div>
 
                     <div className="rounded-xl bg-background border p-4 shadow-inner">
                       <div className="flex items-end justify-between">
                         <div>
-                          <p className="text-[10px] font-bold text-muted-foreground uppercase">Resultado Diario (Neto)</p>
-                          <p className={`text-2xl font-black ${dailyPayload.summary.income.cashFromPayments + dailyPayload.summary.income.transferFromPayments + dailyPayload.summary.income.movementIn - dailyPayload.summary.outflow.movementOut >= 0 ? "text-emerald-600" : "text-red-600"}`}>
-                            {formatMoney(dailyPayload.summary.income.cashFromPayments + dailyPayload.summary.income.transferFromPayments + dailyPayload.summary.income.movementIn - dailyPayload.summary.outflow.movementOut)}
+                          <p className="text-[10px] font-bold text-muted-foreground uppercase">
+                            Resultado diario de ingresos (efectivo)
+                          </p>
+                          <p
+                            className={`text-2xl font-black ${
+                              dailyIncomeResult >= 0
+                                ? "text-emerald-600"
+                                : "text-red-600"
+                            }`}
+                          >
+                            {formatMoney(dailyIncomeResult)}
+                          </p>
+                          <p className="text-[10px] text-muted-foreground">
+                            Resultado total: {formatMoney(dailyNetResult)}
                           </p>
                         </div>
                         <Info className="h-5 w-5 text-muted-foreground/30" />
@@ -740,9 +1130,18 @@ export function CashCalendarReport() {
                 <div className="rounded-2xl border bg-card p-6 shadow-sm border-primary/10">
                   <div className="space-y-6">
                     <div className="text-center space-y-1">
-                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Balance de Cierre</p>
-                      <p className={`text-4xl font-black tracking-tighter ${(dailyPayload.summary.difference ?? 0) < 0 ? "text-red-600" : (dailyPayload.summary.difference ?? 0) === 0 ? "text-blue-600" : "text-emerald-600"
-                        }`}>
+                      <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
+                        Balance de Cierre
+                      </p>
+                      <p
+                        className={`text-4xl font-black tracking-tighter ${
+                          (dailyPayload.summary.difference ?? 0) < 0
+                            ? "text-red-600"
+                            : (dailyPayload.summary.difference ?? 0) === 0
+                            ? "text-blue-600"
+                            : "text-emerald-600"
+                        }`}
+                      >
                         {formatMoney(dailyPayload.summary.difference ?? 0)}
                       </p>
                       <p className="text-[11px] font-medium text-muted-foreground">
@@ -752,20 +1151,51 @@ export function CashCalendarReport() {
 
                     <div className="grid grid-cols-2 gap-3">
                       <div className="rounded-xl bg-muted/30 p-3 text-center border">
-                        <p className="text-[9px] font-bold text-muted-foreground uppercase mb-1">Total Contado</p>
-                        <p className="text-sm font-black">{formatMoney(dailyPayload.summary.countedCash ?? 0, 0)}</p>
+                        <p className="text-[9px] font-bold text-muted-foreground uppercase mb-1">
+                          Total Contado
+                        </p>
+                        <p className="text-sm font-black">
+                          {formatMoney(
+                            dailyPayload.summary.countedCash ?? 0,
+                            0
+                          )}
+                        </p>
                       </div>
                       <div className="rounded-xl bg-muted/30 p-3 text-center border">
-                        <p className="text-[9px] font-bold text-muted-foreground uppercase mb-1">Total Esperado</p>
-                        <p className="text-sm font-black">{formatMoney(dailyPayload.summary.expectedCash ?? 0, 0)}</p>
+                        <p className="text-[9px] font-bold text-muted-foreground uppercase mb-1">
+                          Total Esperado
+                        </p>
+                        <p className="text-sm font-black">
+                          {formatMoney(
+                            dailyPayload.summary.expectedCash ?? 0,
+                            0
+                          )}
+                        </p>
                       </div>
+                    </div>
+
+                    <div className="rounded-xl border border-emerald-100 bg-emerald-50/60 p-3 text-center">
+                      <p className="text-[9px] font-bold text-emerald-700 uppercase mb-1">
+                        Monto para proximo turno
+                      </p>
+                      <p className="text-base font-black text-emerald-700">
+                        {formatMoney(nextShiftAmount, 0)}
+                      </p>
+                      <p className="text-[10px] text-emerald-700">
+                        {latestClosedSession?.closedAt
+                          ? `Ultimo cierre: ${new Date(
+                              latestClosedSession.closedAt
+                            ).toLocaleString("es-AR")}`
+                          : "Tomado del cierre diario consolidado"}
+                      </p>
                     </div>
 
                     <div className="pt-2">
                       <div className="rounded-lg bg-blue-50 p-3 border border-blue-100 flex gap-3 items-center">
                         <Info className="h-4 w-4 text-blue-600 shrink-0" />
                         <p className="text-[10px] text-blue-700 font-medium leading-relaxed">
-                          Este resumen consolida {dailyPayload.sessions.length} sesiones del día {dailyPayload.date}.
+                          Este resumen consolida {dailyPayload.sessions.length}{" "}
+                          sesiones del día {dailyPayload.date}.
                         </p>
                       </div>
                     </div>

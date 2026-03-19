@@ -1,14 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import {
-  Wallet,
-  Loader2,
-  ShieldAlert,
-  RefreshCcw,
-  ChevronLeft,
-  ChevronRight,
-} from "lucide-react";
+import { Loader2, ShieldAlert, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -24,17 +17,13 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
 import { useBranches } from "@/components/providers/branch-provider";
-import { useTransactions } from "@/components/providers/transactions-provider";
 import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
-import type {
-  CashBookDailyResponse,
-  CashMovementType,
-  CashSession,
-} from "@/lib/api-types";
+import type { CashMovementType, CashSession } from "@/lib/api-types";
 
-const DAILY_BOOK_PAGE_SIZE = 20;
 const SESSION_POLL_INTERVAL_MS = 8_000;
+const SESSION_HISTORY_DAYS = 60;
+const AUTO_WITHDRAWAL_REASON = "Extraccion de turno para cierre";
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -51,10 +40,13 @@ function formatDateTime(value?: string | null) {
   return parsed.toLocaleString("es-AR");
 }
 
+function toYmd(date: Date) {
+  return date.toISOString().slice(0, 10);
+}
+
 export function CashModule() {
   const { currentUser, branchId } = useUser();
   const { branches } = useBranches();
-  const { addExpense } = useTransactions();
   const { logEvent } = useAudit();
   const { toast } = useToast();
 
@@ -65,6 +57,8 @@ export function CashModule() {
     currentUser?.role === "seller";
 
   const [cashSession, setCashSession] = useState<CashSession | null>(null);
+  const [lastClosedSession, setLastClosedSession] =
+    useState<CashSession | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
 
@@ -72,17 +66,8 @@ export function CashModule() {
   const [movementType, setMovementType] = useState<CashMovementType>("IN");
   const [movementReason, setMovementReason] = useState("");
   const [movementAmount, setMovementAmount] = useState("");
-  const [countedCash, setCountedCash] = useState("");
+  const [amountToLeave, setAmountToLeave] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
-
-  const [dailyBookDate, setDailyBookDate] = useState(
-    new Date().toISOString().slice(0, 10)
-  );
-  const [dailyBookPage, setDailyBookPage] = useState(1);
-  const [dailyBook, setDailyBook] = useState<CashBookDailyResponse | null>(
-    null
-  );
-  const [isLoadingDailyBook, setIsLoadingDailyBook] = useState(false);
 
   const currentSessionValidatorsRef = useRef<{
     etag: string | null;
@@ -98,38 +83,16 @@ export function CashModule() {
     [branches, branchId]
   );
 
-  const dailyBookMeta = dailyBook?.entries.meta;
-  const dailyBookTotal = Number(dailyBookMeta?.total ?? 0);
-  const dailyBookLimit = Math.max(
-    1,
-    Number(dailyBookMeta?.limit ?? DAILY_BOOK_PAGE_SIZE)
-  );
-  const resolvedDailyBookPage = Math.max(
-    1,
-    Number(dailyBookMeta?.page ?? dailyBookPage)
-  );
-  const resolvedDailyBookTotalPages = Math.max(
-    1,
-    Number(
-      dailyBookMeta?.totalPages ??
-      Math.ceil(dailyBookTotal / Math.max(1, dailyBookLimit))
-    )
-  );
-  const hasNextDailyBookPage = Boolean(
-    dailyBookMeta?.hasNextPage ??
-    resolvedDailyBookPage < resolvedDailyBookTotalPages
-  );
-
   const loadCurrentCashSession = useCallback(
-    async (options?: { silent?: boolean; syncCountedCash?: boolean }) => {
+    async (options?: { silent?: boolean; syncAmountToLeave?: boolean }) => {
       if (!canManageCash || !branchId) {
         currentSessionValidatorsRef.current = {
           etag: null,
           lastModified: null,
         };
         setCashSession(null);
-        if (options?.syncCountedCash) {
-          setCountedCash("");
+        if (options?.syncAmountToLeave) {
+          setAmountToLeave("");
         }
         return;
       }
@@ -162,12 +125,12 @@ export function CashModule() {
 
         setCashSession(response.session);
 
-        if (options?.syncCountedCash) {
+        if (options?.syncAmountToLeave) {
           const nextExpected = response.session?.expectedCash;
           if (nextExpected === undefined || nextExpected === null) {
-            setCountedCash("");
+            setAmountToLeave("");
           } else {
-            setCountedCash(String(nextExpected));
+            setAmountToLeave(String(nextExpected));
           }
         }
       } catch (error: any) {
@@ -189,53 +152,51 @@ export function CashModule() {
     [canManageCash, branchId, toast]
   );
 
-  const loadDailyBook = useCallback(
-    async (page = 1) => {
-      if (!canManageCash || !branchId) {
-        setDailyBook(null);
-        return;
-      }
+  const loadSessionHistory = useCallback(async () => {
+    if (!canManageCash || !branchId) {
+      setLastClosedSession(null);
+      return;
+    }
 
-      try {
-        setIsLoadingDailyBook(true);
-        const response = await backendApi.cash.dailyBook(
-          {
-            date: dailyBookDate,
-            page,
-            limit: DAILY_BOOK_PAGE_SIZE,
-          },
-          branchId
-        );
+    try {
+      const to = new Date();
+      const from = new Date();
+      from.setDate(from.getDate() - SESSION_HISTORY_DAYS);
 
-        setDailyBook(response);
-        const backendPage = Number(response.entries.meta.page ?? page);
-        setDailyBookPage(
-          Number.isFinite(backendPage) && backendPage > 0 ? backendPage : 1
-        );
-      } catch (error: any) {
-        setDailyBook(null);
-        // toast({
-        //   variant: "destructive",
-        //   title: "Error en libro diario",
-        //   description:
-        //     error?.message || "No se pudo obtener el libro diario de caja.",
-        // });
-      } finally {
-        setIsLoadingDailyBook(false);
-      }
-    },
-    [canManageCash, branchId, dailyBookDate, toast]
-  );
+      const sessions = await backendApi.cash.listSessions(
+        {
+          from: toYmd(from),
+          to: toYmd(to),
+          page: 1,
+          limit: 100,
+        },
+        branchId
+      );
+
+      const latestClosed =
+        sessions.items
+          .filter(
+            (session) => session.status === "CLOSED" && !!session.closedAt
+          )
+          .sort(
+            (a, b) =>
+              new Date(b.closedAt ?? 0).getTime() -
+              new Date(a.closedAt ?? 0).getTime()
+          )[0] ?? null;
+
+      setLastClosedSession(latestClosed);
+    } catch {
+      setLastClosedSession(null);
+    }
+  }, [canManageCash, branchId]);
 
   useEffect(() => {
     currentSessionValidatorsRef.current = { etag: null, lastModified: null };
-    void loadCurrentCashSession({ syncCountedCash: true });
-  }, [loadCurrentCashSession, branchId]);
-
-  useEffect(() => {
-    setDailyBookPage(1);
-    void loadDailyBook(1);
-  }, [loadDailyBook, dailyBookDate, branchId]);
+    void Promise.all([
+      loadCurrentCashSession({ syncAmountToLeave: true }),
+      loadSessionHistory(),
+    ]);
+  }, [loadCurrentCashSession, loadSessionHistory, branchId]);
 
   useEffect(() => {
     if (!canManageCash || !branchId) return;
@@ -247,25 +208,16 @@ export function CashModule() {
   }, [canManageCash, branchId, loadCurrentCashSession]);
 
   const refreshCashState = useCallback(
-    async (options?: {
-      resetDailyBookToFirstPage?: boolean;
-      syncCountedCash?: boolean;
-    }) => {
-      const shouldReset = options?.resetDailyBookToFirstPage ?? false;
-      const nextPage = shouldReset ? 1 : dailyBookPage;
-      if (shouldReset) {
-        setDailyBookPage(1);
-      }
-
+    async (options?: { syncAmountToLeave?: boolean }) => {
       await Promise.all([
         loadCurrentCashSession({
           silent: true,
-          syncCountedCash: options?.syncCountedCash ?? false,
+          syncAmountToLeave: options?.syncAmountToLeave ?? false,
         }),
-        loadDailyBook(nextPage),
+        loadSessionHistory(),
       ]);
     },
-    [dailyBookPage, loadCurrentCashSession, loadDailyBook]
+    [loadCurrentCashSession, loadSessionHistory]
   );
 
   const handleOpenCash = async () => {
@@ -296,10 +248,7 @@ export function CashModule() {
       setCashSession(session);
       setOpeningFloat("");
 
-      await refreshCashState({
-        resetDailyBookToFirstPage: true,
-        syncCountedCash: true,
-      });
+      await refreshCashState({ syncAmountToLeave: true });
 
       toast({
         title: "Caja abierta",
@@ -308,7 +257,7 @@ export function CashModule() {
     } catch (error: any) {
       const message = String(error?.message ?? "");
       if (message.toLowerCase().includes("already an open cash session")) {
-        await loadCurrentCashSession({ silent: true, syncCountedCash: true });
+        await loadCurrentCashSession({ silent: true, syncAmountToLeave: true });
       }
       toast({
         variant: "destructive",
@@ -354,34 +303,18 @@ export function CashModule() {
         amount,
       });
 
-      if (movementType === "OUT") {
-        try {
-          await addExpense({
-            amount,
-            category: "OTHER",
-            description: `Egreso de caja: ${reason}`,
-            branchId: cashSession.branchId ?? branchId ?? undefined,
-          });
-        } catch (expenseError: any) {
-          toast({
-            variant: "destructive",
-            title: "Movimiento registrado sin gasto",
-            description:
-              expenseError?.message ||
-              "El egreso de caja se registro, pero no pudo crearse el gasto asociado.",
-          });
-        }
-      }
-
       setCashSession(updated);
       setMovementAmount("");
       setMovementReason("");
 
-      await refreshCashState({
-        resetDailyBookToFirstPage: true,
-      });
+      await refreshCashState();
 
-      toast({ title: "Movimiento registrado" });
+      toast({
+        title:
+          movementType === "OUT"
+            ? "Retiro de caja registrado"
+            : "Movimiento registrado",
+      });
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -393,37 +326,58 @@ export function CashModule() {
     }
   };
 
+  const expectedCash = Number(cashSession?.expectedCash ?? 0);
+  const amountToLeaveNumber = Number(amountToLeave);
+  const hasValidAmountToLeave =
+    Number.isFinite(amountToLeaveNumber) && amountToLeaveNumber >= 0;
+  const suggestedWithdrawal = hasValidAmountToLeave
+    ? Number((expectedCash - amountToLeaveNumber).toFixed(2))
+    : expectedCash;
+
   const handleCloseCash = async () => {
     if (!cashSession) return;
 
-    const counted = Number(countedCash);
-    if (!Number.isFinite(counted)) {
+    if (!hasValidAmountToLeave) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
-        description: "Ingresa un efectivo contado numerico valido.",
+        description: "Ingresa un monto a dejar numerico valido.",
       });
       return;
     }
-    if (counted < 0) {
+
+    if (suggestedWithdrawal < 0) {
       toast({
         variant: "destructive",
-        title: "Cierre no permitido",
-        description: "No se puede cerrar caja con un monto negativo.",
+        title: "Monto no permitido",
+        description:
+          "El monto a dejar no puede ser mayor al efectivo esperado del turno.",
       });
       return;
     }
 
     try {
       setIsSaving(true);
+
+      if (suggestedWithdrawal > 0) {
+        await backendApi.cash.addMovement(cashSession.id, {
+          type: "OUT",
+          reason: AUTO_WITHDRAWAL_REASON,
+          amount: suggestedWithdrawal,
+        });
+      }
+
       const closedSession = await backendApi.cash.closeSession(cashSession.id, {
-        countedCash: counted,
+        countedCash: amountToLeaveNumber,
         notes: closeNotes.trim() || undefined,
       });
-      const expected = Number(
-        closedSession.expectedCash ?? cashSession.expectedCash ?? 0
+
+      const expectedAfterClose = Number(
+        closedSession.expectedCash ?? amountToLeaveNumber
       );
-      const difference = Number(closedSession.difference ?? counted - expected);
+      const difference = Number(
+        closedSession.difference ?? amountToLeaveNumber - expectedAfterClose
+      );
 
       logEvent(
         "close_cashbox",
@@ -432,9 +386,11 @@ export function CashModule() {
         closedSession.id,
         {
           branchId: closedSession.branchId ?? branchId ?? null,
-          countedCash: counted,
-          expectedCash: expected,
+          countedCash: amountToLeaveNumber,
+          expectedCash: expectedAfterClose,
           difference,
+          withdrawalOut: suggestedWithdrawal > 0 ? suggestedWithdrawal : 0,
+          amountForNextShift: amountToLeaveNumber,
           notes: closeNotes.trim() || null,
         }
       );
@@ -442,13 +398,12 @@ export function CashModule() {
       setCloseNotes("");
 
       await refreshCashState({
-        resetDailyBookToFirstPage: true,
-        syncCountedCash: true,
+        syncAmountToLeave: true,
       });
 
       toast({
         title: "Caja cerrada",
-        description: "Sesion cerrada correctamente.",
+        description: "Turno cerrado correctamente.",
       });
     } catch (error: any) {
       toast({
@@ -461,16 +416,36 @@ export function CashModule() {
     }
   };
 
-  const handleDailyBookPageChange = (nextPage: number) => {
-    const normalized = Math.min(
-      resolvedDailyBookTotalPages,
-      Math.max(1, Number(nextPage))
-    );
-    if (!Number.isFinite(normalized) || normalized === resolvedDailyBookPage) {
-      return;
-    }
-    void loadDailyBook(normalized);
-  };
+  const withdrawalMovements = useMemo(
+    () =>
+      (cashSession?.movements ?? [])
+        .filter((movement) => movement.type === "OUT")
+        .slice()
+        .sort(
+          (a, b) =>
+            new Date(b.createdAt ?? 0).getTime() -
+            new Date(a.createdAt ?? 0).getTime()
+        ),
+    [cashSession?.movements]
+  );
+
+  const withdrawalTotal = useMemo(
+    () =>
+      withdrawalMovements.reduce(
+        (total, movement) => total + Number(movement.amount ?? 0),
+        0
+      ),
+    [withdrawalMovements]
+  );
+
+  const displayedCountedCash =
+    cashSession?.countedCash ??
+    (hasValidAmountToLeave ? Number(amountToLeaveNumber) : null);
+  const displayedDifference =
+    cashSession?.difference ??
+    (hasValidAmountToLeave
+      ? Number((amountToLeaveNumber - expectedCash).toFixed(2))
+      : null);
 
   if (!canManageCash) {
     return (
@@ -491,10 +466,10 @@ export function CashModule() {
     <div className="space-y-6">
       <div className="flex flex-col gap-3">
         <h1 className="text-2xl font-bold tracking-tight sm:text-3xl">
-          Gestion de Caja
+          Gestion de Caja por Turno
         </h1>
         <p className="text-sm text-muted-foreground">
-          Apertura, movimientos y cierre de caja en una seccion dedicada.
+          Apertura, movimientos de caja y cierre con extraccion de turno.
         </p>
       </div>
 
@@ -557,27 +532,18 @@ export function CashModule() {
           ) : (
             <div className="grid gap-4 lg:grid-cols-2">
               <div className="space-y-3 rounded-md border p-4">
-                <h3 className="text-sm font-semibold">Resumen snapshot</h3>
+                <h3 className="text-sm font-semibold">Sesion actual</h3>
                 <p className="text-sm">
-                  Estado:{" "}
-                  <strong>
-                    {cashSession.status === "OPEN" ? "Abierta" : "Cerrada"}
-                  </strong>
+                  Apertura:{" "}
+                  <strong>{formatDateTime(cashSession.openedAt)}</strong>
                 </p>
                 <p className="text-sm">
                   Fondo inicial:{" "}
                   <strong>{formatMoney(cashSession.openingFloat)}</strong>
                 </p>
                 <p className="text-sm">
-                  Esperado:{" "}
-                  <strong>{formatMoney(cashSession.expectedCash ?? 0)}</strong>
-                </p>
-                <p className="text-sm">
-                  Ventas: <strong>{Number(cashSession.salesCount ?? 0)}</strong>
-                </p>
-                <p className="text-sm">
-                  Pagos:{" "}
-                  <strong>{Number(cashSession.paymentsCount ?? 0)}</strong>
+                  Efectivo esperado:{" "}
+                  <strong>{formatMoney(expectedCash)}</strong>
                 </p>
               </div>
 
@@ -592,7 +558,7 @@ export function CashModule() {
                 </div>
                 <div className="rounded-md border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">
-                    Pagos transferencias
+                    Pagos transferencia
                   </p>
                   <p className="text-base font-semibold">
                     {formatMoney(cashSession.totals?.transferPayments ?? 0)}
@@ -600,7 +566,7 @@ export function CashModule() {
                 </div>
                 <div className="rounded-md border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">
-                    Movimientos Ingreso
+                    Ingresos manuales
                   </p>
                   <p className="text-base font-semibold">
                     {formatMoney(cashSession.totals?.movementIn ?? 0)}
@@ -608,7 +574,7 @@ export function CashModule() {
                 </div>
                 <div className="rounded-md border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">
-                    Movimientos Egreso
+                    Retiros de caja
                   </p>
                   <p className="text-base font-semibold">
                     {formatMoney(cashSession.totals?.movementOut ?? 0)}
@@ -628,8 +594,8 @@ export function CashModule() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="IN">Ingreso</SelectItem>
-                    <SelectItem value="OUT">Egreso</SelectItem>
+                    <SelectItem value="IN">Ingreso manual</SelectItem>
+                    <SelectItem value="OUT">Retiro de caja</SelectItem>
                   </SelectContent>
                 </Select>
                 <Input
@@ -657,31 +623,73 @@ export function CashModule() {
               </div>
 
               <div className="space-y-2 rounded-md border p-4">
-                <h3 className="text-sm font-semibold">Cerrar caja</h3>
+                <h3 className="text-sm font-semibold">Cerrar turno</h3>
+
                 <Input
+                  id="amount-to-leave"
                   type="number"
                   step="0.01"
                   min="0"
-                  placeholder="Efectivo contado"
-                  value={countedCash}
-                  onChange={(event) => setCountedCash(event.target.value)}
+                  placeholder="0.00"
+                  value={amountToLeave}
+                  onChange={(event) => setAmountToLeave(event.target.value)}
                 />
-                <Input
-                  placeholder="Notas (opcional)"
-                  value={closeNotes}
-                  onChange={(event) => setCloseNotes(event.target.value)}
-                  maxLength={600}
-                />
+
+                {suggestedWithdrawal < 0 && (
+                  <p className="text-xs text-destructive">
+                    El monto a dejar no puede superar el efectivo esperado.
+                  </p>
+                )}
                 <Button
                   className="w-full"
                   onClick={handleCloseCash}
-                  disabled={isSaving}
+                  disabled={
+                    isSaving ||
+                    !hasValidAmountToLeave ||
+                    suggestedWithdrawal < 0
+                  }
                 >
                   {isSaving && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   )}
                   Cerrar Caja
                 </Button>
+              </div>
+
+              <div className="space-y-3 rounded-md border p-4 lg:col-span-2">
+                <div className="flex items-center justify-between gap-2">
+                  <h3 className="text-sm font-semibold">Retiros del turno</h3>
+                  <Badge variant="outline">
+                    Total: {formatMoney(withdrawalTotal)}
+                  </Badge>
+                </div>
+
+                {withdrawalMovements.length === 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    No hay retiros de caja registrados en este turno.
+                  </p>
+                ) : (
+                  <div className="max-h-52 space-y-2 overflow-auto pr-1">
+                    {withdrawalMovements.map((movement) => (
+                      <div
+                        key={movement.id}
+                        className="flex items-center justify-between rounded-md border p-2 text-xs"
+                      >
+                        <div>
+                          <p className="font-medium">
+                            {movement.reason || "Retiro de caja"}
+                          </p>
+                          <p className="text-muted-foreground">
+                            {formatDateTime(movement.createdAt)}
+                          </p>
+                        </div>
+                        <p className="font-semibold text-red-600">
+                          -{formatMoney(movement.amount)}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
           )}
