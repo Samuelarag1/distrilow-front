@@ -110,7 +110,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             {
               from: range.fromYmd,
               to: range.toYmd,
-              limit: 1000,
+              limit: 300,
               branchId: branchId ?? undefined,
             },
             branchId

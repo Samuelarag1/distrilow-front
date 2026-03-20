@@ -488,7 +488,8 @@ function normalizeBarcodePayload(
     return {
       product: {
         ...normalizedProduct,
-        branchId: normalizedProduct.branchId ?? normalizedStock?.branchId ?? null,
+        branchId:
+          normalizedProduct.branchId ?? normalizedStock?.branchId ?? null,
         stock:
           toOptionalFiniteNumber(normalizedProduct.stock) ??
           normalizedStock?.quantity ??
@@ -688,7 +689,9 @@ function normalizeStockLot(payload: unknown): StockLot {
     id: toOptionalText(source.id) ?? "",
     branchId: toOptionalText(source.branchId) ?? "",
     productId:
-      toOptionalText(source.productId) ?? toOptionalText(productSource.id) ?? "",
+      toOptionalText(source.productId) ??
+      toOptionalText(productSource.id) ??
+      "",
     lotCode: toOptionalText(source.lotCode) ?? "",
     expiresAt: toOptionalText(source.expiresAt) ?? "",
     quantity: toFiniteNumber(source.quantity, 0),
@@ -817,7 +820,11 @@ function normalizeSalesSummaryItems(
   };
 
   const itemsSource =
-    source.items ?? source.rows ?? source.data ?? source.byType ?? source.bySource;
+    source.items ??
+    source.rows ??
+    source.data ??
+    source.byType ??
+    source.bySource;
   const parsed: Array<{
     key: string;
     label?: string | null;
@@ -977,10 +984,7 @@ function normalizeCashCurrentSummary(
   return {
     hasOpenSession,
     session: hasOpenSession ? session : null,
-    branchId:
-      toOptionalText(source.branchId) ??
-      session?.branchId ??
-      null,
+    branchId: toOptionalText(source.branchId) ?? session?.branchId ?? null,
     updatedAt:
       toOptionalText(source.updatedAt) ??
       toOptionalText(source.lastModified) ??
@@ -1486,10 +1490,7 @@ export const backendApi = {
           1,
           Math.min(100, Math.trunc(Number(query.limit ?? 20)) || 20)
         );
-        const safePage = Math.max(
-          1,
-          Math.trunc(Number(query.page ?? 1)) || 1
-        );
+        const safePage = Math.max(1, Math.trunc(Number(query.page ?? 1)) || 1);
         const safeQuery = {
           search: toTrimmedOrUndefined(query.search),
           productId: toTrimmedOrUndefined(query.productId),
@@ -1540,11 +1541,15 @@ export const backendApi = {
           notes: toTrimmedOrUndefined(body.notes),
         };
 
-        const created = await apiClientFetch.post<unknown>("/stocks/lots", payload, {
-          headers: {
-            "x-branch-id": effectiveBranchId,
-          },
-        });
+        const created = await apiClientFetch.post<unknown>(
+          "/stocks/lots",
+          payload,
+          {
+            headers: {
+              "x-branch-id": effectiveBranchId,
+            },
+          }
+        );
 
         invalidateStockCache(effectiveBranchId);
         return normalizeStockLot(created);
@@ -1724,7 +1729,8 @@ export const backendApi = {
           branchIdOverride?: string | null,
           options?: { signal?: AbortSignal }
         ) => {
-          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          const effectiveBranchId =
+            branchIdOverride ?? getApiSession().branchId;
           if (!effectiveBranchId) {
             throw new Error("Missing branch context. Send x-branch-id header.");
           }
@@ -1760,7 +1766,8 @@ export const backendApi = {
           branchIdOverride?: string | null,
           options?: { signal?: AbortSignal }
         ) => {
-          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          const effectiveBranchId =
+            branchIdOverride ?? getApiSession().branchId;
           if (!effectiveBranchId) {
             throw new Error("Missing branch context. Send x-branch-id header.");
           }
@@ -1796,18 +1803,26 @@ export const backendApi = {
           branchIdOverride?: string | null,
           options?: { signal?: AbortSignal }
         ) => {
-          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          const effectiveBranchId =
+            branchIdOverride ?? getApiSession().branchId;
           if (!effectiveBranchId) {
             throw new Error("Missing branch context. Send x-branch-id header.");
           }
 
           const { branchId: ignoredBranchId, ...reportQuery } = query;
           void ignoredBranchId;
+          const requestedLimit = toFiniteNumber(reportQuery.limit, Number.NaN);
+          const normalizedReportQuery = Number.isFinite(requestedLimit)
+            ? {
+                ...reportQuery,
+                limit: Math.min(300, Math.max(1, Math.round(requestedLimit))),
+              }
+            : reportQuery;
 
           return withRateLimitRetry(
             () =>
               apiClientFetch.get<ReportsTopProductsResponse>(
-                `/reporting/sales/top-products/report${buildQuery(reportQuery, {
+                `/reporting/sales/top-products/report${buildQuery(normalizedReportQuery, {
                   preserveLimitAndOffset: true,
                 })}`,
                 {
@@ -2063,7 +2078,8 @@ export const backendApi = {
     getCurrentSessionSnapshot: async (
       query: CashSessionSnapshotRequest = {}
     ): Promise<CashSessionSnapshotResponse> => {
-      const effectiveBranchId = query.branchIdOverride ?? getApiSession().branchId;
+      const effectiveBranchId =
+        query.branchIdOverride ?? getApiSession().branchId;
       const headers: Record<string, string> = {};
 
       if (effectiveBranchId) {
@@ -2126,10 +2142,11 @@ export const backendApi = {
           throw error;
         }
 
-        const response = await apiClientFetch.getWithMetadata<CashSession | null>(
-          "/cash/sessions/current",
-          requestOptions
-        );
+        const response =
+          await apiClientFetch.getWithMetadata<CashSession | null>(
+            "/cash/sessions/current",
+            requestOptions
+          );
         const session = response.data ?? null;
         const hasOpenSession = Boolean(session && session.status === "OPEN");
 
@@ -2151,7 +2168,10 @@ export const backendApi = {
         : undefined;
 
       return apiClientFetch
-        .getWithMetadata<CashSession | null>("/cash/sessions/current", requestOptions)
+        .getWithMetadata<CashSession | null>(
+          "/cash/sessions/current",
+          requestOptions
+        )
         .then((response) => response.data ?? null);
     },
     listSessions: async (
@@ -2207,7 +2227,10 @@ export const backendApi = {
       );
       const fallbackPage = Math.max(
         1,
-        toFiniteNumber(query.page, Math.floor(fallbackOffset / fallbackLimit) + 1)
+        toFiniteNumber(
+          query.page,
+          Math.floor(fallbackOffset / fallbackLimit) + 1
+        )
       );
 
       const safeQuery = {
@@ -2310,7 +2333,9 @@ export const backendApi = {
       const differenceSource =
         toOptionalText(summarySource.differenceSource) ?? undefined;
 
-      const sessionsRaw = Array.isArray(payload.sessions) ? payload.sessions : [];
+      const sessionsRaw = Array.isArray(payload.sessions)
+        ? payload.sessions
+        : [];
       const sessions = sessionsRaw
         .map((s) => normalizeCashSessionFromUnknown(s))
         .filter((s): s is CashSession => s !== null);
@@ -2416,8 +2441,7 @@ export const backendApi = {
         query: ReportsCashMonthlyQuery,
         branchIdOverride?: string | null,
         options?: { signal?: AbortSignal }
-      ) =>
-        backendApi.reporting.cash.monthly(query, branchIdOverride, options),
+      ) => backendApi.reporting.cash.monthly(query, branchIdOverride, options),
     },
   },
   audit: {

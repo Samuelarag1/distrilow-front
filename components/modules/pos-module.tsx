@@ -144,6 +144,8 @@ type PosPaymentCardProps = {
   transferPaymentAmount: string;
   onCashPaymentAmountChange: (value: string) => void;
   onTransferPaymentAmountChange: (value: string) => void;
+  onCashPaymentAmountBlur: () => void;
+  onTransferPaymentAmountBlur: () => void;
   onHandlePayment: () => Promise<void>;
   onClearCart: () => void;
   isProcessingPayment: boolean;
@@ -451,6 +453,60 @@ function formatMoney(value: unknown) {
   return POS_MONEY_FORMATTER.format(toSafeNumber(value, 0));
 }
 
+function sanitizeMoneyInput(value: string) {
+  return value.replace(/[^\d,.\-]/g, "");
+}
+
+function parseMoneyInput(value: string) {
+  const sanitized = sanitizeMoneyInput(value).trim();
+  if (!sanitized) return 0;
+
+  const lastComma = sanitized.lastIndexOf(",");
+  const lastDot = sanitized.lastIndexOf(".");
+  const hasComma = lastComma !== -1;
+  const hasDot = lastDot !== -1;
+
+  if (!hasComma && hasDot) {
+    const dotMatches = sanitized.match(/\./g) ?? [];
+    if (dotMatches.length > 1) {
+      const integerValue = sanitized.replace(/[^\d-]/g, "");
+      const parsed = Number(integerValue);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+
+    const decimalDigits = sanitized.length - lastDot - 1;
+    if (decimalDigits === 3) {
+      const integerValue = sanitized.replace(/[^\d-]/g, "");
+      const parsed = Number(integerValue);
+      return Number.isFinite(parsed) ? parsed : 0;
+    }
+  }
+
+  const decimalSeparatorIndex = Math.max(lastComma, lastDot);
+
+  if (decimalSeparatorIndex === -1) {
+    const integerValue = sanitized.replace(/[^\d-]/g, "");
+    const parsed = Number(integerValue);
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  const integerPart = sanitized
+    .slice(0, decimalSeparatorIndex)
+    .replace(/[^\d-]/g, "");
+  const decimalPart = sanitized
+    .slice(decimalSeparatorIndex + 1)
+    .replace(/[^\d]/g, "");
+  const normalized = `${integerPart || "0"}.${decimalPart}`;
+  const parsed = Number(normalized);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatMoneyInput(value: string) {
+  const parsed = parseMoneyInput(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return "";
+  return POS_MONEY_FORMATTER.format(roundTo(parsed, 2));
+}
+
 function isWeighableProduct(product: Product) {
   return (
     Boolean(product.isWeighable) ||
@@ -718,6 +774,12 @@ const PosCartItemCard = memo(function PosCartItemCard({
               defaultValue={formatThresholdQuantity(toSafeNumber(item.quantity, 0))}
               key={`${item.id}-${item.quantity}`}
               className="h-8 w-24 text-center text-sm"
+              placeholder={item.measurementType === "kg" ? "kg o gramos" : "Cantidad"}
+              title={
+                item.measurementType === "kg"
+                  ? "Puedes ingresar kg (ej. 1.5) o gramos enteros (ej. 1500)."
+                  : undefined
+              }
               disabled={isSaleCommitted}
               onBlur={(event) => {
                 const committed = onCommitManualQuantity(item, event.target.value);
@@ -1083,6 +1145,8 @@ const PosPaymentCard = memo(function PosPaymentCard({
   transferPaymentAmount,
   onCashPaymentAmountChange,
   onTransferPaymentAmountChange,
+  onCashPaymentAmountBlur,
+  onTransferPaymentAmountBlur,
   onHandlePayment,
   onClearCart,
   isProcessingPayment,
@@ -1100,22 +1164,22 @@ const PosPaymentCard = memo(function PosPaymentCard({
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span>Subtotal:</span>
-            <span>${roundTo(total, 2).toFixed(2)}</span>
+            <span>${formatMoney(total)}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span>Pagos iniciales:</span>
-            <span>${roundTo(totalInitialPayments, 2).toFixed(2)}</span>
+            <span>${formatMoney(totalInitialPayments)}</span>
           </div>
           {changeDuePreview > 0 && (
             <div className="flex justify-between text-sm font-semibold text-emerald-700">
               <span>Vuelto a entregar:</span>
-              <span>${roundTo(changeDuePreview, 2).toFixed(2)}</span>
+              <span>${formatMoney(changeDuePreview)}</span>
             </div>
           )}
           <Separator />
           <div className="flex justify-between font-bold">
             <span>Total:</span>
-            <span>${roundTo(total, 2).toFixed(2)}</span>
+            <span>${formatMoney(total)}</span>
           </div>
         </div>
         <div className="space-y-2">
@@ -1129,14 +1193,14 @@ const PosPaymentCard = memo(function PosPaymentCard({
                   Efectivo
                 </label>
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
                   placeholder="0.00"
                   value={cashPaymentAmount}
                   onChange={(event) =>
                     onCashPaymentAmountChange(event.target.value)
                   }
+                  onBlur={onCashPaymentAmountBlur}
                   className="h-10"
                 />
               </div>
@@ -1145,14 +1209,14 @@ const PosPaymentCard = memo(function PosPaymentCard({
                   Transferencia
                 </label>
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0"
+                  type="text"
+                  inputMode="decimal"
                   placeholder="0.00"
                   value={transferPaymentAmount}
                   onChange={(event) =>
                     onTransferPaymentAmountChange(event.target.value)
                   }
+                  onBlur={onTransferPaymentAmountBlur}
                   className="h-10"
                 />
               </div>
@@ -1532,6 +1596,18 @@ export function POSModule() {
     () => buildPosCartStorageKey(currentUser?.id ?? null, branchId ?? null),
     [currentUser?.id, branchId]
   );
+  const handleCashPaymentAmountChange = useCallback((value: string) => {
+    setCashPaymentAmount(sanitizeMoneyInput(value));
+  }, []);
+  const handleTransferPaymentAmountChange = useCallback((value: string) => {
+    setTransferPaymentAmount(sanitizeMoneyInput(value));
+  }, []);
+  const handleCashPaymentAmountBlur = useCallback(() => {
+    setCashPaymentAmount((prev) => formatMoneyInput(prev));
+  }, []);
+  const handleTransferPaymentAmountBlur = useCallback(() => {
+    setTransferPaymentAmount((prev) => formatMoneyInput(prev));
+  }, []);
 
   useEffect(() => {
     cartPersistenceReadyRef.current = false;
@@ -1931,7 +2007,19 @@ export function POSModule() {
       return false;
     }
 
-    updateQuantity(item.id, parsedQuantity);
+    let resolvedQuantity = parsedQuantity;
+    const inputHasDecimals = rawValue.includes(".") || rawValue.includes(",");
+    const shouldInterpretAsGrams =
+      item.measurementType === "kg" &&
+      !inputHasDecimals &&
+      Number.isInteger(parsedQuantity) &&
+      parsedQuantity >= 100;
+
+    if (shouldInterpretAsGrams) {
+      resolvedQuantity = parsedQuantity / 1000;
+    }
+
+    updateQuantity(item.id, resolvedQuantity);
     return true;
   }, [toast, updateQuantity]);
 
@@ -2076,10 +2164,10 @@ export function POSModule() {
     previewTotalUnits,
   } = useMemo(() => {
     const nextTotal = cart.reduce((sum, item) => sum + getCartLineTotal(item), 0);
-    const cashPaymentPreview = Math.max(0, Number(cashPaymentAmount || 0));
+    const cashPaymentPreview = Math.max(0, parseMoneyInput(cashPaymentAmount));
     const transferPaymentPreview = Math.max(
       0,
-      Number(transferPaymentAmount || 0)
+      parseMoneyInput(transferPaymentAmount)
     );
     const nextTotalInitialPayments =
       cashPaymentPreview + transferPaymentPreview;
@@ -2240,8 +2328,8 @@ export function POSModule() {
         method: PaymentMethod;
         reference?: string;
       }> = [];
-      const cashAmount = Number(cashPaymentAmount || 0);
-      const transferAmount = Number(transferPaymentAmount || 0);
+      const cashAmount = parseMoneyInput(cashPaymentAmount);
+      const transferAmount = parseMoneyInput(transferPaymentAmount);
       if (Number.isFinite(cashAmount) && cashAmount > 0) {
         payments.push({ amount: cashAmount, method: "CASH" });
       }
@@ -2406,8 +2494,10 @@ export function POSModule() {
               changeDuePreview={changeDuePreview}
               cashPaymentAmount={cashPaymentAmount}
               transferPaymentAmount={transferPaymentAmount}
-              onCashPaymentAmountChange={setCashPaymentAmount}
-              onTransferPaymentAmountChange={setTransferPaymentAmount}
+              onCashPaymentAmountChange={handleCashPaymentAmountChange}
+              onTransferPaymentAmountChange={handleTransferPaymentAmountChange}
+              onCashPaymentAmountBlur={handleCashPaymentAmountBlur}
+              onTransferPaymentAmountBlur={handleTransferPaymentAmountBlur}
               onHandlePayment={handlePayment}
               onClearCart={() => clearCart()}
               isProcessingPayment={isProcessingPayment}
@@ -2754,6 +2844,16 @@ export function POSModule() {
                               )}
                               key={`${item.id}-${item.quantity}`}
                               className="h-8 w-24 text-center text-sm"
+                              placeholder={
+                                item.measurementType === "kg"
+                                  ? "kg o gramos"
+                                  : "Cantidad"
+                              }
+                              title={
+                                item.measurementType === "kg"
+                                  ? "Puedes ingresar kg (ej. 1.5) o gramos enteros (ej. 1500)."
+                                  : undefined
+                              }
                               disabled={isSaleCommitted}
                               onBlur={(event) => {
                                 const committed = commitManualQuantity(
@@ -2832,26 +2932,26 @@ export function POSModule() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span>${roundTo(total, 2).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Pagos iniciales:</span>
-                  <span>${roundTo(totalInitialPayments, 2).toFixed(2)}</span>
-                </div>
-                {changeDuePreview > 0 && (
-                  <div className="flex justify-between text-sm font-semibold text-emerald-700">
-                    <span>Vuelto a entregar:</span>
-                    <span>${roundTo(changeDuePreview, 2).toFixed(2)}</span>
-                  </div>
-                )}
-                <Separator />
-                <div className="flex justify-between font-bold">
-                  <span>Total:</span>
-                  <span>${roundTo(total, 2).toFixed(2)}</span>
-                </div>
+              <div className="flex justify-between text-sm">
+                <span>Subtotal:</span>
+                <span>${formatMoney(total)}</span>
               </div>
+              <div className="flex justify-between text-sm">
+                <span>Pagos iniciales:</span>
+                <span>${formatMoney(totalInitialPayments)}</span>
+              </div>
+              {changeDuePreview > 0 && (
+                <div className="flex justify-between text-sm font-semibold text-emerald-700">
+                  <span>Vuelto a entregar:</span>
+                  <span>${formatMoney(changeDuePreview)}</span>
+                </div>
+              )}
+              <Separator />
+              <div className="flex justify-between font-bold">
+                <span>Total:</span>
+                <span>${formatMoney(total)}</span>
+              </div>
+            </div>
               <div className="space-y-2">
                 <div className="rounded-md border p-3 space-y-2">
                   <p className="text-xs font-semibold uppercase text-muted-foreground">
@@ -2863,14 +2963,14 @@ export function POSModule() {
                         Efectivo
                       </label>
                       <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
+                        inputMode="decimal"
                         placeholder="0.00"
                         value={cashPaymentAmount}
                         onChange={(event) =>
-                          setCashPaymentAmount(event.target.value)
+                          handleCashPaymentAmountChange(event.target.value)
                         }
+                        onBlur={handleCashPaymentAmountBlur}
                         className="h-10"
                       />
                     </div>
@@ -2879,14 +2979,14 @@ export function POSModule() {
                         Transferencia
                       </label>
                       <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                        type="text"
+                        inputMode="decimal"
                         placeholder="0.00"
                         value={transferPaymentAmount}
                         onChange={(event) =>
-                          setTransferPaymentAmount(event.target.value)
+                          handleTransferPaymentAmountChange(event.target.value)
                         }
+                        onBlur={handleTransferPaymentAmountBlur}
                         className="h-10"
                       />
                     </div>
