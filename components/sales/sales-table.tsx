@@ -33,6 +33,7 @@ import {
 import { SalesDetailModal } from "./sales-detail-modal";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useToast } from "@/hooks/use-toast";
+import { backendApi } from "@/lib/backend-api";
 import type { PaymentMethod } from "@/lib/api-types";
 
 function formatMoney(value: number) {
@@ -61,6 +62,36 @@ function getStatusText(status: string) {
   return "Cancelada";
 }
 
+type SalesPaymentMethodFilter = "CASH" | "TRANSFER";
+type SalesPaymentFilter = "all" | SalesPaymentMethodFilter;
+
+const PAYMENT_FILTER_LIMIT = 100;
+const PAYMENT_FILTER_MAX_PAGES = 40;
+
+async function fetchSaleIdsByPaymentMethod(method: SalesPaymentMethodFilter) {
+  const saleIds = new Set<string>();
+  let offset = 0;
+
+  for (let page = 0; page < PAYMENT_FILTER_MAX_PAGES; page += 1) {
+    const response = await backendApi.sales.paymentsList({
+      method,
+      offset,
+      limit: PAYMENT_FILTER_LIMIT,
+    });
+
+    response.items.forEach((payment) => {
+      const saleId = String(payment.saleId ?? "").trim();
+      if (!saleId) return;
+      saleIds.add(saleId);
+    });
+
+    if (!response.meta.hasMore) break;
+    offset += Math.max(1, Number(response.meta.limit ?? PAYMENT_FILTER_LIMIT));
+  }
+
+  return Array.from(saleIds);
+}
+
 export function SalesTable() {
   const { sales, isLoading, registerSalePayment, cancelSale, getSaleDetail } =
     useTransactions();
@@ -68,6 +99,8 @@ export function SalesTable() {
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("all");
+  const [selectedPaymentMethod, setSelectedPaymentMethod] =
+    useState<SalesPaymentFilter>("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [detailSaleId, setDetailSaleId] = useState<string | null>(null);
   const [saleToPay, setSaleToPay] = useState<Sale | null>(null);
@@ -79,7 +112,9 @@ export function SalesTable() {
   const [cancelTarget, setCancelTarget] = useState<Sale | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const pageSize = 10;
-  
+  const paymentMethodFilter =
+    selectedPaymentMethod === "all" ? null : selectedPaymentMethod;
+
   const {
     data: detailSale,
     isLoading: isLoadingDetailSale,
@@ -93,9 +128,35 @@ export function SalesTable() {
     }
   );
 
+  const {
+    data: filteredSaleIdsByPaymentMethod,
+    isLoading: isLoadingPaymentMethodFilter,
+    error: paymentMethodFilterError,
+  } = useSWR(
+    paymentMethodFilter
+      ? (["/sales/payments/list", paymentMethodFilter] as const)
+      : null,
+    ([, method]) => fetchSaleIdsByPaymentMethod(method),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: false,
+    }
+  );
+  const filteredSaleIdsByPaymentMethodSet = useMemo(
+    () => new Set(filteredSaleIdsByPaymentMethod ?? []),
+    [filteredSaleIdsByPaymentMethod]
+  );
+  const isPaymentMethodFilterPending =
+    Boolean(paymentMethodFilter) &&
+    isLoadingPaymentMethodFilter &&
+    !paymentMethodFilterError &&
+    !filteredSaleIdsByPaymentMethod;
+  const isTableLoading = isLoading || isPaymentMethodFilterPending;
+
   const filteredSales = useMemo(
     () =>
       sales.filter((sale) => {
+        if (isPaymentMethodFilterPending) return false;
         if (sale.businessType !== businessType) return false;
         const status = getSaleRowStatus(sale);
         const query = searchQuery.trim().toLowerCase();
@@ -105,9 +166,22 @@ export function SalesTable() {
           sale.id.toLowerCase().includes(query);
         const matchesStatus =
           selectedStatus === "all" || selectedStatus === status;
-        return matchesSearch && matchesStatus;
+        const matchesPaymentMethod =
+          !paymentMethodFilter ||
+          Boolean(paymentMethodFilterError) ||
+          filteredSaleIdsByPaymentMethodSet.has(sale.id);
+        return matchesSearch && matchesStatus && matchesPaymentMethod;
       }),
-    [sales, businessType, searchQuery, selectedStatus]
+    [
+      sales,
+      isPaymentMethodFilterPending,
+      businessType,
+      searchQuery,
+      selectedStatus,
+      paymentMethodFilter,
+      paymentMethodFilterError,
+      filteredSaleIdsByPaymentMethodSet,
+    ]
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredSales.length / pageSize));
@@ -224,7 +298,26 @@ export function SalesTable() {
               <option value="PAID">Pagada</option>
               <option value="CANCELLED">Cancelada</option>
             </select>
+            <select
+              value={selectedPaymentMethod}
+              onChange={(event) => {
+                setSelectedPaymentMethod(event.target.value as SalesPaymentFilter);
+                setCurrentPage(1);
+              }}
+              className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+            >
+              <option value="all">Todos los pagos</option>
+              <option value="CASH">Solo efectivo</option>
+              <option value="TRANSFER">Solo transferencia</option>
+            </select>
           </div>
+
+          {paymentMethodFilterError && (
+            <p className="text-xs text-destructive">
+              No se pudo aplicar el filtro por metodo de pago. Se muestran todas
+              las ventas.
+            </p>
+          )}
 
           <div className="border rounded-lg overflow-hidden">
             <div className="overflow-x-auto">
@@ -241,7 +334,7 @@ export function SalesTable() {
                   </tr>
                 </thead>
                 <tbody>
-                  {isLoading
+                  {isTableLoading
                     ? Array.from({ length: 6 }).map((_, index) => (
                         <tr key={index} className="border-t">
                           <td className="p-3">
@@ -334,13 +427,13 @@ export function SalesTable() {
             </div>
           </div>
 
-          {!isLoading && filteredSales.length === 0 && (
+          {!isTableLoading && filteredSales.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               No se encontraron ventas.
             </div>
           )}
 
-          {!isLoading && filteredSales.length > 0 && (
+          {!isTableLoading && filteredSales.length > 0 && (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted-foreground">
                 Pagina {currentPageSafe} de {totalPages} ({filteredSales.length}{" "}

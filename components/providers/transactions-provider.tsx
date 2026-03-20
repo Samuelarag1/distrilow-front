@@ -243,17 +243,17 @@ function normalizeSale(
           quantity: toFiniteNumber(item.quantity, 0),
           price: toFiniteNumber(item.unitPrice, 0),
           subtotal: toOptionalFiniteNumber(item.subtotal),
-        linkedProductId: item.linkedProductId,
-        pricingMode: item.pricingMode,
-        requestedPriceType: item.requestedPriceType,
-        priceType: item.priceType,
-        pricingSource: item.pricingSource,
-        baseRetailPrice: toOptionalFiniteNumber(item.baseRetailPrice),
-        baseWholesalePrice: toOptionalFiniteNumber(item.baseWholesalePrice),
-        pricingRuleSnapshot: item.pricingRuleSnapshot,
-        manualOverrideReason: item.manualOverrideReason ?? null,
-      };
-    })
+          linkedProductId: item.linkedProductId,
+          pricingMode: item.pricingMode,
+          requestedPriceType: item.requestedPriceType,
+          priceType: item.priceType,
+          pricingSource: item.pricingSource,
+          baseRetailPrice: toOptionalFiniteNumber(item.baseRetailPrice),
+          baseWholesalePrice: toOptionalFiniteNumber(item.baseWholesalePrice),
+          pricingRuleSnapshot: item.pricingRuleSnapshot,
+          manualOverrideReason: item.manualOverrideReason ?? null,
+        };
+      })
     : [];
 
   const paymentBreakdownFromSummary = normalizePaymentBreakdown(
@@ -520,7 +520,6 @@ export function TransactionsProvider({
       );
     } catch (e) {
       if (requestId !== refreshRequestIdRef.current) return;
-      console.error("Error loading transactions data", e);
     } finally {
       if (requestId !== refreshRequestIdRef.current) return;
       setIsLoading(false);

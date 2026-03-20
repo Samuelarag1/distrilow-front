@@ -21,10 +21,6 @@ export const getDashboardMetrics = async (
 
     return normalizeSnapshotMetrics(response);
   } catch (error) {
-    console.error(
-      "Failed to fetch dashboard metrics, using fallback empty state",
-      error
-    );
     return normalizeSnapshotMetrics({});
   }
 };
@@ -34,7 +30,6 @@ export const getRecentSales = async (type: BusinessType) => {
   try {
     return await apiClientFetch.get(`/sales`);
   } catch (error) {
-    console.error("Failed to fetch recent sales", error);
     return [];
   }
 };

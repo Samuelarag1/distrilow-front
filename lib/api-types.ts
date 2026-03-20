@@ -640,6 +640,7 @@ export interface SalePaymentsListQuery {
   skip?: number;
   take?: number;
   offset?: number;
+  page?: number;
   limit?: number;
   saleId?: string;
   method?: PaymentMethod;
