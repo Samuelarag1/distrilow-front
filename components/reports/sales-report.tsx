@@ -110,7 +110,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             {
               from: range.fromYmd,
               to: range.toYmd,
-              limit: 50,
+              limit: 1000,
               branchId: branchId ?? undefined,
             },
             branchId
@@ -196,7 +196,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
   const topProductsByPriceType = useMemo(
     () =>
-      topProductsItems.slice(0, 8).map((item) => ({
+      topProductsItems.map((item) => ({
         name: shortLabel(item.productName, 16),
         minorista: Number(item.revenueRetail ?? 0),
         mayorista: Number(item.revenueWholesale ?? 0),
@@ -545,7 +545,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
               ) : (
                 <div className="space-y-2">
                   {topProductsItems
-                    .slice(0, 12)
                     .map((item: ReportsTopProductItem) => (
                       <div
                         key={item.productId}

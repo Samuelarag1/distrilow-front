@@ -1076,7 +1076,7 @@ export function CashCalendarReport() {
                       </div>
                       <div className="flex justify-between items-center text-sm">
                         <span className="text-muted-foreground font-medium">
-                          Entradas Extras
+                          Ingresos
                         </span>
                         <span className="text-emerald-600 font-bold">
                           +{formatMoney(dailyPayload.summary.income.movementIn)}
@@ -1084,7 +1084,7 @@ export function CashCalendarReport() {
                       </div>
                       <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
                         <span className="text-muted-foreground font-medium">
-                          Retiros de caja (OUT - transferencia interna)
+                          Egresos
                         </span>
                         <span className="text-red-600 font-bold">
                           -

@@ -52,7 +52,6 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
           <p className="text-muted-foreground">Resumen de tu negocio</p>
         </div>
       </div>
-
       <MetricsCards metrics={currentData} type={businessType} />
 
       <div className="space-y-6">

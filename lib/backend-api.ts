@@ -1672,13 +1672,24 @@ export const backendApi = {
     addPayment: (id: string, body: SalePaymentInput) =>
       apiClientFetch.post<SalePayment>(`/sales/${id}/payments`, body),
     paymentsList: async (query: SalePaymentsListQuery = {}) => {
+      const normalizedQuery = query as SalePaymentsListQuery & {
+        page?: number;
+      };
+      const fallbackLimit = Number(
+        normalizedQuery.limit ?? normalizedQuery.take ?? 20
+      );
+      const fallbackOffset = Number(
+        normalizedQuery.offset ??
+          normalizedQuery.skip ??
+          (Number(normalizedQuery.page ?? 1) - 1) * fallbackLimit
+      );
       const payload = await apiClientFetch.get<
         PaginatedResponse<SalePayment> | SalePayment[]
-      >(`/sales/payments/list${buildQuery(query)}`);
+      >(`/sales/payments/list${buildOffsetQuery(normalizedQuery)}`);
       return toPaginatedResponse(
         payload,
-        Number(query.skip ?? query.offset ?? 0),
-        Number(query.take ?? query.limit ?? 20)
+        Math.max(0, fallbackOffset),
+        Math.max(1, fallbackLimit)
       );
     },
     cancel: (id: string) =>
