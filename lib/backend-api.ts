@@ -766,6 +766,11 @@ function normalizeSalesSummaryItems(
   label?: string | null;
   unitsTotal: number;
   revenueTotal: number;
+  costTotal?: number;
+  profitTotal?: number;
+  marginPercent?: number;
+  itemCount?: number;
+  saleCount?: number;
   salesCount?: number;
 }> {
   const source = asRecord(payload);
@@ -804,10 +809,33 @@ function normalizeSalesSummaryItems(
     );
     const salesCount = toOptionalFiniteNumber(
       item.salesCount ??
+        item.saleCount ??
         item.ordersTotal ??
         item.orders ??
         item.tickets ??
         item.transactions
+    );
+    const costTotal = toOptionalFiniteNumber(
+      item.costTotal ?? item.cost ?? item.totalCost
+    );
+    const profitTotal = toOptionalFiniteNumber(
+      item.profitTotal ??
+        item.profit ??
+        item.marginTotal ??
+        item.margin ??
+        item.gain
+    );
+    const marginPercent = toOptionalFiniteNumber(
+      item.marginPercent ??
+        item.marginPct ??
+        item.profitPercent ??
+        item.profitPct
+    );
+    const itemCount = toOptionalFiniteNumber(
+      item.itemCount ?? item.itemsCount ?? item.lines ?? item.lineItems
+    );
+    const saleCount = toOptionalFiniteNumber(
+      item.saleCount ?? item.salesCount ?? item.transactions
     );
 
     return {
@@ -815,6 +843,11 @@ function normalizeSalesSummaryItems(
       label: toOptionalText(item.label ?? item.name),
       unitsTotal,
       revenueTotal,
+      costTotal: costTotal ?? undefined,
+      profitTotal: profitTotal ?? undefined,
+      marginPercent: marginPercent ?? undefined,
+      itemCount: itemCount ?? undefined,
+      saleCount: saleCount ?? undefined,
       salesCount: salesCount ?? undefined,
     };
   };
@@ -830,6 +863,11 @@ function normalizeSalesSummaryItems(
     label?: string | null;
     unitsTotal: number;
     revenueTotal: number;
+    costTotal?: number;
+    profitTotal?: number;
+    marginPercent?: number;
+    itemCount?: number;
+    saleCount?: number;
     salesCount?: number;
   }> = [];
 
@@ -876,6 +914,80 @@ function normalizeSalesSummaryItems(
   return [...dedupedByKey.values()];
 }
 
+function normalizeSalesSummaryTotals(payload: unknown) {
+  const source = asRecord(payload);
+  const totals = asRecord(source.totals);
+  const summary = asRecord(source.summary);
+  const totalsSource =
+    Object.keys(totals).length > 0
+      ? totals
+      : Object.keys(summary).length > 0
+      ? summary
+      : source;
+
+  const unitsTotal = toOptionalFiniteNumber(
+    totalsSource.unitsTotal ??
+      totalsSource.units ??
+      totalsSource.totalUnits ??
+      totalsSource.quantity ??
+      totalsSource.qty
+  );
+  const revenueTotal = toOptionalFiniteNumber(
+    totalsSource.revenueTotal ??
+      totalsSource.revenue ??
+      totalsSource.totalRevenue ??
+      totalsSource.amount ??
+      totalsSource.totalAmount
+  );
+  const costTotal = toOptionalFiniteNumber(
+    totalsSource.costTotal ?? totalsSource.cost ?? totalsSource.totalCost
+  );
+  const profitTotal = toOptionalFiniteNumber(
+    totalsSource.profitTotal ??
+      totalsSource.profit ??
+      totalsSource.marginTotal ??
+      totalsSource.margin ??
+      totalsSource.gain
+  );
+  const marginPercent = toOptionalFiniteNumber(
+    totalsSource.marginPercent ??
+      totalsSource.marginPct ??
+      totalsSource.profitPercent ??
+      totalsSource.profitPct
+  );
+  const itemCount = toOptionalFiniteNumber(
+    totalsSource.itemCount ??
+      totalsSource.itemsCount ??
+      totalsSource.lines ??
+      totalsSource.lineItems
+  );
+  const saleCount = toOptionalFiniteNumber(
+    totalsSource.saleCount ?? totalsSource.salesCount ?? totalsSource.transactions
+  );
+
+  if (
+    unitsTotal === null &&
+    revenueTotal === null &&
+    costTotal === null &&
+    profitTotal === null &&
+    marginPercent === null &&
+    itemCount === null &&
+    saleCount === null
+  ) {
+    return undefined;
+  }
+
+  return {
+    unitsTotal: unitsTotal ?? 0,
+    revenueTotal: revenueTotal ?? 0,
+    costTotal: costTotal ?? 0,
+    profitTotal: profitTotal ?? 0,
+    marginPercent: marginPercent ?? 0,
+    itemCount: itemCount ?? 0,
+    saleCount: saleCount ?? 0,
+  };
+}
+
 function normalizeSalesPriceTypesSummary(
   payload: unknown
 ): ReportsSalesPriceTypesSummaryResponse {
@@ -895,6 +1007,7 @@ function normalizeSalesPriceTypesSummary(
         toOptionalText(filters.categoryId) ?? toOptionalText(source.categoryId),
     },
     items: normalizeSalesSummaryItems(payload, ["priceType", "type"]),
+    totals: normalizeSalesSummaryTotals(payload),
   };
 }
 

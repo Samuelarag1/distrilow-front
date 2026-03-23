@@ -924,6 +924,11 @@ export interface ReportsSalesPriceTypesSummaryItem {
   label?: string | null;
   unitsTotal: number;
   revenueTotal: number;
+  costTotal?: number;
+  profitTotal?: number;
+  marginPercent?: number;
+  itemCount?: number;
+  saleCount?: number;
   salesCount?: number;
 }
 
@@ -937,6 +942,15 @@ export interface ReportsSalesPriceTypesSummaryResponse {
     categoryId?: string | null;
   };
   items: ReportsSalesPriceTypesSummaryItem[];
+  totals?: {
+    unitsTotal: number;
+    revenueTotal: number;
+    costTotal: number;
+    profitTotal: number;
+    marginPercent: number;
+    itemCount: number;
+    saleCount: number;
+  };
 }
 
 export interface ReportsSalesPricingSourcesSummaryQuery {

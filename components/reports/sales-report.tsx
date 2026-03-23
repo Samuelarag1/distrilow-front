@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Bar,
   BarChart,
@@ -45,6 +46,7 @@ const PIE_COLORS = [
   "#6366f1",
   "#14b8a6",
 ];
+const TOP_PRODUCTS_PAGE_SIZE = 10;
 
 type DateRange = {
   from?: Date;
@@ -167,6 +169,8 @@ function getPricingSourceLabel(value: string) {
 
 export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const { branchId } = useUser();
+  const [detailProductsSearch, setDetailProductsSearch] = useState("");
+  const [detailProductsPage, setDetailProductsPage] = useState(1);
 
   const range = useMemo(() => {
     const today = new Date();
@@ -329,6 +333,33 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     [data?.priceTypesSummary?.items]
   );
 
+  const priceTypesSummaryTotals = useMemo(() => {
+    const totals = data?.priceTypesSummary?.totals;
+    if (totals) return totals;
+    if (priceTypesSummaryItems.length === 0) return null;
+
+    return priceTypesSummaryItems.reduce(
+      (acc, item) => {
+        acc.unitsTotal += Number(item.unitsTotal ?? 0);
+        acc.revenueTotal += Number(item.revenueTotal ?? 0);
+        acc.costTotal += Number(item.costTotal ?? 0);
+        acc.profitTotal += Number(item.profitTotal ?? 0);
+        acc.itemCount += Number(item.itemCount ?? 0);
+        acc.saleCount += Number(item.saleCount ?? item.salesCount ?? 0);
+        return acc;
+      },
+      {
+        unitsTotal: 0,
+        revenueTotal: 0,
+        costTotal: 0,
+        profitTotal: 0,
+        marginPercent: 0,
+        itemCount: 0,
+        saleCount: 0,
+      }
+    );
+  }, [data?.priceTypesSummary?.totals, priceTypesSummaryItems]);
+
   const pricingSourcesSummaryItems = useMemo<
     ReportsSalesPricingSourcesSummaryItem[]
   >(
@@ -381,9 +412,27 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     }, seed);
   }, [topProductsWithComputedMetrics]);
 
+  const effectiveTotals = useMemo(() => {
+    if (!priceTypesSummaryTotals) return totals;
+    return {
+      ...totals,
+      revenueTotal: Number(priceTypesSummaryTotals.revenueTotal ?? totals.revenueTotal),
+      unitsTotal: Number(priceTypesSummaryTotals.unitsTotal ?? totals.unitsTotal),
+      costTotal: Number(priceTypesSummaryTotals.costTotal ?? totals.costTotal),
+      marginTotal: Number(priceTypesSummaryTotals.profitTotal ?? totals.marginTotal),
+    };
+  }, [priceTypesSummaryTotals, totals]);
+
   const totalMarginPct = useMemo(
-    () => (totals.revenueTotal > 0 ? (totals.marginTotal / totals.revenueTotal) * 100 : 0),
-    [totals.marginTotal, totals.revenueTotal]
+    () => {
+      if (priceTypesSummaryTotals && Number.isFinite(priceTypesSummaryTotals.marginPercent)) {
+        return Number(priceTypesSummaryTotals.marginPercent);
+      }
+      return effectiveTotals.revenueTotal > 0
+        ? (effectiveTotals.marginTotal / effectiveTotals.revenueTotal) * 100
+        : 0;
+    },
+    [effectiveTotals.marginTotal, effectiveTotals.revenueTotal, priceTypesSummaryTotals]
   );
 
   const salesTrendData = useMemo(
@@ -398,12 +447,39 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const topProductsByPriceType = useMemo(
     () =>
       topProductsItems.map((item) => ({
-        name: shortLabel(item.productName, 16),
-        minorista: Number(item.revenueRetail ?? 0),
-        mayorista: Number(item.revenueWholesale ?? 0),
+      name: shortLabel(item.productName, 16),
+      minorista: Number(item.revenueRetail ?? 0),
+      mayorista: Number(item.revenueWholesale ?? 0),
       })),
     [topProductsItems]
   );
+
+  const filteredProductDetails = useMemo(() => {
+    const term = detailProductsSearch.trim().toLowerCase();
+    if (!term) return topProductsWithComputedMetrics;
+    return topProductsWithComputedMetrics.filter((item) => {
+      const name = String(item.productName ?? "").toLowerCase();
+      const category = String(item.categoryName ?? "").toLowerCase();
+      return name.includes(term) || category.includes(term);
+    });
+  }, [detailProductsSearch, topProductsWithComputedMetrics]);
+
+  const detailProductsTotalPages = useMemo(
+    () =>
+      Math.max(1, Math.ceil(filteredProductDetails.length / TOP_PRODUCTS_PAGE_SIZE)),
+    [filteredProductDetails.length]
+  );
+
+  const currentDetailProductsPage = Math.min(
+    detailProductsPage,
+    detailProductsTotalPages
+  );
+
+  const paginatedProductDetails = useMemo(() => {
+    const start = (currentDetailProductsPage - 1) * TOP_PRODUCTS_PAGE_SIZE;
+    const end = start + TOP_PRODUCTS_PAGE_SIZE;
+    return filteredProductDetails.slice(start, end);
+  }, [currentDetailProductsPage, filteredProductDetails]);
 
   const salesByPriceTypePie = useMemo(() => {
     if (priceTypesSummaryItems.length > 0) {
@@ -425,10 +501,10 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     }
 
     return [
-      { name: "Minorista", value: totals.revenueRetail },
-      { name: "Mayorista", value: totals.revenueWholesale },
+      { name: "Minorista", value: effectiveTotals.revenueRetail },
+      { name: "Mayorista", value: effectiveTotals.revenueWholesale },
     ];
-  }, [priceTypesSummaryItems, totals.revenueRetail, totals.revenueWholesale]);
+  }, [effectiveTotals.revenueRetail, effectiveTotals.revenueWholesale, priceTypesSummaryItems]);
 
   const pricingSourcesCaption = useMemo(() => {
     if (pricingSourcesSummaryItems.length === 0) return null;
@@ -543,6 +619,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
         </Button>
       </div>
 
+      <p className="text-sm text-muted-foreground">
+        Periodo evaluado: {format(range.from, "dd/MM/yyyy")} al{" "}
+        {format(range.to, "dd/MM/yyyy")}
+      </p>
+
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
@@ -552,7 +633,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatMoney(totals.revenueTotal)}
+              {formatMoney(effectiveTotals.revenueTotal)}
             </div>
           </CardContent>
         </Card>
@@ -565,7 +646,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {totals.unitsTotal.toLocaleString("es-AR")}
+              {effectiveTotals.unitsTotal.toLocaleString("es-AR")}
             </div>
           </CardContent>
         </Card>
@@ -578,7 +659,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatMoney(totals.marginTotal)}
+              {formatMoney(effectiveTotals.marginTotal)}
             </div>
             <p className="text-xs text-muted-foreground">
               {totalMarginPct.toFixed(2)}% sobre ingresos totales
@@ -745,20 +826,63 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <CardHeader>
               <CardTitle>Detalle de productos</CardTitle>
               <CardDescription>
-                {/* 
-                
-                !TODO
-                Ranking con desglose retail/wholesale desde backend */}
+                Mostrando 10 productos por pagina con buscador
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              {topProductsWithComputedMetrics.length === 0 ? (
+            <CardContent className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <Input
+                  placeholder="Buscar producto o categoria"
+                  value={detailProductsSearch}
+                  onChange={(event) => {
+                    setDetailProductsSearch(event.target.value);
+                    setDetailProductsPage(1);
+                  }}
+                  className="sm:max-w-sm"
+                />
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>
+                    Pagina {currentDetailProductsPage} de {detailProductsTotalPages}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setDetailProductsPage(
+                        Math.max(1, currentDetailProductsPage - 1)
+                      )
+                    }
+                    disabled={currentDetailProductsPage <= 1}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setDetailProductsPage(
+                        Math.min(
+                          detailProductsTotalPages,
+                          currentDetailProductsPage + 1
+                        )
+                      )
+                    }
+                    disabled={currentDetailProductsPage >= detailProductsTotalPages}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </div>
+
+              {filteredProductDetails.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No hay ventas para el rango seleccionado.
+                  {topProductsWithComputedMetrics.length === 0
+                    ? "No hay ventas para el rango seleccionado."
+                    : "No hay productos para el filtro ingresado."}
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {topProductsWithComputedMetrics.map((item) => {
+                  {paginatedProductDetails.map((item) => {
                     return (
                       <div
                         key={item.productId}
