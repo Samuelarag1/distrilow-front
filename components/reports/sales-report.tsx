@@ -30,6 +30,7 @@ import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
 import type {
+  MeasurementType,
   ReportsSalesPricingSourcesSummaryItem,
   ReportsSalesPriceTypesSummaryItem,
   ReportsTopProductItem,
@@ -49,6 +50,11 @@ type DateRange = {
   to?: Date;
 };
 
+type ProductMeasurementMeta = {
+  measurementType: MeasurementType;
+  isWeighable: boolean;
+};
+
 function toYmd(value: Date) {
   return format(value, "yyyy-MM-dd");
 }
@@ -59,6 +65,71 @@ function formatMoney(value: number) {
     currency: "ARS",
     maximumFractionDigits: 2,
   });
+}
+
+function normalizeMeasurementType(value: unknown): MeasurementType | null {
+  if (typeof value !== "string") return null;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "unit" ||
+    normalized === "gram" ||
+    normalized === "kg" ||
+    normalized === "ml" ||
+    normalized === "liter"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function resolveItemMeasurementType(
+  item: ReportsTopProductItem,
+  productMeta?: ProductMeasurementMeta | null
+): MeasurementType {
+  const source = item as ReportsTopProductItem & {
+    measurementType?: string | null;
+    unit?: string | null;
+    isWeighable?: boolean | null;
+  };
+
+  return (
+    normalizeMeasurementType(source.measurementType) ??
+    normalizeMeasurementType(source.unit) ??
+    productMeta?.measurementType ??
+    (source.isWeighable ?? productMeta?.isWeighable ? "gram" : "unit")
+  );
+}
+
+function getMeasurementLabel(measurementType: MeasurementType) {
+  if (measurementType === "kg") return "kg";
+  if (measurementType === "gram") return "grs";
+  if (measurementType === "ml") return "ml";
+  if (measurementType === "liter") return "lts";
+  return "unid.";
+}
+
+function formatQuantity(value: number, measurementType: MeasurementType) {
+  const amount = Number(value ?? 0);
+  const maxFractionDigits =
+    measurementType === "unit" ||
+    measurementType === "gram" ||
+    measurementType === "ml"
+      ? 0
+      : 3;
+  const formatted = amount.toLocaleString("es-AR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: maxFractionDigits,
+  });
+  return `${formatted} ${getMeasurementLabel(measurementType)}`;
+}
+
+function computeMarginAmount(revenueTotal: number, costTotal: number) {
+  return revenueTotal - costTotal;
+}
+
+function computeMarginPct(marginAmount: number, revenueTotal: number) {
+  if (revenueTotal <= 0) return 0;
+  return (marginAmount / revenueTotal) * 100;
 }
 
 function shortLabel(label: string, max = 20) {
@@ -98,44 +169,48 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       ? ["reporting-sales-report", branchId, range.fromYmd, range.toYmd]
       : null,
     async () => {
-      const [salesTrend, topProducts, priceTypesSummary, pricingSourcesSummary] =
-        await Promise.all([
-          backendApi.reporting.sales.history({
+      const [
+        salesTrend,
+        topProducts,
+        priceTypesSummary,
+        pricingSourcesSummary,
+      ] = await Promise.all([
+        backendApi.reporting.sales.history({
+          from: range.fromYmd,
+          to: range.toYmd,
+          groupBy: "day",
+          metric: "revenue",
+        }),
+        backendApi.reporting.sales.topProducts.report(
+          {
             from: range.fromYmd,
             to: range.toYmd,
-            groupBy: "day",
-            metric: "revenue",
-          }),
-          backendApi.reporting.sales.topProducts.report(
+            limit: 300,
+            branchId: branchId ?? undefined,
+          },
+          branchId
+        ),
+        backendApi.reporting.sales.priceTypes
+          .summary(
             {
               from: range.fromYmd,
               to: range.toYmd,
-              limit: 300,
               branchId: branchId ?? undefined,
             },
             branchId
-          ),
-          backendApi.reporting.sales.priceTypes
-            .summary(
-              {
-                from: range.fromYmd,
-                to: range.toYmd,
-                branchId: branchId ?? undefined,
-              },
-              branchId
-            )
-            .catch(() => null),
-          backendApi.reporting.sales.pricingSources
-            .summary(
-              {
-                from: range.fromYmd,
-                to: range.toYmd,
-                branchId: branchId ?? undefined,
-              },
-              branchId
-            )
-            .catch(() => null),
-        ]);
+          )
+          .catch(() => null),
+        backendApi.reporting.sales.pricingSources
+          .summary(
+            {
+              from: range.fromYmd,
+              to: range.toYmd,
+              branchId: branchId ?? undefined,
+            },
+            branchId
+          )
+          .catch(() => null),
+      ]);
 
       return {
         salesTrend,
@@ -155,6 +230,72 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     [data?.topProducts.items]
   );
 
+  const unresolvedProductIds = useMemo(() => {
+    const pendingIds = new Set<string>();
+    topProductsItems.forEach((item) => {
+      if (!item.productId) return;
+      const source = item as ReportsTopProductItem & {
+        measurementType?: string | null;
+        unit?: string | null;
+      };
+      const measurementType =
+        normalizeMeasurementType(source.measurementType) ??
+        normalizeMeasurementType(source.unit);
+      if (!measurementType) {
+        pendingIds.add(item.productId);
+      }
+    });
+    return [...pendingIds];
+  }, [topProductsItems]);
+
+  const { data: productMeasurementById } = useSWR<
+    Record<string, ProductMeasurementMeta>
+  >(
+    branchId && unresolvedProductIds.length > 0
+      ? [
+          "reporting-sales-product-measurements",
+          branchId,
+          unresolvedProductIds.join(","),
+        ]
+      : null,
+    async () => {
+      if (!branchId || unresolvedProductIds.length === 0) return {};
+      const remainingIds = new Set(unresolvedProductIds);
+      const measurementsById: Record<string, ProductMeasurementMeta> = {};
+      let skip = 0;
+      const take = 100;
+      let hasMore = true;
+      let safety = 0;
+
+      while (hasMore && remainingIds.size > 0 && safety < 200) {
+        const page = await backendApi.products.list({ skip, take }, branchId);
+        page.items.forEach((product) => {
+          if (!remainingIds.has(product.id)) return;
+          const measurementType = normalizeMeasurementType(
+            product.measurementType
+          );
+          measurementsById[product.id] = {
+            measurementType: measurementType ?? "unit",
+            isWeighable: Boolean(product.isWeighable ?? false),
+          };
+          remainingIds.delete(product.id);
+        });
+
+        const currentOffset = Number(page.meta.offset ?? skip);
+        const currentLimit = Number(page.meta.limit ?? take);
+        skip = currentOffset + currentLimit;
+        hasMore = Boolean(page.meta.hasMore);
+        safety += 1;
+      }
+
+      return measurementsById;
+    },
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
+
   const priceTypesSummaryItems = useMemo<ReportsSalesPriceTypesSummaryItem[]>(
     () => data?.priceTypesSummary?.items ?? [],
     [data?.priceTypesSummary?.items]
@@ -162,28 +303,54 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
   const pricingSourcesSummaryItems = useMemo<
     ReportsSalesPricingSourcesSummaryItem[]
-  >(() => data?.pricingSourcesSummary?.items ?? [], [
-    data?.pricingSourcesSummary?.items,
-  ]);
+  >(
+    () => data?.pricingSourcesSummary?.items ?? [],
+    [data?.pricingSourcesSummary?.items]
+  );
+
+  const topProductsWithComputedMetrics = useMemo(
+    () =>
+      topProductsItems.map((item) => {
+        const revenueTotal = Number(item.revenueTotal ?? 0);
+        const costTotal = Number(item.costTotal ?? 0);
+        const marginAmount = computeMarginAmount(revenueTotal, costTotal);
+        const marginPct = computeMarginPct(marginAmount, revenueTotal);
+        const productMeta = productMeasurementById?.[item.productId] ?? null;
+        return {
+          ...item,
+          measurementType: resolveItemMeasurementType(item, productMeta),
+          marginAmount,
+          marginPct,
+        };
+      }),
+    [productMeasurementById, topProductsItems]
+  );
 
   const totals = useMemo(() => {
     const seed = {
       revenueTotal: 0,
       unitsTotal: 0,
+      costTotal: 0,
       marginTotal: 0,
       revenueRetail: 0,
       revenueWholesale: 0,
     };
 
-    return topProductsItems.reduce((acc, item) => {
+    return topProductsWithComputedMetrics.reduce((acc, item) => {
       acc.revenueTotal += Number(item.revenueTotal ?? 0);
       acc.unitsTotal += Number(item.unitsTotal ?? 0);
-      acc.marginTotal += Number(item.marginTotal ?? 0);
+      acc.costTotal += Number(item.costTotal ?? 0);
+      acc.marginTotal += Number(item.marginAmount ?? 0);
       acc.revenueRetail += Number(item.revenueRetail ?? 0);
       acc.revenueWholesale += Number(item.revenueWholesale ?? 0);
       return acc;
     }, seed);
-  }, [topProductsItems]);
+  }, [topProductsWithComputedMetrics]);
+
+  const totalMarginPct = useMemo(
+    () => computeMarginPct(totals.marginTotal, totals.revenueTotal),
+    [totals.marginTotal, totals.revenueTotal]
+  );
 
   const salesTrendData = useMemo(
     () =>
@@ -208,7 +375,9 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     if (priceTypesSummaryItems.length > 0) {
       const summaryByKey = new Map(
         priceTypesSummaryItems.map((item) => [
-          String(item.key ?? "").trim().toUpperCase(),
+          String(item.key ?? "")
+            .trim()
+            .toUpperCase(),
           Number(item.revenueTotal ?? 0),
         ])
       );
@@ -251,23 +420,28 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
   const tableRows = useMemo(
     () =>
-      topProductsItems.map((item, index) => ({
+      topProductsWithComputedMetrics.map((item, index) => ({
         posicion: index + 1,
         producto: item.productName,
         categoria: item.categoryName ?? "Sin categoria",
-        unidadesTotal: Number(item.unitsTotal ?? 0).toLocaleString("es-AR"),
+        unidadesTotal: formatQuantity(
+          Number(item.unitsTotal ?? 0),
+          item.measurementType
+        ),
         ingresosTotal: formatMoney(Number(item.revenueTotal ?? 0)),
-        unidadesMinorista: Number(item.unitsRetail ?? 0).toLocaleString(
-          "es-AR"
+        unidadesMinorista: formatQuantity(
+          Number(item.unitsRetail ?? 0),
+          item.measurementType
         ),
         ingresosMinorista: formatMoney(Number(item.revenueRetail ?? 0)),
-        unidadesMayorista: Number(item.unitsWholesale ?? 0).toLocaleString(
-          "es-AR"
+        unidadesMayorista: formatQuantity(
+          Number(item.unitsWholesale ?? 0),
+          item.measurementType
         ),
         ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
-        margen: formatMoney(Number(item.marginTotal ?? 0)),
+        margen: formatMoney(Number(item.marginAmount ?? 0)),
       })),
-    [topProductsItems]
+    [topProductsWithComputedMetrics]
   );
 
   const exportColumns = [
@@ -372,6 +546,9 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <div className="text-2xl font-bold">
               {formatMoney(totals.marginTotal)}
             </div>
+            <p className="text-xs text-muted-foreground">
+              {totalMarginPct.toFixed(2)}% sobre ingresos totales
+            </p>
           </CardContent>
         </Card>
 
@@ -490,7 +667,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <CardContent>
               <div className="h-[280px] sm:h-[360px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topProductsByPriceType} >
+                  <BarChart data={topProductsByPriceType}>
                     <XAxis
                       dataKey="name"
                       stroke="#888888"
@@ -534,18 +711,21 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <CardHeader>
               <CardTitle>Detalle de productos</CardTitle>
               <CardDescription>
-                Ranking con desglose retail/wholesale desde backend
+                {/* 
+                
+                !TODO
+                Ranking con desglose retail/wholesale desde backend */}
               </CardDescription>
             </CardHeader>
             <CardContent>
-              {topProductsItems.length === 0 ? (
+              {topProductsWithComputedMetrics.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
                   No hay ventas para el rango seleccionado.
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {topProductsItems
-                    .map((item: ReportsTopProductItem) => (
+                  {topProductsWithComputedMetrics.map((item) => {
+                    return (
                       <div
                         key={item.productId}
                         className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-5"
@@ -557,10 +737,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                           </p>
                         </div>
                         <div>
-                          <p className="text-muted-foreground">Unidades</p>
+                          <p className="text-muted-foreground">Cantidad</p>
                           <p className="font-medium">
-                            {Number(item.unitsTotal ?? 0).toLocaleString(
-                              "es-AR"
+                            {formatQuantity(
+                              Number(item.unitsTotal ?? 0),
+                              item.measurementType
                             )}
                           </p>
                         </div>
@@ -576,12 +757,13 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                         <div>
                           <p className="text-muted-foreground">Margen</p>
                           <p className="font-medium">
-                            {formatMoney(Number(item.marginTotal ?? 0))} (
-                            {Number(item.marginPct ?? 0).toFixed(2)}%)
+                            {formatMoney(item.marginAmount)} (
+                            {item.marginPct.toFixed(2)}%)
                           </p>
                         </div>
                       </div>
-                    ))}
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
