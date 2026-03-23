@@ -29,6 +29,7 @@ import useSWR from "swr";
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
+import { calculateProductMargin } from "@/lib/reports/calculate-product-margin";
 import type {
   MeasurementType,
   ReportsSalesPricingSourcesSummaryItem,
@@ -53,6 +54,7 @@ type DateRange = {
 type ProductMeasurementMeta = {
   measurementType: MeasurementType;
   isWeighable: boolean;
+  costPrice: number;
 };
 
 function toYmd(value: Date) {
@@ -123,13 +125,31 @@ function formatQuantity(value: number, measurementType: MeasurementType) {
   return `${formatted} ${getMeasurementLabel(measurementType)}`;
 }
 
-function computeMarginAmount(revenueTotal: number, costTotal: number) {
-  return revenueTotal - costTotal;
-}
+function resolveItemCostPrice(
+  item: ReportsTopProductItem,
+  productMeta?: ProductMeasurementMeta | null
+) {
+  const source = item as ReportsTopProductItem & {
+    costPrice?: number | string | null;
+    unitCost?: number | string | null;
+    averageCost?: number | string | null;
+  };
 
-function computeMarginPct(marginAmount: number, revenueTotal: number) {
-  if (revenueTotal <= 0) return 0;
-  return (marginAmount / revenueTotal) * 100;
+  const fromItem = Number(
+    source.costPrice ?? source.unitCost ?? source.averageCost ?? Number.NaN
+  );
+  if (Number.isFinite(fromItem)) return fromItem;
+
+  const fromProduct = Number(productMeta?.costPrice ?? Number.NaN);
+  if (Number.isFinite(fromProduct)) return fromProduct;
+
+  const quantitySold = Number(item.unitsTotal ?? 0);
+  const fallbackCostTotal = Number(item.costTotal ?? 0);
+  if (quantitySold > 0 && Number.isFinite(fallbackCostTotal)) {
+    return fallbackCostTotal / quantitySold;
+  }
+
+  return 0;
 }
 
 function shortLabel(label: string, max = 20) {
@@ -230,18 +250,25 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     [data?.topProducts.items]
   );
 
-  const unresolvedProductIds = useMemo(() => {
+  const productsToEnrichIds = useMemo(() => {
     const pendingIds = new Set<string>();
     topProductsItems.forEach((item) => {
       if (!item.productId) return;
       const source = item as ReportsTopProductItem & {
         measurementType?: string | null;
         unit?: string | null;
+        costPrice?: number | string | null;
+        unitCost?: number | string | null;
+        averageCost?: number | string | null;
       };
       const measurementType =
         normalizeMeasurementType(source.measurementType) ??
         normalizeMeasurementType(source.unit);
-      if (!measurementType) {
+      const costPrice = Number(
+        source.costPrice ?? source.unitCost ?? source.averageCost ?? Number.NaN
+      );
+      const hasCostPrice = Number.isFinite(costPrice);
+      if (!measurementType || !hasCostPrice) {
         pendingIds.add(item.productId);
       }
     });
@@ -251,16 +278,16 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const { data: productMeasurementById } = useSWR<
     Record<string, ProductMeasurementMeta>
   >(
-    branchId && unresolvedProductIds.length > 0
+    branchId && productsToEnrichIds.length > 0
       ? [
           "reporting-sales-product-measurements",
           branchId,
-          unresolvedProductIds.join(","),
+          productsToEnrichIds.join(","),
         ]
       : null,
     async () => {
-      if (!branchId || unresolvedProductIds.length === 0) return {};
-      const remainingIds = new Set(unresolvedProductIds);
+      if (!branchId || productsToEnrichIds.length === 0) return {};
+      const remainingIds = new Set(productsToEnrichIds);
       const measurementsById: Record<string, ProductMeasurementMeta> = {};
       let skip = 0;
       const take = 100;
@@ -277,6 +304,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           measurementsById[product.id] = {
             measurementType: measurementType ?? "unit",
             isWeighable: Boolean(product.isWeighable ?? false),
+            costPrice: Number(product.costPrice ?? 0),
           };
           remainingIds.delete(product.id);
         });
@@ -311,16 +339,22 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const topProductsWithComputedMetrics = useMemo(
     () =>
       topProductsItems.map((item) => {
-        const revenueTotal = Number(item.revenueTotal ?? 0);
-        const costTotal = Number(item.costTotal ?? 0);
-        const marginAmount = computeMarginAmount(revenueTotal, costTotal);
-        const marginPct = computeMarginPct(marginAmount, revenueTotal);
         const productMeta = productMeasurementById?.[item.productId] ?? null;
+        const quantitySold = Number(item.unitsTotal ?? 0);
+        const retailRevenue = Number(item.revenueRetail ?? 0);
+        const wholesaleRevenue = Number(item.revenueWholesale ?? 0);
+        const costPrice = resolveItemCostPrice(item, productMeta);
+        const margin = calculateProductMargin({
+          quantitySold,
+          retailRevenue,
+          wholesaleRevenue,
+          costPrice,
+        });
         return {
           ...item,
           measurementType: resolveItemMeasurementType(item, productMeta),
-          marginAmount,
-          marginPct,
+          costPrice,
+          marginResult: margin,
         };
       }),
     [productMeasurementById, topProductsItems]
@@ -337,10 +371,10 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     };
 
     return topProductsWithComputedMetrics.reduce((acc, item) => {
-      acc.revenueTotal += Number(item.revenueTotal ?? 0);
+      acc.revenueTotal += Number(item.marginResult.totalRevenue ?? 0);
       acc.unitsTotal += Number(item.unitsTotal ?? 0);
-      acc.costTotal += Number(item.costTotal ?? 0);
-      acc.marginTotal += Number(item.marginAmount ?? 0);
+      acc.costTotal += Number(item.marginResult.totalCost ?? 0);
+      acc.marginTotal += Number(item.marginResult.margin ?? 0);
       acc.revenueRetail += Number(item.revenueRetail ?? 0);
       acc.revenueWholesale += Number(item.revenueWholesale ?? 0);
       return acc;
@@ -348,7 +382,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   }, [topProductsWithComputedMetrics]);
 
   const totalMarginPct = useMemo(
-    () => computeMarginPct(totals.marginTotal, totals.revenueTotal),
+    () => (totals.revenueTotal > 0 ? (totals.marginTotal / totals.revenueTotal) * 100 : 0),
     [totals.marginTotal, totals.revenueTotal]
   );
 
@@ -428,7 +462,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           Number(item.unitsTotal ?? 0),
           item.measurementType
         ),
-        ingresosTotal: formatMoney(Number(item.revenueTotal ?? 0)),
+        ingresosTotal: formatMoney(Number(item.marginResult.totalRevenue ?? 0)),
         unidadesMinorista: formatQuantity(
           Number(item.unitsRetail ?? 0),
           item.measurementType
@@ -439,7 +473,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           item.measurementType
         ),
         ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
-        margen: formatMoney(Number(item.marginAmount ?? 0)),
+        margen: formatMoney(Number(item.marginResult.margin ?? 0)),
       })),
     [topProductsWithComputedMetrics]
   );
@@ -757,8 +791,8 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                         <div>
                           <p className="text-muted-foreground">Margen</p>
                           <p className="font-medium">
-                            {formatMoney(item.marginAmount)} (
-                            {item.marginPct.toFixed(2)}%)
+                            {formatMoney(item.marginResult.margin)} (
+                            {item.marginResult.marginPercent.toFixed(2)}%)
                           </p>
                         </div>
                       </div>
