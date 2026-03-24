@@ -39,63 +39,72 @@ function isRestrictedUser(role?: string, branchesCount = 0) {
 }
 
 export function middleware(request: NextRequest) {
-  const token = getFirstCookie(request, [
-    "accessToken",
-    "token",
-    "access_token",
-    "__Host-accessToken",
-    "__Secure-accessToken",
-    "__Host-access_token",
-    "__Secure-access_token",
-  ]);
-  const refreshToken = getFirstCookie(request, [
-    "refreshToken",
-    "refresh_token",
-    "__Host-refreshToken",
-    "__Secure-refreshToken",
-    "__Host-refresh_token",
-    "__Secure-refresh_token",
-  ]);
-  const hasSession = hasCookieValue(token) || hasCookieValue(refreshToken);
-  const user = parseCookieJson<SessionUser>(request.cookies.get("user")?.value);
-  const branches = parseCookieJson<Array<{ id: string }>>(
-    request.cookies.get("branches")?.value
-  );
-  const restrictedUser = isRestrictedUser(user?.role, branches?.length ?? 0);
-  const { pathname } = request.nextUrl;
+  try {
+    const token = getFirstCookie(request, [
+      "accessToken",
+      "token",
+      "access_token",
+      "__Host-accessToken",
+      "__Secure-accessToken",
+      "__Host-access_token",
+      "__Secure-access_token",
+    ]);
+    const refreshToken = getFirstCookie(request, [
+      "refreshToken",
+      "refresh_token",
+      "__Host-refreshToken",
+      "__Secure-refreshToken",
+      "__Host-refresh_token",
+      "__Secure-refresh_token",
+    ]);
+    const hasSession = hasCookieValue(token) || hasCookieValue(refreshToken);
+    const user = parseCookieJson<SessionUser>(request.cookies.get("user")?.value);
+    const branches = parseCookieJson<Array<{ id: string }>>(
+      request.cookies.get("branches")?.value
+    );
+    const restrictedUser = isRestrictedUser(user?.role, branches?.length ?? 0);
+    const { pathname } = request.nextUrl;
 
-  // Permitir siempre login
-  if (pathname.startsWith("/login")) {
-    if (hasSession) {
-      return NextResponse.redirect(new URL(restrictedUser ? "/pos" : "/", request.url));
+    // Permitir siempre login
+    if (pathname.startsWith("/login")) {
+      // Si la sesion esta incompleta/corrupta, no forzar redirect al home:
+      // dejar entrar al login para reautenticacion.
+      if (hasSession && user?.role) {
+        return NextResponse.redirect(new URL(restrictedUser ? "/pos" : "/", request.url));
+      }
+      return NextResponse.next();
     }
-    return NextResponse.next();
-  }
 
-  // Rutas protegidas
-  if (!hasSession) {
+    // Rutas protegidas
+    if (!hasSession) {
+      return NextResponse.redirect(new URL("/login", request.url));
+    }
+
+    if (restrictedUser) {
+      const allowed =
+        pathname === "/pos" ||
+        pathname.startsWith("/pos/") ||
+        pathname === "/cash" ||
+        pathname.startsWith("/cash/") ||
+        pathname === "/onboarding/branch" ||
+        pathname.startsWith("/onboarding/branch/");
+
+      if (pathname === "/") {
+        return NextResponse.redirect(new URL("/pos", request.url));
+      }
+
+      if (!allowed) {
+        return NextResponse.redirect(new URL("/pos", request.url));
+      }
+    }
+
+    return NextResponse.next();
+  } catch {
+    if (request.nextUrl.pathname.startsWith("/login")) {
+      return NextResponse.next();
+    }
     return NextResponse.redirect(new URL("/login", request.url));
   }
-
-  if (restrictedUser) {
-    const allowed =
-      pathname === "/pos" ||
-      pathname.startsWith("/pos/") ||
-      pathname === "/cash" ||
-      pathname.startsWith("/cash/") ||
-      pathname === "/onboarding/branch" ||
-      pathname.startsWith("/onboarding/branch/");
-
-    if (pathname === "/") {
-      return NextResponse.redirect(new URL("/pos", request.url));
-    }
-
-    if (!allowed) {
-      return NextResponse.redirect(new URL("/pos", request.url));
-    }
-  }
-
-  return NextResponse.next();
 }
 
 export const config = {

@@ -126,7 +126,7 @@ export function ProductDialog({
     costReviewPending: false,
     categoryId: "",
     brand: "",
-    trackStock: false,
+    trackStock: true,
     allowNegativeStock: false,
     measurementType: MeasurementType.UNIT as MeasurementType,
     // estado: en tu entity esActive boolean
@@ -163,7 +163,10 @@ export function ProductDialog({
         costReviewPending: Boolean((product as any).costReviewPending ?? false),
         categoryId: productCategoryId,
         brand: (product as any).brand ?? "",
-        trackStock: Boolean((product as any).trackStock ?? false),
+        trackStock:
+          typeof (product as any).trackStock === "boolean"
+            ? (product as any).trackStock
+            : true,
         allowNegativeStock: Boolean(
           (product as any).allowNegativeStock ?? false
         ),
@@ -190,7 +193,7 @@ export function ProductDialog({
         costReviewPending: false,
         categoryId: "",
         brand: "",
-        trackStock: false,
+        trackStock: true,
         allowNegativeStock: false,
         measurementType: MeasurementType.UNIT,
         isActive: true,
@@ -483,6 +486,21 @@ export function ProductDialog({
                   checked={formData.isWeighable}
                   onCheckedChange={(checked) =>
                     setFormData((p) => ({ ...p, isWeighable: checked }))
+                  }
+                  disabled={disableForm}
+                />
+              </div>
+              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
+                <div className="flex flex-col gap-1">
+                  <Label className="font-bold">Control de stock</Label>
+                  <span className="text-xs text-muted-foreground">
+                    Activa control de inventario para este producto
+                  </span>
+                </div>
+                <Switch
+                  checked={formData.trackStock}
+                  onCheckedChange={(checked) =>
+                    setFormData((p) => ({ ...p, trackStock: checked }))
                   }
                   disabled={disableForm}
                 />
