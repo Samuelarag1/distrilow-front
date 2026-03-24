@@ -129,8 +129,6 @@ export function CashModule() {
           const nextExpected = response.session?.expectedCash;
           if (nextExpected === undefined || nextExpected === null) {
             setAmountToLeave("");
-          } else {
-            setAmountToLeave(String(nextExpected));
           }
         }
       } catch (error: any) {
@@ -635,20 +633,7 @@ export function CashModule() {
                   onChange={(event) => setAmountToLeave(event.target.value)}
                 />
 
-                {suggestedWithdrawal < 0 && (
-                  <p className="text-xs text-destructive">
-                    El monto a dejar no puede superar el efectivo esperado.
-                  </p>
-                )}
-                <Button
-                  className="w-full"
-                  onClick={handleCloseCash}
-                  disabled={
-                    isSaving ||
-                    !hasValidAmountToLeave ||
-                    suggestedWithdrawal < 0
-                  }
-                >
+                <Button className="w-full" onClick={handleCloseCash}>
                   {isSaving && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   )}

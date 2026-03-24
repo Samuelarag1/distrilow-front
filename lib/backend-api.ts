@@ -488,7 +488,8 @@ function normalizeBarcodePayload(
     return {
       product: {
         ...normalizedProduct,
-        branchId: normalizedProduct.branchId ?? normalizedStock?.branchId ?? null,
+        branchId:
+          normalizedProduct.branchId ?? normalizedStock?.branchId ?? null,
         stock:
           toOptionalFiniteNumber(normalizedProduct.stock) ??
           normalizedStock?.quantity ??
@@ -688,7 +689,9 @@ function normalizeStockLot(payload: unknown): StockLot {
     id: toOptionalText(source.id) ?? "",
     branchId: toOptionalText(source.branchId) ?? "",
     productId:
-      toOptionalText(source.productId) ?? toOptionalText(productSource.id) ?? "",
+      toOptionalText(source.productId) ??
+      toOptionalText(productSource.id) ??
+      "",
     lotCode: toOptionalText(source.lotCode) ?? "",
     expiresAt: toOptionalText(source.expiresAt) ?? "",
     quantity: toFiniteNumber(source.quantity, 0),
@@ -763,6 +766,11 @@ function normalizeSalesSummaryItems(
   label?: string | null;
   unitsTotal: number;
   revenueTotal: number;
+  costTotal?: number;
+  profitTotal?: number;
+  marginPercent?: number;
+  itemCount?: number;
+  saleCount?: number;
   salesCount?: number;
 }> {
   const source = asRecord(payload);
@@ -801,10 +809,33 @@ function normalizeSalesSummaryItems(
     );
     const salesCount = toOptionalFiniteNumber(
       item.salesCount ??
+        item.saleCount ??
         item.ordersTotal ??
         item.orders ??
         item.tickets ??
         item.transactions
+    );
+    const costTotal = toOptionalFiniteNumber(
+      item.costTotal ?? item.cost ?? item.totalCost
+    );
+    const profitTotal = toOptionalFiniteNumber(
+      item.profitTotal ??
+        item.profit ??
+        item.marginTotal ??
+        item.margin ??
+        item.gain
+    );
+    const marginPercent = toOptionalFiniteNumber(
+      item.marginPercent ??
+        item.marginPct ??
+        item.profitPercent ??
+        item.profitPct
+    );
+    const itemCount = toOptionalFiniteNumber(
+      item.itemCount ?? item.itemsCount ?? item.lines ?? item.lineItems
+    );
+    const saleCount = toOptionalFiniteNumber(
+      item.saleCount ?? item.salesCount ?? item.transactions
     );
 
     return {
@@ -812,17 +843,31 @@ function normalizeSalesSummaryItems(
       label: toOptionalText(item.label ?? item.name),
       unitsTotal,
       revenueTotal,
+      costTotal: costTotal ?? undefined,
+      profitTotal: profitTotal ?? undefined,
+      marginPercent: marginPercent ?? undefined,
+      itemCount: itemCount ?? undefined,
+      saleCount: saleCount ?? undefined,
       salesCount: salesCount ?? undefined,
     };
   };
 
   const itemsSource =
-    source.items ?? source.rows ?? source.data ?? source.byType ?? source.bySource;
+    source.items ??
+    source.rows ??
+    source.data ??
+    source.byType ??
+    source.bySource;
   const parsed: Array<{
     key: string;
     label?: string | null;
     unitsTotal: number;
     revenueTotal: number;
+    costTotal?: number;
+    profitTotal?: number;
+    marginPercent?: number;
+    itemCount?: number;
+    saleCount?: number;
     salesCount?: number;
   }> = [];
 
@@ -869,6 +914,82 @@ function normalizeSalesSummaryItems(
   return [...dedupedByKey.values()];
 }
 
+function normalizeSalesSummaryTotals(payload: unknown) {
+  const source = asRecord(payload);
+  const totals = asRecord(source.totals);
+  const summary = asRecord(source.summary);
+  const totalsSource =
+    Object.keys(totals).length > 0
+      ? totals
+      : Object.keys(summary).length > 0
+      ? summary
+      : source;
+
+  const unitsTotal = toOptionalFiniteNumber(
+    totalsSource.unitsTotal ??
+      totalsSource.units ??
+      totalsSource.totalUnits ??
+      totalsSource.quantity ??
+      totalsSource.qty
+  );
+  const revenueTotal = toOptionalFiniteNumber(
+    totalsSource.revenueTotal ??
+      totalsSource.revenue ??
+      totalsSource.totalRevenue ??
+      totalsSource.amount ??
+      totalsSource.totalAmount
+  );
+  const costTotal = toOptionalFiniteNumber(
+    totalsSource.costTotal ?? totalsSource.cost ?? totalsSource.totalCost
+  );
+  const profitTotal = toOptionalFiniteNumber(
+    totalsSource.profitTotal ??
+      totalsSource.profit ??
+      totalsSource.marginTotal ??
+      totalsSource.margin ??
+      totalsSource.gain
+  );
+  const marginPercent = toOptionalFiniteNumber(
+    totalsSource.marginPercent ??
+      totalsSource.marginPct ??
+      totalsSource.profitPercent ??
+      totalsSource.profitPct
+  );
+  const itemCount = toOptionalFiniteNumber(
+    totalsSource.itemCount ??
+      totalsSource.itemsCount ??
+      totalsSource.lines ??
+      totalsSource.lineItems
+  );
+  const saleCount = toOptionalFiniteNumber(
+    totalsSource.saleCount ??
+      totalsSource.salesCount ??
+      totalsSource.transactions
+  );
+
+  if (
+    unitsTotal === null &&
+    revenueTotal === null &&
+    costTotal === null &&
+    profitTotal === null &&
+    marginPercent === null &&
+    itemCount === null &&
+    saleCount === null
+  ) {
+    return undefined;
+  }
+
+  return {
+    unitsTotal: unitsTotal ?? 0,
+    revenueTotal: revenueTotal ?? 0,
+    costTotal: costTotal ?? 0,
+    profitTotal: profitTotal ?? 0,
+    marginPercent: marginPercent ?? 0,
+    itemCount: itemCount ?? 0,
+    saleCount: saleCount ?? 0,
+  };
+}
+
 function normalizeSalesPriceTypesSummary(
   payload: unknown
 ): ReportsSalesPriceTypesSummaryResponse {
@@ -888,6 +1009,7 @@ function normalizeSalesPriceTypesSummary(
         toOptionalText(filters.categoryId) ?? toOptionalText(source.categoryId),
     },
     items: normalizeSalesSummaryItems(payload, ["priceType", "type"]),
+    totals: normalizeSalesSummaryTotals(payload),
   };
 }
 
@@ -977,10 +1099,7 @@ function normalizeCashCurrentSummary(
   return {
     hasOpenSession,
     session: hasOpenSession ? session : null,
-    branchId:
-      toOptionalText(source.branchId) ??
-      session?.branchId ??
-      null,
+    branchId: toOptionalText(source.branchId) ?? session?.branchId ?? null,
     updatedAt:
       toOptionalText(source.updatedAt) ??
       toOptionalText(source.lastModified) ??
@@ -1486,10 +1605,7 @@ export const backendApi = {
           1,
           Math.min(100, Math.trunc(Number(query.limit ?? 20)) || 20)
         );
-        const safePage = Math.max(
-          1,
-          Math.trunc(Number(query.page ?? 1)) || 1
-        );
+        const safePage = Math.max(1, Math.trunc(Number(query.page ?? 1)) || 1);
         const safeQuery = {
           search: toTrimmedOrUndefined(query.search),
           productId: toTrimmedOrUndefined(query.productId),
@@ -1540,11 +1656,15 @@ export const backendApi = {
           notes: toTrimmedOrUndefined(body.notes),
         };
 
-        const created = await apiClientFetch.post<unknown>("/stocks/lots", payload, {
-          headers: {
-            "x-branch-id": effectiveBranchId,
-          },
-        });
+        const created = await apiClientFetch.post<unknown>(
+          "/stocks/lots",
+          payload,
+          {
+            headers: {
+              "x-branch-id": effectiveBranchId,
+            },
+          }
+        );
 
         invalidateStockCache(effectiveBranchId);
         return normalizeStockLot(created);
@@ -1724,7 +1844,8 @@ export const backendApi = {
           branchIdOverride?: string | null,
           options?: { signal?: AbortSignal }
         ) => {
-          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          const effectiveBranchId =
+            branchIdOverride ?? getApiSession().branchId;
           if (!effectiveBranchId) {
             throw new Error("Missing branch context. Send x-branch-id header.");
           }
@@ -1760,7 +1881,8 @@ export const backendApi = {
           branchIdOverride?: string | null,
           options?: { signal?: AbortSignal }
         ) => {
-          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          const effectiveBranchId =
+            branchIdOverride ?? getApiSession().branchId;
           if (!effectiveBranchId) {
             throw new Error("Missing branch context. Send x-branch-id header.");
           }
@@ -1796,20 +1918,50 @@ export const backendApi = {
           branchIdOverride?: string | null,
           options?: { signal?: AbortSignal }
         ) => {
-          const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+          const effectiveBranchId =
+            branchIdOverride ?? getApiSession().branchId;
           if (!effectiveBranchId) {
             throw new Error("Missing branch context. Send x-branch-id header.");
           }
 
           const { branchId: ignoredBranchId, ...reportQuery } = query;
           void ignoredBranchId;
+          const normalizedLimit = Math.min(
+            300,
+            Math.max(1, toFiniteNumber(reportQuery.limit, 10))
+          );
+          const normalizedSearch = toTrimmedOrUndefined(
+            reportQuery.search ?? reportQuery.q
+          );
+          const normalizedOffset = toOptionalFiniteNumber(
+            reportQuery.offset ?? reportQuery.skip
+          );
+          const normalizedPage = toOptionalFiniteNumber(reportQuery.page);
+          const normalizedQuery = {
+            ...reportQuery,
+            limit: normalizedLimit,
+            search: normalizedSearch,
+            q: normalizedSearch,
+            offset:
+              normalizedOffset !== null && normalizedOffset >= 0
+                ? Math.floor(normalizedOffset)
+                : undefined,
+            skip: undefined,
+            page:
+              normalizedPage !== null && normalizedPage > 0
+                ? Math.floor(normalizedPage)
+                : undefined,
+          };
 
           return withRateLimitRetry(
             () =>
               apiClientFetch.get<ReportsTopProductsResponse>(
-                `/reporting/sales/top-products/report${buildQuery(reportQuery, {
-                  preserveLimitAndOffset: true,
-                })}`,
+                `/reporting/sales/top-products/report${buildQuery(
+                  normalizedQuery,
+                  {
+                    preserveLimitAndOffset: true,
+                  }
+                )}`,
                 {
                   headers: {
                     "x-branch-id": effectiveBranchId,
@@ -2063,7 +2215,8 @@ export const backendApi = {
     getCurrentSessionSnapshot: async (
       query: CashSessionSnapshotRequest = {}
     ): Promise<CashSessionSnapshotResponse> => {
-      const effectiveBranchId = query.branchIdOverride ?? getApiSession().branchId;
+      const effectiveBranchId =
+        query.branchIdOverride ?? getApiSession().branchId;
       const headers: Record<string, string> = {};
 
       if (effectiveBranchId) {
@@ -2126,10 +2279,11 @@ export const backendApi = {
           throw error;
         }
 
-        const response = await apiClientFetch.getWithMetadata<CashSession | null>(
-          "/cash/sessions/current",
-          requestOptions
-        );
+        const response =
+          await apiClientFetch.getWithMetadata<CashSession | null>(
+            "/cash/sessions/current",
+            requestOptions
+          );
         const session = response.data ?? null;
         const hasOpenSession = Boolean(session && session.status === "OPEN");
 
@@ -2151,7 +2305,10 @@ export const backendApi = {
         : undefined;
 
       return apiClientFetch
-        .getWithMetadata<CashSession | null>("/cash/sessions/current", requestOptions)
+        .getWithMetadata<CashSession | null>(
+          "/cash/sessions/current",
+          requestOptions
+        )
         .then((response) => response.data ?? null);
     },
     listSessions: async (
@@ -2207,7 +2364,10 @@ export const backendApi = {
       );
       const fallbackPage = Math.max(
         1,
-        toFiniteNumber(query.page, Math.floor(fallbackOffset / fallbackLimit) + 1)
+        toFiniteNumber(
+          query.page,
+          Math.floor(fallbackOffset / fallbackLimit) + 1
+        )
       );
 
       const safeQuery = {
@@ -2310,7 +2470,9 @@ export const backendApi = {
       const differenceSource =
         toOptionalText(summarySource.differenceSource) ?? undefined;
 
-      const sessionsRaw = Array.isArray(payload.sessions) ? payload.sessions : [];
+      const sessionsRaw = Array.isArray(payload.sessions)
+        ? payload.sessions
+        : [];
       const sessions = sessionsRaw
         .map((s) => normalizeCashSessionFromUnknown(s))
         .filter((s): s is CashSession => s !== null);
@@ -2416,8 +2578,7 @@ export const backendApi = {
         query: ReportsCashMonthlyQuery,
         branchIdOverride?: string | null,
         options?: { signal?: AbortSignal }
-      ) =>
-        backendApi.reporting.cash.monthly(query, branchIdOverride, options),
+      ) => backendApi.reporting.cash.monthly(query, branchIdOverride, options),
     },
   },
   audit: {

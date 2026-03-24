@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import {
   Card,
   CardContent,
@@ -9,6 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Bar,
   BarChart,
@@ -26,6 +27,7 @@ import { es } from "date-fns/locale";
 import { Download } from "lucide-react";
 import useSWR from "swr";
 
+import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
@@ -43,6 +45,7 @@ const PIE_COLORS = [
   "#6366f1",
   "#14b8a6",
 ];
+const DETAIL_PAGE_SIZE = 10;
 
 type DateRange = {
   from?: Date;
@@ -76,6 +79,9 @@ function getPricingSourceLabel(value: string) {
 
 export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const { branchId } = useUser();
+  const [detailSearchInput, setDetailSearchInput] = useState("");
+  const [detailPage, setDetailPage] = useState(1);
+  const debouncedDetailSearch = useDebouncedValue(detailSearchInput, 350);
 
   const range = useMemo(() => {
     const today = new Date();
@@ -93,9 +99,15 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     };
   }, [dateRange]);
 
-  const { data, isLoading, error } = useSWR(
+  const normalizedDetailSearch = debouncedDetailSearch.trim();
+
+  const {
+    data: overviewData,
+    isLoading: isOverviewLoading,
+    error: overviewError,
+  } = useSWR(
     branchId
-      ? ["reporting-sales-report", branchId, range.fromYmd, range.toYmd]
+      ? ["reporting-sales-overview", branchId, range.fromYmd, range.toYmd]
       : null,
     async () => {
       const [salesTrend, topProducts, priceTypesSummary, pricingSourcesSummary] =
@@ -110,7 +122,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             {
               from: range.fromYmd,
               to: range.toYmd,
-              limit: 1000,
+              limit: DETAIL_PAGE_SIZE,
               branchId: branchId ?? undefined,
             },
             branchId
@@ -150,20 +162,84 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     }
   );
 
+  const {
+    data: detailTopProducts,
+    isLoading: isDetailLoading,
+    error: detailError,
+  } = useSWR(
+    branchId
+      ? [
+          "reporting-sales-top-products-detail",
+          branchId,
+          range.fromYmd,
+          range.toYmd,
+          detailPage,
+          DETAIL_PAGE_SIZE,
+          normalizedDetailSearch,
+        ]
+      : null,
+    async () =>
+      backendApi.reporting.sales.topProducts.report(
+        {
+          from: range.fromYmd,
+          to: range.toYmd,
+          limit: DETAIL_PAGE_SIZE,
+          page: detailPage,
+          search: normalizedDetailSearch || undefined,
+          branchId: branchId ?? undefined,
+        },
+        branchId
+      ),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
+
+  const isLoading = isOverviewLoading;
+  const error = overviewError;
+
   const topProductsItems = useMemo(
-    () => data?.topProducts.items ?? [],
-    [data?.topProducts.items]
+    () => overviewData?.topProducts.items ?? [],
+    [overviewData?.topProducts.items]
   );
 
   const priceTypesSummaryItems = useMemo<ReportsSalesPriceTypesSummaryItem[]>(
-    () => data?.priceTypesSummary?.items ?? [],
-    [data?.priceTypesSummary?.items]
+    () => overviewData?.priceTypesSummary?.items ?? [],
+    [overviewData?.priceTypesSummary?.items]
   );
+
+  const priceTypesSummaryTotals = useMemo(() => {
+    const totals = overviewData?.priceTypesSummary?.totals;
+    if (totals) return totals;
+    if (priceTypesSummaryItems.length === 0) return null;
+
+    return priceTypesSummaryItems.reduce(
+      (acc, item) => {
+        acc.unitsTotal += Number(item.unitsTotal ?? 0);
+        acc.revenueTotal += Number(item.revenueTotal ?? 0);
+        acc.costTotal += Number(item.costTotal ?? 0);
+        acc.profitTotal += Number(item.profitTotal ?? 0);
+        acc.itemCount += Number(item.itemCount ?? 0);
+        acc.saleCount += Number(item.saleCount ?? item.salesCount ?? 0);
+        return acc;
+      },
+      {
+        unitsTotal: 0,
+        revenueTotal: 0,
+        costTotal: 0,
+        profitTotal: 0,
+        marginPercent: 0,
+        itemCount: 0,
+        saleCount: 0,
+      }
+    );
+  }, [overviewData?.priceTypesSummary?.totals, priceTypesSummaryItems]);
 
   const pricingSourcesSummaryItems = useMemo<
     ReportsSalesPricingSourcesSummaryItem[]
-  >(() => data?.pricingSourcesSummary?.items ?? [], [
-    data?.pricingSourcesSummary?.items,
+  >(() => overviewData?.pricingSourcesSummary?.items ?? [], [
+    overviewData?.pricingSourcesSummary?.items,
   ]);
 
   const totals = useMemo(() => {
@@ -185,13 +261,32 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     }, seed);
   }, [topProductsItems]);
 
+  const effectiveTotals = useMemo(() => {
+    if (!priceTypesSummaryTotals) return totals;
+    return {
+      ...totals,
+      revenueTotal: Number(priceTypesSummaryTotals.revenueTotal ?? totals.revenueTotal),
+      unitsTotal: Number(priceTypesSummaryTotals.unitsTotal ?? totals.unitsTotal),
+      marginTotal: Number(priceTypesSummaryTotals.profitTotal ?? totals.marginTotal),
+    };
+  }, [priceTypesSummaryTotals, totals]);
+
+  const totalMarginPct = useMemo(() => {
+    if (priceTypesSummaryTotals && Number.isFinite(priceTypesSummaryTotals.marginPercent)) {
+      return Number(priceTypesSummaryTotals.marginPercent);
+    }
+    return effectiveTotals.revenueTotal > 0
+      ? (effectiveTotals.marginTotal / effectiveTotals.revenueTotal) * 100
+      : 0;
+  }, [effectiveTotals.marginTotal, effectiveTotals.revenueTotal, priceTypesSummaryTotals]);
+
   const salesTrendData = useMemo(
     () =>
-      (data?.salesTrend.points ?? []).map((point) => ({
+      (overviewData?.salesTrend.points ?? []).map((point) => ({
         name: format(new Date(point.period), "dd/MM", { locale: es }),
         total: Number(point.value ?? 0),
       })),
-    [data?.salesTrend.points]
+    [overviewData?.salesTrend.points]
   );
 
   const topProductsByPriceType = useMemo(
@@ -203,6 +298,45 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       })),
     [topProductsItems]
   );
+
+  const detailProductsItems = useMemo(
+    () => detailTopProducts?.items ?? [],
+    [detailTopProducts?.items]
+  );
+
+  const detailMeta = useMemo(() => {
+    const source = detailTopProducts as
+      | (typeof detailTopProducts & {
+          meta?: {
+            total?: number;
+            limit?: number;
+            hasMore?: boolean;
+          };
+          total?: number;
+          hasMore?: boolean;
+        })
+      | undefined;
+
+    const totalFromMeta = Number(source?.meta?.total ?? source?.total ?? Number.NaN);
+    const hasKnownTotal = Number.isFinite(totalFromMeta) && totalFromMeta >= 0;
+    const totalPages = hasKnownTotal
+      ? Math.max(1, Math.ceil(totalFromMeta / DETAIL_PAGE_SIZE))
+      : undefined;
+
+    const hasMore =
+      typeof source?.meta?.hasMore === "boolean"
+        ? source.meta.hasMore
+        : typeof source?.hasMore === "boolean"
+        ? source.hasMore
+        : detailProductsItems.length >= DETAIL_PAGE_SIZE;
+
+    return {
+      hasKnownTotal,
+      totalItems: hasKnownTotal ? totalFromMeta : undefined,
+      totalPages,
+      hasMore,
+    };
+  }, [detailProductsItems.length, detailTopProducts]);
 
   const salesByPriceTypePie = useMemo(() => {
     if (priceTypesSummaryItems.length > 0) {
@@ -222,10 +356,14 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     }
 
     return [
-      { name: "Minorista", value: totals.revenueRetail },
-      { name: "Mayorista", value: totals.revenueWholesale },
+      { name: "Minorista", value: effectiveTotals.revenueRetail },
+      { name: "Mayorista", value: effectiveTotals.revenueWholesale },
     ];
-  }, [priceTypesSummaryItems, totals.revenueRetail, totals.revenueWholesale]);
+  }, [
+    effectiveTotals.revenueRetail,
+    effectiveTotals.revenueWholesale,
+    priceTypesSummaryItems,
+  ]);
 
   const pricingSourcesCaption = useMemo(() => {
     if (pricingSourcesSummaryItems.length === 0) return null;
@@ -344,7 +482,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatMoney(totals.revenueTotal)}
+              {formatMoney(effectiveTotals.revenueTotal)}
             </div>
           </CardContent>
         </Card>
@@ -357,7 +495,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {totals.unitsTotal.toLocaleString("es-AR")}
+              {effectiveTotals.unitsTotal.toLocaleString("es-AR")}
             </div>
           </CardContent>
         </Card>
@@ -370,8 +508,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatMoney(totals.marginTotal)}
+              {formatMoney(effectiveTotals.marginTotal)}
             </div>
+            <p className="text-xs text-muted-foreground">
+              {totalMarginPct.toFixed(2)}% sobre ingresos totales
+            </p>
           </CardContent>
         </Card>
 
@@ -382,7 +523,12 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{topProductsItems.length}</div>
+            <div className="text-2xl font-bold">
+              {Math.max(
+                0,
+                Number(detailMeta.totalItems ?? topProductsItems.length ?? 0)
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -534,17 +680,68 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <CardHeader>
               <CardTitle>Detalle de productos</CardTitle>
               <CardDescription>
-                Ranking con desglose retail/wholesale desde backend
+                Busqueda + paginacion de 10 items por pagina
               </CardDescription>
             </CardHeader>
-            <CardContent>
-              {topProductsItems.length === 0 ? (
+            <CardContent className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <Input
+                  placeholder="Buscar producto o categoria"
+                  value={detailSearchInput}
+                  onChange={(event) => {
+                    setDetailSearchInput(event.target.value);
+                    setDetailPage(1);
+                  }}
+                  className="sm:max-w-sm"
+                />
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <span>
+                    {detailMeta.hasKnownTotal && detailMeta.totalPages
+                      ? `Pagina ${detailPage} de ${detailMeta.totalPages}`
+                      : `Pagina ${detailPage}`}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={detailPage <= 1}
+                    onClick={() =>
+                      setDetailPage((current) => Math.max(1, current - 1))
+                    }
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!detailMeta.hasMore}
+                    onClick={() =>
+                      setDetailPage((current) => current + 1)
+                    }
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </div>
+
+              {isDetailLoading && detailProductsItems.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  No hay ventas para el rango seleccionado.
+                  Cargando detalle de productos...
+                </p>
+              ) : detailError ? (
+                <p className="text-sm text-destructive">
+                  {detailError instanceof Error
+                    ? detailError.message
+                    : "No se pudo cargar el detalle de productos."}
+                </p>
+              ) : detailProductsItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  {normalizedDetailSearch
+                    ? "No hay productos para el filtro ingresado."
+                    : "No hay ventas para el rango seleccionado."}
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {topProductsItems
+                  {detailProductsItems
                     .map((item: ReportsTopProductItem) => (
                       <div
                         key={item.productId}

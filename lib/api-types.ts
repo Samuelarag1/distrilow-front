@@ -880,6 +880,11 @@ export interface ReportsTopProductsQuery {
   from: string;
   to: string;
   limit?: number;
+  offset?: number;
+  skip?: number;
+  page?: number;
+  search?: string;
+  q?: string;
   categoryId?: string;
 }
 
@@ -924,6 +929,11 @@ export interface ReportsSalesPriceTypesSummaryItem {
   label?: string | null;
   unitsTotal: number;
   revenueTotal: number;
+  costTotal?: number;
+  profitTotal?: number;
+  marginPercent?: number;
+  itemCount?: number;
+  saleCount?: number;
   salesCount?: number;
 }
 
@@ -937,6 +947,15 @@ export interface ReportsSalesPriceTypesSummaryResponse {
     categoryId?: string | null;
   };
   items: ReportsSalesPriceTypesSummaryItem[];
+  totals?: {
+    unitsTotal: number;
+    revenueTotal: number;
+    costTotal: number;
+    profitTotal: number;
+    marginPercent: number;
+    itemCount: number;
+    saleCount: number;
+  };
 }
 
 export interface ReportsSalesPricingSourcesSummaryQuery {
