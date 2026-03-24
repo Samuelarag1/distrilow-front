@@ -880,6 +880,11 @@ export interface ReportsTopProductsQuery {
   from: string;
   to: string;
   limit?: number;
+  offset?: number;
+  skip?: number;
+  page?: number;
+  search?: string;
+  q?: string;
   categoryId?: string;
 }
 

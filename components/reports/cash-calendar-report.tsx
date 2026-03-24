@@ -463,33 +463,10 @@ export function CashCalendarReport() {
               >
                 <ChevronRight className="h-4 w-4" />
               </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  void loadMonthly();
-                  void loadDaily();
-                }}
-              >
-                <RefreshCcw className="mr-2 h-4 w-4" />
-                Actualizar
-              </Button>
             </div>
           </div>
 
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <div className="rounded-md border p-3">
-              <p className="text-xs text-muted-foreground">
-                Esperado de cierre
-              </p>
-              <p className="text-2xl font-bold">
-                {formatMoney(selectedMonth.expectedCashClose, 0)}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                Contado: {formatMoney(selectedMonth.countedCashClose, 0)}
-              </p>
-            </div>
-
             <div className="rounded-md border p-3">
               <p className="text-xs text-muted-foreground">
                 Diferencia del mes
@@ -521,16 +498,6 @@ export function CashCalendarReport() {
                 Efectivo: {formatMoney(selectedMonth.cashFromSales, 0)} /
                 Transferencias:{" "}
                 {formatMoney(selectedMonth.transferFromSales, 0)}
-              </p>
-            </div>
-
-            <div className="rounded-md border p-3">
-              <p className="text-xs text-muted-foreground">Sesiones cerradas</p>
-              <p className="text-2xl font-bold">
-                {selectedMonth.daysWithClose}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                Total sesiones: {selectedMonth.sessionsCount}
               </p>
             </div>
           </div>
@@ -569,10 +536,14 @@ export function CashCalendarReport() {
                     <Tooltip
                       cursor={{ fill: "hsl(var(--muted)/0.3)" }}
                       contentStyle={{
+                        backgroundColor: "hsl(var(--popover))",
+                        color: "hsl(var(--popover-foreground))",
                         borderRadius: "12px",
                         border: "1px solid hsl(var(--border))",
                         boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
                       }}
+                      labelStyle={{ color: "hsl(var(--popover-foreground))" }}
+                      itemStyle={{ color: "hsl(var(--popover-foreground))" }}
                       formatter={(value: number) =>
                         formatMoney(Number(value ?? 0), 0)
                       }
@@ -612,11 +583,9 @@ export function CashCalendarReport() {
                       <th className="px-4 py-3 text-right">Efectivo</th>
                       <th className="px-4 py-3 text-right">Transf.</th>
                       <th className="px-4 py-3 text-right">
-                        Ing./Retiros Man.
+                        Ingreso Manual de Caja
                       </th>
-                      <th className="px-4 py-3 text-right">Esperado</th>
-                      <th className="px-4 py-3 text-right">Diferencia</th>
-                      <th className="px-4 py-3 text-center">Sesiones</th>
+                      <th className="px-4 py-3 text-right">Retiro de Caja</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50 bg-background">
@@ -646,27 +615,9 @@ export function CashCalendarReport() {
                           <span className="text-emerald-600">
                             +{formatMoney(item.manualIn, 0)}
                           </span>{" "}
-                          /{" "}
-                          <span className="text-red-600">
-                            -{formatMoney(item.manualOut, 0)}
-                          </span>
                         </td>
-                        <td className="px-4 py-3 text-right font-bold">
-                          {formatMoney(item.expectedCashClose, 0)}
-                        </td>
-                        <td
-                          className={`px-4 py-3 text-right font-bold ${
-                            item.difference < 0
-                              ? "text-red-600"
-                              : "text-emerald-600"
-                          }`}
-                        >
-                          {formatMoney(item.difference, 0)}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                          <Badge variant="outline" className="text-[10px] h-5">
-                            {item.daysWithClose}/{item.sessionsCount}
-                          </Badge>
+                        <td className="px-4 py-3 text-right font-bold text-red-600">
+                          {formatMoney(item.manualOut, 0)}
                         </td>
                       </tr>
                     ))}
@@ -794,9 +745,6 @@ export function CashCalendarReport() {
                                       ? "ABIERTA"
                                       : "CERRADA"}
                                   </Badge>
-                                  <span className="text-[10px] font-mono text-muted-foreground">
-                                    {session.id.slice(0, 8)}
-                                  </span>
                                 </div>
                                 <div className="text-lg font-bold tracking-tight">
                                   {format(
@@ -877,11 +825,6 @@ export function CashCalendarReport() {
                                 <Ticket className="h-3.5 w-3.5" />
                                 {session.salesCount} Ventas
                               </span>
-                              <span className="flex items-center gap-1.5 rounded-full bg-muted/50 px-2.5 py-1">
-                                <Users className="h-3.5 w-3.5" />
-                                ID Usuario:{" "}
-                                {session.openedByUserId?.slice(0, 8) ?? "N/A"}
-                              </span>
                             </div>
 
                             <div className="mt-3 grid gap-2 rounded-lg border bg-muted/20 p-3 text-xs sm:grid-cols-2 lg:grid-cols-3">
@@ -914,7 +857,7 @@ export function CashCalendarReport() {
                                   Retiro de caja
                                 </p>
                                 <p className="font-bold text-red-600">
-                                  -{formatMoney(withdrawalsOut, 0)}
+                                  {formatMoney(withdrawalsOut, 0)}
                                 </p>
                               </div>
                               <div className="rounded-md border bg-background p-2">
@@ -923,20 +866,6 @@ export function CashCalendarReport() {
                                 </p>
                                 <p className="font-bold text-foreground">
                                   {formatMoney(sessionIncomeTotal, 0)}
-                                </p>
-                              </div>
-                              <div className="rounded-md border bg-background p-2">
-                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-                                  Neto sesion
-                                </p>
-                                <p
-                                  className={`font-bold ${
-                                    sessionNetTotal >= 0
-                                      ? "text-emerald-600"
-                                      : "text-red-600"
-                                  }`}
-                                >
-                                  {formatMoney(sessionNetTotal, 0)}
                                 </p>
                               </div>
                             </div>
@@ -1134,7 +1063,7 @@ export function CashCalendarReport() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border bg-card p-6 shadow-sm border-primary/10">
+                {/* <div className="rounded-2xl border bg-card p-6 shadow-sm border-primary/10">
                   <div className="space-y-6">
                     <div className="text-center space-y-1">
                       <p className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">
@@ -1207,7 +1136,7 @@ export function CashCalendarReport() {
                       </div>
                     </div>
                   </div>
-                </div>
+                </div> */}
               </div>
             </div>
           )}

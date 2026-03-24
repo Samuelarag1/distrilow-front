@@ -27,12 +27,11 @@ import { es } from "date-fns/locale";
 import { Download } from "lucide-react";
 import useSWR from "swr";
 
+import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
-import { calculateProductMargin } from "@/lib/reports/calculate-product-margin";
 import type {
-  MeasurementType,
   ReportsSalesPricingSourcesSummaryItem,
   ReportsSalesPriceTypesSummaryItem,
   ReportsTopProductItem,
@@ -46,17 +45,11 @@ const PIE_COLORS = [
   "#6366f1",
   "#14b8a6",
 ];
-const TOP_PRODUCTS_PAGE_SIZE = 10;
+const DETAIL_PAGE_SIZE = 10;
 
 type DateRange = {
   from?: Date;
   to?: Date;
-};
-
-type ProductMeasurementMeta = {
-  measurementType: MeasurementType;
-  isWeighable: boolean;
-  costPrice: number;
 };
 
 function toYmd(value: Date) {
@@ -69,89 +62,6 @@ function formatMoney(value: number) {
     currency: "ARS",
     maximumFractionDigits: 2,
   });
-}
-
-function normalizeMeasurementType(value: unknown): MeasurementType | null {
-  if (typeof value !== "string") return null;
-  const normalized = value.trim().toLowerCase();
-  if (
-    normalized === "unit" ||
-    normalized === "gram" ||
-    normalized === "kg" ||
-    normalized === "ml" ||
-    normalized === "liter"
-  ) {
-    return normalized;
-  }
-  return null;
-}
-
-function resolveItemMeasurementType(
-  item: ReportsTopProductItem,
-  productMeta?: ProductMeasurementMeta | null
-): MeasurementType {
-  const source = item as ReportsTopProductItem & {
-    measurementType?: string | null;
-    unit?: string | null;
-    isWeighable?: boolean | null;
-  };
-
-  return (
-    normalizeMeasurementType(source.measurementType) ??
-    normalizeMeasurementType(source.unit) ??
-    productMeta?.measurementType ??
-    (source.isWeighable ?? productMeta?.isWeighable ? "gram" : "unit")
-  );
-}
-
-function getMeasurementLabel(measurementType: MeasurementType) {
-  if (measurementType === "kg") return "kg";
-  if (measurementType === "gram") return "grs";
-  if (measurementType === "ml") return "ml";
-  if (measurementType === "liter") return "lts";
-  return "unid.";
-}
-
-function formatQuantity(value: number, measurementType: MeasurementType) {
-  const amount = Number(value ?? 0);
-  const maxFractionDigits =
-    measurementType === "unit" ||
-    measurementType === "gram" ||
-    measurementType === "ml"
-      ? 0
-      : 3;
-  const formatted = amount.toLocaleString("es-AR", {
-    minimumFractionDigits: 0,
-    maximumFractionDigits: maxFractionDigits,
-  });
-  return `${formatted} ${getMeasurementLabel(measurementType)}`;
-}
-
-function resolveItemCostPrice(
-  item: ReportsTopProductItem,
-  productMeta?: ProductMeasurementMeta | null
-) {
-  const source = item as ReportsTopProductItem & {
-    costPrice?: number | string | null;
-    unitCost?: number | string | null;
-    averageCost?: number | string | null;
-  };
-
-  const fromItem = Number(
-    source.costPrice ?? source.unitCost ?? source.averageCost ?? Number.NaN
-  );
-  if (Number.isFinite(fromItem)) return fromItem;
-
-  const fromProduct = Number(productMeta?.costPrice ?? Number.NaN);
-  if (Number.isFinite(fromProduct)) return fromProduct;
-
-  const quantitySold = Number(item.unitsTotal ?? 0);
-  const fallbackCostTotal = Number(item.costTotal ?? 0);
-  if (quantitySold > 0 && Number.isFinite(fallbackCostTotal)) {
-    return fallbackCostTotal / quantitySold;
-  }
-
-  return 0;
 }
 
 function shortLabel(label: string, max = 20) {
@@ -169,8 +79,9 @@ function getPricingSourceLabel(value: string) {
 
 export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const { branchId } = useUser();
-  const [detailProductsSearch, setDetailProductsSearch] = useState("");
-  const [detailProductsPage, setDetailProductsPage] = useState(1);
+  const [detailSearchInput, setDetailSearchInput] = useState("");
+  const [detailPage, setDetailPage] = useState(1);
+  const debouncedDetailSearch = useDebouncedValue(detailSearchInput, 350);
 
   const range = useMemo(() => {
     const today = new Date();
@@ -188,53 +99,55 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     };
   }, [dateRange]);
 
-  const { data, isLoading, error } = useSWR(
+  const normalizedDetailSearch = debouncedDetailSearch.trim();
+
+  const {
+    data: overviewData,
+    isLoading: isOverviewLoading,
+    error: overviewError,
+  } = useSWR(
     branchId
-      ? ["reporting-sales-report", branchId, range.fromYmd, range.toYmd]
+      ? ["reporting-sales-overview", branchId, range.fromYmd, range.toYmd]
       : null,
     async () => {
-      const [
-        salesTrend,
-        topProducts,
-        priceTypesSummary,
-        pricingSourcesSummary,
-      ] = await Promise.all([
-        backendApi.reporting.sales.history({
-          from: range.fromYmd,
-          to: range.toYmd,
-          groupBy: "day",
-          metric: "revenue",
-        }),
-        backendApi.reporting.sales.topProducts.report(
-          {
+      const [salesTrend, topProducts, priceTypesSummary, pricingSourcesSummary] =
+        await Promise.all([
+          backendApi.reporting.sales.history({
             from: range.fromYmd,
             to: range.toYmd,
-            limit: 300,
-            branchId: branchId ?? undefined,
-          },
-          branchId
-        ),
-        backendApi.reporting.sales.priceTypes
-          .summary(
+            groupBy: "day",
+            metric: "revenue",
+          }),
+          backendApi.reporting.sales.topProducts.report(
             {
               from: range.fromYmd,
               to: range.toYmd,
+              limit: DETAIL_PAGE_SIZE,
               branchId: branchId ?? undefined,
             },
             branchId
-          )
-          .catch(() => null),
-        backendApi.reporting.sales.pricingSources
-          .summary(
-            {
-              from: range.fromYmd,
-              to: range.toYmd,
-              branchId: branchId ?? undefined,
-            },
-            branchId
-          )
-          .catch(() => null),
-      ]);
+          ),
+          backendApi.reporting.sales.priceTypes
+            .summary(
+              {
+                from: range.fromYmd,
+                to: range.toYmd,
+                branchId: branchId ?? undefined,
+              },
+              branchId
+            )
+            .catch(() => null),
+          backendApi.reporting.sales.pricingSources
+            .summary(
+              {
+                from: range.fromYmd,
+                to: range.toYmd,
+                branchId: branchId ?? undefined,
+              },
+              branchId
+            )
+            .catch(() => null),
+        ]);
 
       return {
         salesTrend,
@@ -249,92 +162,55 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     }
   );
 
-  const topProductsItems = useMemo(
-    () => data?.topProducts.items ?? [],
-    [data?.topProducts.items]
-  );
-
-  const productsToEnrichIds = useMemo(() => {
-    const pendingIds = new Set<string>();
-    topProductsItems.forEach((item) => {
-      if (!item.productId) return;
-      const source = item as ReportsTopProductItem & {
-        measurementType?: string | null;
-        unit?: string | null;
-        costPrice?: number | string | null;
-        unitCost?: number | string | null;
-        averageCost?: number | string | null;
-      };
-      const measurementType =
-        normalizeMeasurementType(source.measurementType) ??
-        normalizeMeasurementType(source.unit);
-      const costPrice = Number(
-        source.costPrice ?? source.unitCost ?? source.averageCost ?? Number.NaN
-      );
-      const hasCostPrice = Number.isFinite(costPrice);
-      if (!measurementType || !hasCostPrice) {
-        pendingIds.add(item.productId);
-      }
-    });
-    return [...pendingIds];
-  }, [topProductsItems]);
-
-  const { data: productMeasurementById } = useSWR<
-    Record<string, ProductMeasurementMeta>
-  >(
-    branchId && productsToEnrichIds.length > 0
+  const {
+    data: detailTopProducts,
+    isLoading: isDetailLoading,
+    error: detailError,
+  } = useSWR(
+    branchId
       ? [
-          "reporting-sales-product-measurements",
+          "reporting-sales-top-products-detail",
           branchId,
-          productsToEnrichIds.join(","),
+          range.fromYmd,
+          range.toYmd,
+          detailPage,
+          DETAIL_PAGE_SIZE,
+          normalizedDetailSearch,
         ]
       : null,
-    async () => {
-      if (!branchId || productsToEnrichIds.length === 0) return {};
-      const remainingIds = new Set(productsToEnrichIds);
-      const measurementsById: Record<string, ProductMeasurementMeta> = {};
-      let skip = 0;
-      const take = 100;
-      let hasMore = true;
-      let safety = 0;
-
-      while (hasMore && remainingIds.size > 0 && safety < 200) {
-        const page = await backendApi.products.list({ skip, take }, branchId);
-        page.items.forEach((product) => {
-          if (!remainingIds.has(product.id)) return;
-          const measurementType = normalizeMeasurementType(
-            product.measurementType
-          );
-          measurementsById[product.id] = {
-            measurementType: measurementType ?? "unit",
-            isWeighable: Boolean(product.isWeighable ?? false),
-            costPrice: Number(product.costPrice ?? 0),
-          };
-          remainingIds.delete(product.id);
-        });
-
-        const currentOffset = Number(page.meta.offset ?? skip);
-        const currentLimit = Number(page.meta.limit ?? take);
-        skip = currentOffset + currentLimit;
-        hasMore = Boolean(page.meta.hasMore);
-        safety += 1;
-      }
-
-      return measurementsById;
-    },
+    async () =>
+      backendApi.reporting.sales.topProducts.report(
+        {
+          from: range.fromYmd,
+          to: range.toYmd,
+          limit: DETAIL_PAGE_SIZE,
+          page: detailPage,
+          search: normalizedDetailSearch || undefined,
+          branchId: branchId ?? undefined,
+        },
+        branchId
+      ),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
     }
   );
 
+  const isLoading = isOverviewLoading;
+  const error = overviewError;
+
+  const topProductsItems = useMemo(
+    () => overviewData?.topProducts.items ?? [],
+    [overviewData?.topProducts.items]
+  );
+
   const priceTypesSummaryItems = useMemo<ReportsSalesPriceTypesSummaryItem[]>(
-    () => data?.priceTypesSummary?.items ?? [],
-    [data?.priceTypesSummary?.items]
+    () => overviewData?.priceTypesSummary?.items ?? [],
+    [overviewData?.priceTypesSummary?.items]
   );
 
   const priceTypesSummaryTotals = useMemo(() => {
-    const totals = data?.priceTypesSummary?.totals;
+    const totals = overviewData?.priceTypesSummary?.totals;
     if (totals) return totals;
     if (priceTypesSummaryItems.length === 0) return null;
 
@@ -358,59 +234,32 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
         saleCount: 0,
       }
     );
-  }, [data?.priceTypesSummary?.totals, priceTypesSummaryItems]);
+  }, [overviewData?.priceTypesSummary?.totals, priceTypesSummaryItems]);
 
   const pricingSourcesSummaryItems = useMemo<
     ReportsSalesPricingSourcesSummaryItem[]
-  >(
-    () => data?.pricingSourcesSummary?.items ?? [],
-    [data?.pricingSourcesSummary?.items]
-  );
-
-  const topProductsWithComputedMetrics = useMemo(
-    () =>
-      topProductsItems.map((item) => {
-        const productMeta = productMeasurementById?.[item.productId] ?? null;
-        const quantitySold = Number(item.unitsTotal ?? 0);
-        const retailRevenue = Number(item.revenueRetail ?? 0);
-        const wholesaleRevenue = Number(item.revenueWholesale ?? 0);
-        const costPrice = resolveItemCostPrice(item, productMeta);
-        const margin = calculateProductMargin({
-          quantitySold,
-          retailRevenue,
-          wholesaleRevenue,
-          costPrice,
-        });
-        return {
-          ...item,
-          measurementType: resolveItemMeasurementType(item, productMeta),
-          costPrice,
-          marginResult: margin,
-        };
-      }),
-    [productMeasurementById, topProductsItems]
-  );
+  >(() => overviewData?.pricingSourcesSummary?.items ?? [], [
+    overviewData?.pricingSourcesSummary?.items,
+  ]);
 
   const totals = useMemo(() => {
     const seed = {
       revenueTotal: 0,
       unitsTotal: 0,
-      costTotal: 0,
       marginTotal: 0,
       revenueRetail: 0,
       revenueWholesale: 0,
     };
 
-    return topProductsWithComputedMetrics.reduce((acc, item) => {
-      acc.revenueTotal += Number(item.marginResult.totalRevenue ?? 0);
+    return topProductsItems.reduce((acc, item) => {
+      acc.revenueTotal += Number(item.revenueTotal ?? 0);
       acc.unitsTotal += Number(item.unitsTotal ?? 0);
-      acc.costTotal += Number(item.marginResult.totalCost ?? 0);
-      acc.marginTotal += Number(item.marginResult.margin ?? 0);
+      acc.marginTotal += Number(item.marginTotal ?? 0);
       acc.revenueRetail += Number(item.revenueRetail ?? 0);
       acc.revenueWholesale += Number(item.revenueWholesale ?? 0);
       return acc;
     }, seed);
-  }, [topProductsWithComputedMetrics]);
+  }, [topProductsItems]);
 
   const effectiveTotals = useMemo(() => {
     if (!priceTypesSummaryTotals) return totals;
@@ -418,76 +267,82 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       ...totals,
       revenueTotal: Number(priceTypesSummaryTotals.revenueTotal ?? totals.revenueTotal),
       unitsTotal: Number(priceTypesSummaryTotals.unitsTotal ?? totals.unitsTotal),
-      costTotal: Number(priceTypesSummaryTotals.costTotal ?? totals.costTotal),
       marginTotal: Number(priceTypesSummaryTotals.profitTotal ?? totals.marginTotal),
     };
   }, [priceTypesSummaryTotals, totals]);
 
-  const totalMarginPct = useMemo(
-    () => {
-      if (priceTypesSummaryTotals && Number.isFinite(priceTypesSummaryTotals.marginPercent)) {
-        return Number(priceTypesSummaryTotals.marginPercent);
-      }
-      return effectiveTotals.revenueTotal > 0
-        ? (effectiveTotals.marginTotal / effectiveTotals.revenueTotal) * 100
-        : 0;
-    },
-    [effectiveTotals.marginTotal, effectiveTotals.revenueTotal, priceTypesSummaryTotals]
-  );
+  const totalMarginPct = useMemo(() => {
+    if (priceTypesSummaryTotals && Number.isFinite(priceTypesSummaryTotals.marginPercent)) {
+      return Number(priceTypesSummaryTotals.marginPercent);
+    }
+    return effectiveTotals.revenueTotal > 0
+      ? (effectiveTotals.marginTotal / effectiveTotals.revenueTotal) * 100
+      : 0;
+  }, [effectiveTotals.marginTotal, effectiveTotals.revenueTotal, priceTypesSummaryTotals]);
 
   const salesTrendData = useMemo(
     () =>
-      (data?.salesTrend.points ?? []).map((point) => ({
+      (overviewData?.salesTrend.points ?? []).map((point) => ({
         name: format(new Date(point.period), "dd/MM", { locale: es }),
         total: Number(point.value ?? 0),
       })),
-    [data?.salesTrend.points]
+    [overviewData?.salesTrend.points]
   );
 
   const topProductsByPriceType = useMemo(
     () =>
       topProductsItems.map((item) => ({
-      name: shortLabel(item.productName, 16),
-      minorista: Number(item.revenueRetail ?? 0),
-      mayorista: Number(item.revenueWholesale ?? 0),
+        name: shortLabel(item.productName, 16),
+        minorista: Number(item.revenueRetail ?? 0),
+        mayorista: Number(item.revenueWholesale ?? 0),
       })),
     [topProductsItems]
   );
 
-  const filteredProductDetails = useMemo(() => {
-    const term = detailProductsSearch.trim().toLowerCase();
-    if (!term) return topProductsWithComputedMetrics;
-    return topProductsWithComputedMetrics.filter((item) => {
-      const name = String(item.productName ?? "").toLowerCase();
-      const category = String(item.categoryName ?? "").toLowerCase();
-      return name.includes(term) || category.includes(term);
-    });
-  }, [detailProductsSearch, topProductsWithComputedMetrics]);
-
-  const detailProductsTotalPages = useMemo(
-    () =>
-      Math.max(1, Math.ceil(filteredProductDetails.length / TOP_PRODUCTS_PAGE_SIZE)),
-    [filteredProductDetails.length]
+  const detailProductsItems = useMemo(
+    () => detailTopProducts?.items ?? [],
+    [detailTopProducts?.items]
   );
 
-  const currentDetailProductsPage = Math.min(
-    detailProductsPage,
-    detailProductsTotalPages
-  );
+  const detailMeta = useMemo(() => {
+    const source = detailTopProducts as
+      | (typeof detailTopProducts & {
+          meta?: {
+            total?: number;
+            limit?: number;
+            hasMore?: boolean;
+          };
+          total?: number;
+          hasMore?: boolean;
+        })
+      | undefined;
 
-  const paginatedProductDetails = useMemo(() => {
-    const start = (currentDetailProductsPage - 1) * TOP_PRODUCTS_PAGE_SIZE;
-    const end = start + TOP_PRODUCTS_PAGE_SIZE;
-    return filteredProductDetails.slice(start, end);
-  }, [currentDetailProductsPage, filteredProductDetails]);
+    const totalFromMeta = Number(source?.meta?.total ?? source?.total ?? Number.NaN);
+    const hasKnownTotal = Number.isFinite(totalFromMeta) && totalFromMeta >= 0;
+    const totalPages = hasKnownTotal
+      ? Math.max(1, Math.ceil(totalFromMeta / DETAIL_PAGE_SIZE))
+      : undefined;
+
+    const hasMore =
+      typeof source?.meta?.hasMore === "boolean"
+        ? source.meta.hasMore
+        : typeof source?.hasMore === "boolean"
+        ? source.hasMore
+        : detailProductsItems.length >= DETAIL_PAGE_SIZE;
+
+    return {
+      hasKnownTotal,
+      totalItems: hasKnownTotal ? totalFromMeta : undefined,
+      totalPages,
+      hasMore,
+    };
+  }, [detailProductsItems.length, detailTopProducts]);
 
   const salesByPriceTypePie = useMemo(() => {
     if (priceTypesSummaryItems.length > 0) {
       const summaryByKey = new Map(
         priceTypesSummaryItems.map((item) => [
-          String(item.key ?? "")
-            .trim()
-            .toUpperCase(),
+          String(item.key ?? "").trim().toUpperCase(),
           Number(item.revenueTotal ?? 0),
         ])
       );
@@ -504,7 +359,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       { name: "Minorista", value: effectiveTotals.revenueRetail },
       { name: "Mayorista", value: effectiveTotals.revenueWholesale },
     ];
-  }, [effectiveTotals.revenueRetail, effectiveTotals.revenueWholesale, priceTypesSummaryItems]);
+  }, [
+    effectiveTotals.revenueRetail,
+    effectiveTotals.revenueWholesale,
+    priceTypesSummaryItems,
+  ]);
 
   const pricingSourcesCaption = useMemo(() => {
     if (pricingSourcesSummaryItems.length === 0) return null;
@@ -530,28 +389,23 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
   const tableRows = useMemo(
     () =>
-      topProductsWithComputedMetrics.map((item, index) => ({
+      topProductsItems.map((item, index) => ({
         posicion: index + 1,
         producto: item.productName,
         categoria: item.categoryName ?? "Sin categoria",
-        unidadesTotal: formatQuantity(
-          Number(item.unitsTotal ?? 0),
-          item.measurementType
-        ),
-        ingresosTotal: formatMoney(Number(item.marginResult.totalRevenue ?? 0)),
-        unidadesMinorista: formatQuantity(
-          Number(item.unitsRetail ?? 0),
-          item.measurementType
+        unidadesTotal: Number(item.unitsTotal ?? 0).toLocaleString("es-AR"),
+        ingresosTotal: formatMoney(Number(item.revenueTotal ?? 0)),
+        unidadesMinorista: Number(item.unitsRetail ?? 0).toLocaleString(
+          "es-AR"
         ),
         ingresosMinorista: formatMoney(Number(item.revenueRetail ?? 0)),
-        unidadesMayorista: formatQuantity(
-          Number(item.unitsWholesale ?? 0),
-          item.measurementType
+        unidadesMayorista: Number(item.unitsWholesale ?? 0).toLocaleString(
+          "es-AR"
         ),
         ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
-        margen: formatMoney(Number(item.marginResult.margin ?? 0)),
+        margen: formatMoney(Number(item.marginTotal ?? 0)),
       })),
-    [topProductsWithComputedMetrics]
+    [topProductsItems]
   );
 
   const exportColumns = [
@@ -619,11 +473,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
         </Button>
       </div>
 
-      <p className="text-sm text-muted-foreground">
-        Periodo evaluado: {format(range.from, "dd/MM/yyyy")} al{" "}
-        {format(range.to, "dd/MM/yyyy")}
-      </p>
-
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
@@ -674,7 +523,12 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{topProductsItems.length}</div>
+            <div className="text-2xl font-bold">
+              {Math.max(
+                0,
+                Number(detailMeta.totalItems ?? topProductsItems.length ?? 0)
+              )}
+            </div>
           </CardContent>
         </Card>
       </div>
@@ -782,7 +636,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <CardContent>
               <div className="h-[280px] sm:h-[360px]">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={topProductsByPriceType}>
+                  <BarChart data={topProductsByPriceType} >
                     <XAxis
                       dataKey="name"
                       stroke="#888888"
@@ -826,64 +680,69 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <CardHeader>
               <CardTitle>Detalle de productos</CardTitle>
               <CardDescription>
-                Mostrando 10 productos por pagina con buscador
+                Busqueda + paginacion de 10 items por pagina
               </CardDescription>
             </CardHeader>
             <CardContent className="space-y-3">
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <Input
                   placeholder="Buscar producto o categoria"
-                  value={detailProductsSearch}
+                  value={detailSearchInput}
                   onChange={(event) => {
-                    setDetailProductsSearch(event.target.value);
-                    setDetailProductsPage(1);
+                    setDetailSearchInput(event.target.value);
+                    setDetailPage(1);
                   }}
                   className="sm:max-w-sm"
                 />
                 <div className="flex items-center gap-2 text-xs text-muted-foreground">
                   <span>
-                    Pagina {currentDetailProductsPage} de {detailProductsTotalPages}
+                    {detailMeta.hasKnownTotal && detailMeta.totalPages
+                      ? `Pagina ${detailPage} de ${detailMeta.totalPages}`
+                      : `Pagina ${detailPage}`}
                   </span>
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={detailPage <= 1}
                     onClick={() =>
-                      setDetailProductsPage(
-                        Math.max(1, currentDetailProductsPage - 1)
-                      )
+                      setDetailPage((current) => Math.max(1, current - 1))
                     }
-                    disabled={currentDetailProductsPage <= 1}
                   >
                     Anterior
                   </Button>
                   <Button
                     variant="outline"
                     size="sm"
+                    disabled={!detailMeta.hasMore}
                     onClick={() =>
-                      setDetailProductsPage(
-                        Math.min(
-                          detailProductsTotalPages,
-                          currentDetailProductsPage + 1
-                        )
-                      )
+                      setDetailPage((current) => current + 1)
                     }
-                    disabled={currentDetailProductsPage >= detailProductsTotalPages}
                   >
                     Siguiente
                   </Button>
                 </div>
               </div>
 
-              {filteredProductDetails.length === 0 ? (
+              {isDetailLoading && detailProductsItems.length === 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  {topProductsWithComputedMetrics.length === 0
-                    ? "No hay ventas para el rango seleccionado."
-                    : "No hay productos para el filtro ingresado."}
+                  Cargando detalle de productos...
+                </p>
+              ) : detailError ? (
+                <p className="text-sm text-destructive">
+                  {detailError instanceof Error
+                    ? detailError.message
+                    : "No se pudo cargar el detalle de productos."}
+                </p>
+              ) : detailProductsItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  {normalizedDetailSearch
+                    ? "No hay productos para el filtro ingresado."
+                    : "No hay ventas para el rango seleccionado."}
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {paginatedProductDetails.map((item) => {
-                    return (
+                  {detailProductsItems
+                    .map((item: ReportsTopProductItem) => (
                       <div
                         key={item.productId}
                         className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-5"
@@ -895,11 +754,10 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                           </p>
                         </div>
                         <div>
-                          <p className="text-muted-foreground">Cantidad</p>
+                          <p className="text-muted-foreground">Unidades</p>
                           <p className="font-medium">
-                            {formatQuantity(
-                              Number(item.unitsTotal ?? 0),
-                              item.measurementType
+                            {Number(item.unitsTotal ?? 0).toLocaleString(
+                              "es-AR"
                             )}
                           </p>
                         </div>
@@ -915,13 +773,12 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                         <div>
                           <p className="text-muted-foreground">Margen</p>
                           <p className="font-medium">
-                            {formatMoney(item.marginResult.margin)} (
-                            {item.marginResult.marginPercent.toFixed(2)}%)
+                            {formatMoney(Number(item.marginTotal ?? 0))} (
+                            {Number(item.marginPct ?? 0).toFixed(2)}%)
                           </p>
                         </div>
                       </div>
-                    );
-                  })}
+                    ))}
                 </div>
               )}
             </CardContent>

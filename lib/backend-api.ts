@@ -124,7 +124,6 @@ export interface ResolvedBarcodeProduct {
 
 export interface CashSessionSnapshotRequest {
   etag?: string | null;
-  lastModified?: string | null;
   branchIdOverride?: string | null;
 }
 
@@ -140,6 +139,13 @@ const stockCacheByBranch = new Map<
   string,
   { cachedAt: number; rows: Stock[] }
 >();
+const REPORTING_TIME_ZONE = "America/Argentina/Buenos_Aires";
+const reportingDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: REPORTING_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 function toFiniteNumber(value: unknown, fallback = 0) {
   const parsed = typeof value === "number" ? value : Number(value);
@@ -545,6 +551,48 @@ function toOptionalFiniteNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = toFiniteNumber(value, Number.NaN);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function extractDateKey(value: unknown): string | null {
+  const text = toOptionalText(value);
+  if (!text) return null;
+
+  const exactDate = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (exactDate) {
+    return `${exactDate[1]}-${exactDate[2]}-${exactDate[3]}`;
+  }
+
+  const parsedDate = new Date(text);
+  if (Number.isNaN(parsedDate.getTime())) {
+    const leadingDate = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!leadingDate) return null;
+    return `${leadingDate[1]}-${leadingDate[2]}-${leadingDate[3]}`;
+  }
+
+  const parts = reportingDateFormatter.formatToParts(parsedDate);
+  const year = parts.find((part) => part.type === "year")?.value;
+  const month = parts.find((part) => part.type === "month")?.value;
+  const day = parts.find((part) => part.type === "day")?.value;
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  return `${year}-${month}-${day}`;
+}
+
+function shiftYmdDate(dateYmd: string, deltaDays: number): string | null {
+  const match = dateYmd.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (!match) return null;
+
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  const base = new Date(Date.UTC(year, month - 1, day));
+  if (Number.isNaN(base.getTime())) return null;
+
+  base.setUTCDate(base.getUTCDate() + deltaDays);
+  return base.toISOString().slice(0, 10);
 }
 
 function normalizeCashBookEntry(row: unknown, index: number): CashBookEntry {
@@ -962,7 +1010,9 @@ function normalizeSalesSummaryTotals(payload: unknown) {
       totalsSource.lineItems
   );
   const saleCount = toOptionalFiniteNumber(
-    totalsSource.saleCount ?? totalsSource.salesCount ?? totalsSource.transactions
+    totalsSource.saleCount ??
+      totalsSource.salesCount ??
+      totalsSource.transactions
   );
 
   if (
@@ -1924,20 +1974,42 @@ export const backendApi = {
 
           const { branchId: ignoredBranchId, ...reportQuery } = query;
           void ignoredBranchId;
-          const requestedLimit = toFiniteNumber(reportQuery.limit, Number.NaN);
-          const normalizedReportQuery = Number.isFinite(requestedLimit)
-            ? {
-                ...reportQuery,
-                limit: Math.min(300, Math.max(1, Math.round(requestedLimit))),
-              }
-            : reportQuery;
+          const normalizedLimit = Math.min(
+            300,
+            Math.max(1, toFiniteNumber(reportQuery.limit, 10))
+          );
+          const normalizedSearch = toTrimmedOrUndefined(
+            reportQuery.search ?? reportQuery.q
+          );
+          const normalizedOffset = toOptionalFiniteNumber(
+            reportQuery.offset ?? reportQuery.skip
+          );
+          const normalizedPage = toOptionalFiniteNumber(reportQuery.page);
+          const normalizedQuery = {
+            ...reportQuery,
+            limit: normalizedLimit,
+            search: normalizedSearch,
+            q: normalizedSearch,
+            offset:
+              normalizedOffset !== null && normalizedOffset >= 0
+                ? Math.floor(normalizedOffset)
+                : undefined,
+            skip: undefined,
+            page:
+              normalizedPage !== null && normalizedPage > 0
+                ? Math.floor(normalizedPage)
+                : undefined,
+          };
 
           return withRateLimitRetry(
             () =>
               apiClientFetch.get<ReportsTopProductsResponse>(
-                `/reporting/sales/top-products/report${buildQuery(normalizedReportQuery, {
-                  preserveLimitAndOffset: true,
-                })}`,
+                `/reporting/sales/top-products/report${buildQuery(
+                  normalizedQuery,
+                  {
+                    preserveLimitAndOffset: true,
+                  }
+                )}`,
                 {
                   headers: {
                     "x-branch-id": effectiveBranchId,
@@ -2204,11 +2276,6 @@ export const backendApi = {
         headers["If-None-Match"] = etag;
       }
 
-      const lastModified = query.lastModified?.trim();
-      if (lastModified) {
-        headers["If-Modified-Since"] = lastModified;
-      }
-
       const response = await apiClientFetch.getWithMetadata<CashSession | null>(
         "/cash/sessions/current",
         {
@@ -2351,17 +2418,19 @@ export const backendApi = {
         page: fallbackPage,
         limit: fallbackLimit,
       };
+      const requestedDate = extractDateKey(safeQuery.date);
+      const requestOptions = effectiveBranchId
+        ? {
+            headers: {
+              "x-branch-id": effectiveBranchId,
+            },
+          }
+        : undefined;
       const payload = await apiClientFetch.get<Record<string, unknown>>(
         `/cash/book/daily${buildQuery(safeQuery, {
           preserveLimitAndOffset: true,
         })}`,
-        effectiveBranchId
-          ? {
-              headers: {
-                "x-branch-id": effectiveBranchId,
-              },
-            }
-          : undefined
+        requestOptions
       );
 
       const entriesPayload = payload.entries ?? payload.items ?? [];
@@ -2446,16 +2515,105 @@ export const backendApi = {
       const differenceSource =
         toOptionalText(summarySource.differenceSource) ?? undefined;
 
-      const sessionsRaw = Array.isArray(payload.sessions)
+      let sessionsRaw = Array.isArray(payload.sessions)
         ? payload.sessions
         : [];
-      const sessions = sessionsRaw
+      let entriesItems = entries.items;
+
+      if (requestedDate) {
+        const nextUtcDate = shiftYmdDate(requestedDate, 1);
+        if (nextUtcDate) {
+          try {
+            const adjacentPayload = await apiClientFetch.get<
+              Record<string, unknown>
+            >(
+              `/cash/book/daily${buildQuery(
+                {
+                  date: nextUtcDate,
+                  page: 1,
+                  limit: 100,
+                },
+                {
+                  preserveLimitAndOffset: true,
+                }
+              )}`,
+              requestOptions
+            );
+
+            const adjacentSessionsRaw = Array.isArray(adjacentPayload.sessions)
+              ? adjacentPayload.sessions
+              : [];
+            if (adjacentSessionsRaw.length > 0) {
+              sessionsRaw = [...sessionsRaw, ...adjacentSessionsRaw];
+            }
+
+            const adjacentEntriesPayload =
+              adjacentPayload.entries ?? adjacentPayload.items ?? [];
+            if (Array.isArray(adjacentEntriesPayload) && adjacentEntriesPayload.length > 0) {
+              const normalizedAdjacentEntries = adjacentEntriesPayload.map(
+                (entry, index) =>
+                  normalizeCashBookEntry(entry, entriesItems.length + index)
+              );
+              entriesItems = [...entriesItems, ...normalizedAdjacentEntries];
+            }
+          } catch {
+            // Ignore adjacent day failures; primary day payload already loaded.
+          }
+        }
+      }
+
+      const normalizedSessions = sessionsRaw
         .map((s) => normalizeCashSessionFromUnknown(s))
         .filter((s): s is CashSession => s !== null);
+      const sessionsById = new Map<string, CashSession>();
+      normalizedSessions.forEach((session) => {
+        if (!sessionsById.has(session.id)) {
+          sessionsById.set(session.id, session);
+        }
+      });
+      const sessions = Array.from(sessionsById.values())
+        .filter((session) => {
+          if (!requestedDate) return true;
+          const openedDate = extractDateKey(session.openedAt);
+          const closedDate = extractDateKey(session.closedAt);
+
+          if (!openedDate && !closedDate) return false;
+          if (openedDate && closedDate) {
+            return openedDate <= requestedDate && closedDate >= requestedDate;
+          }
+          if (openedDate && !closedDate) {
+            return openedDate <= requestedDate;
+          }
+          return closedDate === requestedDate;
+        })
+        .sort((a, b) => {
+          const openedA = new Date(a.openedAt ?? 0).getTime();
+          const openedB = new Date(b.openedAt ?? 0).getTime();
+          return openedB - openedA;
+        });
+
+      const entriesByDate = entriesItems
+        .filter((entry) => {
+          if (!requestedDate) return true;
+          return extractDateKey(entry.createdAt) === requestedDate;
+        })
+        .reduce<CashBookEntry[]>((acc, entry) => {
+          if (acc.some((current) => current.id === entry.id)) return acc;
+          acc.push(entry);
+          return acc;
+        }, [])
+        .sort((a, b) => {
+          const createdA = new Date(a.createdAt ?? 0).getTime();
+          const createdB = new Date(b.createdAt ?? 0).getTime();
+          return createdB - createdA;
+        });
 
       return {
         branchId: effectiveBranchId,
-        date: String(payload.date ?? new Date().toISOString().slice(0, 10)),
+        date:
+          requestedDate ??
+          extractDateKey(payload.date) ??
+          new Date().toISOString().slice(0, 10),
         summary: {
           openingFloat,
           expectedCash,
@@ -2473,7 +2631,7 @@ export const backendApi = {
           },
         },
         sessions,
-        entries: entries.items,
+        entries: entriesByDate,
         meta: entries.meta,
       } satisfies CashBookDailyResponse;
     },
