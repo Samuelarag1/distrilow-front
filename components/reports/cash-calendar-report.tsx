@@ -536,10 +536,14 @@ export function CashCalendarReport() {
                     <Tooltip
                       cursor={{ fill: "hsl(var(--muted)/0.3)" }}
                       contentStyle={{
+                        backgroundColor: "hsl(var(--popover))",
+                        color: "hsl(var(--popover-foreground))",
                         borderRadius: "12px",
                         border: "1px solid hsl(var(--border))",
                         boxShadow: "0 4px 12px rgba(0,0,0,0.1)",
                       }}
+                      labelStyle={{ color: "hsl(var(--popover-foreground))" }}
+                      itemStyle={{ color: "hsl(var(--popover-foreground))" }}
                       formatter={(value: number) =>
                         formatMoney(Number(value ?? 0), 0)
                       }

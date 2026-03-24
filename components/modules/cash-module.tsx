@@ -71,10 +71,8 @@ export function CashModule() {
 
   const currentSessionValidatorsRef = useRef<{
     etag: string | null;
-    lastModified: string | null;
   }>({
     etag: null,
-    lastModified: null,
   });
 
   const activeBranchName = useMemo(
@@ -88,7 +86,6 @@ export function CashModule() {
       if (!canManageCash || !branchId) {
         currentSessionValidatorsRef.current = {
           etag: null,
-          lastModified: null,
         };
         setCashSession(null);
         if (options?.syncAmountToLeave) {
@@ -106,16 +103,12 @@ export function CashModule() {
 
         const response = await backendApi.cash.getCurrentSessionSnapshot({
           etag: currentSessionValidatorsRef.current.etag,
-          lastModified: currentSessionValidatorsRef.current.lastModified,
           branchIdOverride: branchId,
         });
 
-        if (response.etag || response.lastModified) {
+        if (response.etag) {
           currentSessionValidatorsRef.current = {
             etag: response.etag ?? currentSessionValidatorsRef.current.etag,
-            lastModified:
-              response.lastModified ??
-              currentSessionValidatorsRef.current.lastModified,
           };
         }
 
@@ -189,7 +182,7 @@ export function CashModule() {
   }, [canManageCash, branchId]);
 
   useEffect(() => {
-    currentSessionValidatorsRef.current = { etag: null, lastModified: null };
+    currentSessionValidatorsRef.current = { etag: null };
     void Promise.all([
       loadCurrentCashSession({ syncAmountToLeave: true }),
       loadSessionHistory(),
