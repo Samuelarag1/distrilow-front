@@ -1287,17 +1287,14 @@ const PosPaymentCard = memo(function PosPaymentCard({
           <div className="flex justify-between text-sm">
             <span>Subtotal:</span>
             <span>${formatMoney(total)}</span>
-            <span>${formatMoney(total)}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span>Pagos iniciales:</span>
-            <span>${formatMoney(totalInitialPayments)}</span>
             <span>${formatMoney(totalInitialPayments)}</span>
           </div>
           {changeDuePreview > 0 && (
             <div className="flex justify-between text-sm font-semibold text-emerald-700">
               <span>Vuelto a entregar:</span>
-              <span>${formatMoney(changeDuePreview)}</span>
               <span>${formatMoney(changeDuePreview)}</span>
             </div>
           )}
@@ -1310,7 +1307,6 @@ const PosPaymentCard = memo(function PosPaymentCard({
           <Separator />
           <div className="flex justify-between font-bold">
             <span>Total:</span>
-            <span>${formatMoney(total)}</span>
             <span>${formatMoney(total)}</span>
           </div>
         </div>

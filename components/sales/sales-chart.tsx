@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo } from "react";
-import useSWR from "swr";
 import {
   Card,
   CardContent,
@@ -24,12 +23,16 @@ import {
   Bar,
   BarChart,
 } from "recharts";
-import { backendApi } from "@/lib/backend-api";
-import { useUser } from "@/components/providers/user-provider";
 import { useTransactions } from "@/components/providers/transactions-provider";
+import {
+  aggregateSalesTrend,
+  formatSalesTrendLabel,
+  getSalesAnalysisConfig,
+  type SalesAnalysisPeriod,
+} from "@/lib/reports/sales-trends";
 
 interface SalesChartProps {
-  period: "monthly" | "quarterly" | "yearly";
+  period: SalesAnalysisPeriod;
 }
 
 const chartConfig = {
@@ -47,136 +50,35 @@ const chartConfig = {
   },
 };
 
-function formatDate(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function buildRange(period: "monthly" | "quarterly" | "yearly") {
-  const now = new Date();
-  const from = new Date(now);
-
-  if (period === "monthly") {
-    from.setMonth(now.getMonth() - 11);
-  } else if (period === "quarterly") {
-    from.setMonth(now.getMonth() - 23);
-  } else {
-    from.setFullYear(now.getFullYear() - 4);
-    from.setMonth(0, 1);
-  }
-
-  return {
-    from: formatDate(from),
-    to: formatDate(now),
-    groupBy: period === "monthly" ? "month" : period === "quarterly" ? "quarter" : "year",
-  } as const;
-}
-
 export function SalesChart({ period }: SalesChartProps) {
-  const { branchId } = useUser();
-  const { sales } = useTransactions();
-
-  const range = useMemo(() => buildRange(period), [period]);
-
-  const { data, isLoading, error } = useSWR(
-    branchId
-      ? [
-          "reporting-sales-history-chart",
-          branchId,
-          period,
-          range.from,
-          range.to,
-          range.groupBy,
-        ]
-      : null,
-    async () => {
-      const [revenue, count] = await Promise.all([
-        backendApi.reporting.sales.history({
-          from: range.from,
-          to: range.to,
-          groupBy: range.groupBy,
-          metric: "revenue",
-        }),
-        backendApi.reporting.sales.history({
-          from: range.from,
-          to: range.to,
-          groupBy: range.groupBy,
-          metric: "count",
-        }),
-      ]);
-
-      return { revenue, count };
-    },
-    { revalidateOnFocus: false }
+  const { sales, isLoading } = useTransactions();
+  const config = useMemo(() => getSalesAnalysisConfig(period), [period]);
+  const { current, groupBy } = config;
+  const trend = useMemo(
+    () => aggregateSalesTrend(sales, current, groupBy),
+    [sales, current, groupBy]
   );
 
-  const customerByPeriod = useMemo(() => {
-    const map = new Map<string, Set<string>>();
-    sales.forEach((sale) => {
-      const date = new Date(sale.date);
-      let key = "";
-      if (period === "monthly") {
-        key = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
-      } else if (period === "quarterly") {
-        const quarter = Math.floor(date.getMonth() / 3) + 1;
-        key = `${date.getFullYear()}-Q${quarter}`;
-      } else {
-        key = String(date.getFullYear());
-      }
-
-      if (!map.has(key)) map.set(key, new Set<string>());
-      map.get(key)?.add(sale.customerName || "Consumidor Final");
-    });
-
-    const counts = new Map<string, number>();
-    map.forEach((value, key) => counts.set(key, value.size));
-    return counts;
-  }, [sales, period]);
-
   const chartData = useMemo(() => {
-    const revenuePoints = data?.revenue?.points ?? [];
-    const countByPeriod = new Map(
-      (data?.count?.points ?? []).map((point) => [point.period, Number(point.value ?? 0)])
-    );
-
-    return revenuePoints.map((point) => {
-      const periodKey = point.period;
-      return {
-        name: periodKey,
-        ventas: Number(point.value ?? 0),
-        pedidos: Number(countByPeriod.get(periodKey) ?? 0),
-        clientes: Number(customerByPeriod.get(periodKey) ?? 0),
-      };
-    });
-  }, [data, customerByPeriod]);
-
-  const getTitle = () => {
-    switch (period) {
-      case "monthly":
-        return "Evolucion Mensual";
-      case "quarterly":
-        return "Evolucion Trimestral";
-      case "yearly":
-        return "Evolucion Anual";
-      default:
-        return "Evolucion de Ventas";
-    }
-  };
+    return trend.points.map((point) => ({
+      name: formatSalesTrendLabel(point.start, groupBy),
+      ventas: point.revenue,
+      pedidos: point.count,
+      clientes: point.customers,
+    }));
+  }, [trend.points, groupBy]);
+  const hasSales = trend.totals.count > 0;
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader>
-          <CardTitle>{getTitle()} - Ventas</CardTitle>
-          <CardDescription>
-            Tendencia de ingresos por {period === "monthly" ? "mes" : period === "quarterly" ? "trimestre" : "ano"}
-          </CardDescription>
+          <CardTitle>{config.evolutionTitle} - Ventas</CardTitle>
+          <CardDescription>{config.revenueDescription}</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading && <p className="text-sm text-muted-foreground">Cargando datos...</p>}
-          {!isLoading && error && (
-            <p className="text-sm text-destructive">No se pudo cargar analitica.</p>
-          )}
-          {!isLoading && !error && chartData.length === 0 && (
+          {!isLoading && !hasSales && (
             <p className="text-sm text-muted-foreground">Sin datos en el periodo seleccionado.</p>
           )}
           <div className="w-full h-[300px]">
@@ -203,10 +105,8 @@ export function SalesChart({ period }: SalesChartProps) {
 
       <Card>
         <CardHeader>
-          <CardTitle>{getTitle()} - Pedidos y Clientes</CardTitle>
-          <CardDescription>
-            Volumen de operaciones por {period === "monthly" ? "mes" : period === "quarterly" ? "trimestre" : "ano"}
-          </CardDescription>
+          <CardTitle>{config.evolutionTitle} - Pedidos y Clientes</CardTitle>
+          <CardDescription>{config.volumeDescription}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="w-full h-[300px]">

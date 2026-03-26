@@ -2043,9 +2043,23 @@ export const backendApi = {
           signal: options?.signal,
         },
       );
+      const fallbackOffset = Math.max(0, (safePage - 1) * safeLimit);
+      const normalizedPayload =
+        Array.isArray(payload) && payload.length > safeLimit
+          ? {
+              items: payload.slice(fallbackOffset, fallbackOffset + safeLimit),
+              meta: {
+                total: payload.length,
+                offset: fallbackOffset,
+                limit: safeLimit,
+                page: safePage,
+                hasMore: fallbackOffset + safeLimit < payload.length,
+              },
+            }
+          : payload;
       const page = toPaginatedResponse(
-        payload,
-        Math.max(0, (safePage - 1) * safeLimit),
+        normalizedPayload,
+        fallbackOffset,
         safeLimit
       );
       const normalizedItems = applyRelativeStockToStockRows(

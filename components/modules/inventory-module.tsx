@@ -659,74 +659,18 @@ export function InventoryModule() {
     if (source.length === 0) return [];
 
     const byProductId = new Map<string, InventoryRow>();
-    const expandedRows: InventoryRow[] = [];
+    const uniqueRows: InventoryRow[] = [];
 
-    const addRow = (row: InventoryRow) => {
+    source.forEach((row) => {
       const productId = String(row.productId ?? "").trim();
       if (!productId || byProductId.has(productId)) return;
       byProductId.set(productId, row);
-      expandedRows.push(row);
-    };
-
-    source.forEach((row) => addRow(row));
-
-    source.forEach((row) => {
-      const linkedProducts = resolveLinkedProducts(row).filter(
-        (linked) => !linked.isBase
-      );
-      if (linkedProducts.length === 0) return;
-
-      const baseQuantity = Number(
-        row.baseQuantity ?? row.quantity ?? Number.NaN
-      );
-      const hasBaseQuantity = Number.isFinite(baseQuantity);
-
-      linkedProducts.forEach((linked) => {
-        const linkedId = String(linked.id ?? "").trim();
-        if (!linkedId || byProductId.has(linkedId)) return;
-
-        const consumption = Number(
-          linked.stockConsumptionQuantity ?? Number.NaN
-        );
-        const hasConsumption = Number.isFinite(consumption) && consumption > 0;
-        const derivedQuantity =
-          hasBaseQuantity && hasConsumption
-            ? Math.max(0, baseQuantity / consumption)
-            : Number(row.quantity ?? 0);
-        const baseMeasurement = linked.stockBaseUnit ?? row.stockBaseUnit;
-        const productSnapshot = {
-          ...(row.product ?? {}),
-          id: linkedId,
-          name: linked.name,
-          sku: linked.sku ?? undefined,
-          barcode: linked.barcode ?? undefined,
-          pluCode: linked.pluCode ?? undefined,
-        };
-
-        addRow({
-          ...row,
-          id: `${row.id}:linked:${linkedId}`,
-          productId: linkedId,
-          name: linked.name,
-          quantity: derivedQuantity,
-          baseQuantity: hasBaseQuantity
-            ? baseQuantity
-            : row.baseQuantity ?? null,
-          stockConsumptionQuantity: hasConsumption
-            ? consumption
-            : row.stockConsumptionQuantity ?? null,
-          stockBaseUnit: baseMeasurement ?? row.stockBaseUnit,
-          product: productSnapshot,
-        });
-      });
+      uniqueRows.push(row);
     });
 
-    return expandedRows;
+    return uniqueRows;
   }, [stocksPage?.items]);
-  const inventoryTotal = Math.max(
-    Number(stocksPage?.meta?.total ?? 0),
-    inventory.length
-  );
+  const inventoryTotal = Number(stocksPage?.meta?.total ?? inventory.length);
   const hasMore = Boolean(stocksPage?.meta?.hasMore);
   const skip = Number(
     stocksPage?.meta?.offset ?? Math.max(0, (currentPage - 1) * pageSize)
@@ -844,6 +788,16 @@ export function InventoryModule() {
         factor
       );
     });
+  const shouldPaginateLocally = filteredInventory.length > take;
+  const effectiveInventoryTotal = shouldPaginateLocally
+    ? filteredInventory.length
+    : inventoryTotal;
+  const effectiveSkip = shouldPaginateLocally
+    ? Math.max(0, (currentPage - 1) * take)
+    : skip;
+  const visibleInventory = shouldPaginateLocally
+    ? filteredInventory.slice(effectiveSkip, effectiveSkip + take)
+    : filteredInventory;
 
   const categories = useMemo(() => {
     return (categoriesData ?? [])
@@ -907,10 +861,19 @@ export function InventoryModule() {
   );
   const totalPages = Math.max(
     1,
-    Math.ceil((inventoryTotal || 0) / Math.max(take, 1))
+    Math.ceil((effectiveInventoryTotal || 0) / Math.max(take, 1))
   );
-  const showingFrom = inventoryTotal === 0 ? 0 : skip + 1;
-  const showingTo = inventoryTotal === 0 ? 0 : skip + filteredInventory.length;
+  const effectiveHasMore = shouldPaginateLocally
+    ? effectiveSkip + take < effectiveInventoryTotal
+    : hasMore;
+  const showingFrom = effectiveInventoryTotal === 0 ? 0 : effectiveSkip + 1;
+  const showingTo =
+    effectiveInventoryTotal === 0 ? 0 : effectiveSkip + visibleInventory.length;
+
+  useEffect(() => {
+    if (currentPage <= totalPages) return;
+    setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
 
   const getStockStatus = (
     stock: number,
@@ -1455,8 +1418,8 @@ export function InventoryModule() {
                   </div>
                 </Card>
               ))
-            ) : filteredInventory.length > 0 ? (
-              filteredInventory.map((item: InventoryRow) => (
+            ) : visibleInventory.length > 0 ? (
+              visibleInventory.map((item: InventoryRow) => (
                 <InventoryItemCard key={item.id} item={item} />
               ))
             ) : (
@@ -1467,10 +1430,10 @@ export function InventoryModule() {
               </div>
             )}
           </div>
-          {!isLoading && inventoryTotal > 0 && (
+          {!isLoading && effectiveInventoryTotal > 0 && (
             <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted-foreground">
-                Mostrando {showingFrom}-{showingTo} de {inventoryTotal}{" "}
+                Mostrando {showingFrom}-{showingTo} de {effectiveInventoryTotal}{" "}
                 productos. Pagina {currentPage} de {totalPages}.
               </p>
               <div className="flex items-center gap-2">
@@ -1488,7 +1451,7 @@ export function InventoryModule() {
                   size="sm"
                   variant="outline"
                   onClick={() => setCurrentPage((prev) => prev + 1)}
-                  disabled={!hasMore}
+                  disabled={!effectiveHasMore}
                 >
                   Siguiente
                 </Button>

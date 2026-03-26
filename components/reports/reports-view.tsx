@@ -25,12 +25,24 @@ export function ReportsView() {
 
       <Tabs defaultValue="cashCalendar" className="space-y-4">
         <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto bg-muted p-1">
-          <TabsTrigger className="shrink-0" value="cashCalendar">Cajas del mes</TabsTrigger>
-          <TabsTrigger className="shrink-0" value="sales">Ventas</TabsTrigger>
-          <TabsTrigger className="shrink-0" value="stock">Inventario</TabsTrigger>
-          <TabsTrigger className="shrink-0" value="expenses">Gastos</TabsTrigger>
-          <TabsTrigger className="shrink-0" value="clients">Clientes</TabsTrigger>
-          <TabsTrigger className="shrink-0" value="audit">Auditoria</TabsTrigger>
+          <TabsTrigger className="shrink-0" value="cashCalendar">
+            Cajas del mes
+          </TabsTrigger>
+          <TabsTrigger className="shrink-0" value="sales">
+            Ventas
+          </TabsTrigger>
+          <TabsTrigger className="shrink-0" value="stock">
+            Inventario
+          </TabsTrigger>
+          <TabsTrigger className="shrink-0" value="expenses">
+            Gastos
+          </TabsTrigger>
+          {/* <TabsTrigger className="shrink-0" value="clients">
+            Clientes
+          </TabsTrigger> */}
+          <TabsTrigger className="shrink-0" value="audit">
+            Auditoria
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="cashCalendar" className="space-y-4">
@@ -45,9 +57,9 @@ export function ReportsView() {
         <TabsContent value="expenses" className="space-y-4">
           <ExpensesProjectionReport />
         </TabsContent>
-        <TabsContent value="clients" className="space-y-4">
+        {/* <TabsContent value="clients" className="space-y-4">
           <ClientsReport dateRange={dateRange} />
-        </TabsContent>
+        </TabsContent> */}
         <TabsContent value="audit" className="space-y-4">
           <ReportsModule />
         </TabsContent>
