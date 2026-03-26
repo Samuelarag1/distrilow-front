@@ -8,6 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -19,11 +29,30 @@ import { useUser } from "@/components/providers/user-provider";
 import { useBranches } from "@/components/providers/branch-provider";
 import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
-import type { CashMovementType, CashSession } from "@/lib/api-types";
+import {
+  EXPENSE_CATEGORY_OPTIONS,
+  getExpenseCategoryLabel,
+} from "@/lib/expense-categories";
+import type {
+  CashMovementType,
+  CashSession,
+  ExpenseCategory,
+  ExpenseContext,
+} from "@/lib/api-types";
 
 const SESSION_POLL_INTERVAL_MS = 8_000;
 const SESSION_HISTORY_DAYS = 60;
 const AUTO_WITHDRAWAL_REASON = "Extraccion de turno para cierre";
+const PURCHASE_WITH_CASH = "PURCHASE_WITH_CASH" as const;
+type CashMovementMode = CashMovementType | typeof PURCHASE_WITH_CASH;
+const EXPENSE_CONTEXT_OPTIONS: Array<{
+  value: ExpenseContext;
+  label: string;
+}> = [
+  { value: "GENERAL", label: "General" },
+  { value: "RETAIL", label: "Retail" },
+  { value: "WHOLESALE", label: "Wholesale" },
+];
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -63,11 +92,17 @@ export function CashModule() {
   const [isSaving, setIsSaving] = useState(false);
 
   const [openingFloat, setOpeningFloat] = useState("");
-  const [movementType, setMovementType] = useState<CashMovementType>("IN");
+  const [movementType, setMovementType] = useState<CashMovementMode>("IN");
   const [movementReason, setMovementReason] = useState("");
   const [movementAmount, setMovementAmount] = useState("");
+  const [purchaseExpenseCategory, setPurchaseExpenseCategory] = useState<
+    ExpenseCategory | ""
+  >("");
+  const [purchaseExpenseContext, setPurchaseExpenseContext] =
+    useState<ExpenseContext>("GENERAL");
   const [amountToLeave, setAmountToLeave] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
+  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
 
   const currentSessionValidatorsRef = useRef<{
     etag: string | null;
@@ -286,10 +321,115 @@ export function CashModule() {
       return;
     }
 
+    if (movementType === PURCHASE_WITH_CASH) {
+      if (!branchId) {
+        toast({
+          variant: "destructive",
+          title: "Sucursal requerida",
+          description: "Selecciona una sucursal activa antes de registrar la compra.",
+        });
+        return;
+      }
+
+      if (!purchaseExpenseCategory) {
+        toast({
+          variant: "destructive",
+          title: "Categoria requerida",
+          description: "Selecciona la categoria del gasto para la compra con caja.",
+        });
+        return;
+      }
+
+      if (amount > expectedCash) {
+        toast({
+          variant: "destructive",
+          title: "Saldo insuficiente",
+          description:
+            "La compra no puede superar el efectivo esperado disponible en caja.",
+        });
+        return;
+      }
+
+      let createdExpenseId: string | null = null;
+      let expenseRolledBack = false;
+
+      try {
+        setIsSaving(true);
+
+        const createdExpense = await backendApi.expenses.create({
+          branchId,
+          amount,
+          category: purchaseExpenseCategory,
+          description: reason,
+          context: purchaseExpenseContext,
+        });
+        createdExpenseId = createdExpense.id;
+
+        const updated = await backendApi.cash.addMovement(cashSession.id, {
+          type: "OUT",
+          reason: `Compra con caja - ${getExpenseCategoryLabel(
+            purchaseExpenseCategory
+          )}: ${reason}`,
+          amount,
+        });
+
+        setCashSession(updated);
+        setMovementAmount("");
+        setMovementReason("");
+        setPurchaseExpenseCategory("");
+        setPurchaseExpenseContext("GENERAL");
+
+        await refreshCashState();
+
+        logEvent(
+          "create",
+          "cash_expense",
+          `Compra con caja por ${formatMoney(amount)} en ${activeBranchName}`,
+          createdExpense.id,
+          {
+            branchId,
+            cashSessionId: cashSession.id,
+            amount,
+            category: purchaseExpenseCategory,
+            context: purchaseExpenseContext,
+            description: reason,
+          }
+        );
+
+        toast({
+          title: "Compra con caja registrada",
+          description: "Se desconto de caja y se impacto correctamente en gastos.",
+        });
+      } catch (error: any) {
+        if (createdExpenseId) {
+          try {
+            await backendApi.expenses.remove(createdExpenseId);
+            expenseRolledBack = true;
+          } catch {
+            expenseRolledBack = false;
+          }
+        }
+
+        toast({
+          variant: "destructive",
+          title: "Error al registrar compra con caja",
+          description: expenseRolledBack
+            ? error?.message ||
+              "No se pudo registrar la salida de caja. El gasto fue revertido."
+            : createdExpenseId
+            ? "La operacion quedo incompleta. Revisa si el gasto o la salida de caja necesitan correccion manual."
+            : error?.message || "No se pudo registrar la compra con caja.",
+        });
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
     try {
       setIsSaving(true);
       const updated = await backendApi.cash.addMovement(cashSession.id, {
-        type: movementType,
+        type: movementType as CashMovementType,
         reason,
         amount,
       });
@@ -297,6 +437,8 @@ export function CashModule() {
       setCashSession(updated);
       setMovementAmount("");
       setMovementReason("");
+      setPurchaseExpenseCategory("");
+      setPurchaseExpenseContext("GENERAL");
 
       await refreshCashState();
 
@@ -325,8 +467,8 @@ export function CashModule() {
     ? Number((expectedCash - amountToLeaveNumber).toFixed(2))
     : expectedCash;
 
-  const handleCloseCash = async () => {
-    if (!cashSession) return;
+  const validateCloseCashInput = () => {
+    if (!cashSession) return false;
 
     if (!hasValidAmountToLeave) {
       toast({
@@ -344,8 +486,14 @@ export function CashModule() {
         description:
           "El monto a dejar no puede ser mayor al efectivo esperado del turno.",
       });
-      return;
+      return false;
     }
+
+    return true;
+  };
+
+  const confirmCloseCash = async () => {
+    if (!cashSession) return;
 
     try {
       setIsSaving(true);
@@ -396,6 +544,7 @@ export function CashModule() {
         title: "Caja cerrada",
         description: "Turno cerrado correctamente.",
       });
+      setIsCloseConfirmOpen(false);
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -405,6 +554,11 @@ export function CashModule() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleCloseCash = () => {
+    if (!validateCloseCashInput()) return;
+    setIsCloseConfirmOpen(true);
   };
 
   const withdrawalMovements = useMemo(
@@ -460,7 +614,7 @@ export function CashModule() {
           Gestion de Caja por Turno
         </h1>
         <p className="text-sm text-muted-foreground">
-          Apertura, movimientos de caja y cierre con extraccion de turno.
+          Apertura, movimientos, compras con caja y cierre con extraccion de turno.
         </p>
       </div>
 
@@ -565,7 +719,7 @@ export function CashModule() {
                 </div>
                 <div className="rounded-md border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">
-                    Retiros de caja
+                    Salidas de caja
                   </p>
                   <p className="text-base font-semibold">
                     {formatMoney(cashSession.totals?.movementOut ?? 0)}
@@ -578,7 +732,7 @@ export function CashModule() {
                 <Select
                   value={movementType}
                   onValueChange={(value) =>
-                    setMovementType(value as CashMovementType)
+                    setMovementType(value as CashMovementMode)
                   }
                 >
                   <SelectTrigger>
@@ -587,8 +741,52 @@ export function CashModule() {
                   <SelectContent>
                     <SelectItem value="IN">Ingreso manual</SelectItem>
                     <SelectItem value="OUT">Retiro de caja</SelectItem>
+                    <SelectItem value={PURCHASE_WITH_CASH}>
+                      Compra con dinero en caja
+                    </SelectItem>
                   </SelectContent>
                 </Select>
+                {movementType === PURCHASE_WITH_CASH && (
+                  <>
+                    <Select
+                      value={purchaseExpenseCategory}
+                      onValueChange={(value) =>
+                        setPurchaseExpenseCategory(value as ExpenseCategory)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Categoria del gasto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EXPENSE_CATEGORY_OPTIONS.map((category) => (
+                          <SelectItem key={category.value} value={category.value}>
+                            {category.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={purchaseExpenseContext}
+                      onValueChange={(value) =>
+                        setPurchaseExpenseContext(value as ExpenseContext)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Contexto del gasto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EXPENSE_CONTEXT_OPTIONS.map((contextOption) => (
+                          <SelectItem
+                            key={contextOption.value}
+                            value={contextOption.value}
+                          >
+                            {contextOption.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
                 <Input
                   type="number"
                   step="0.01"
@@ -598,18 +796,29 @@ export function CashModule() {
                   onChange={(event) => setMovementAmount(event.target.value)}
                 />
                 <Input
-                  placeholder="Motivo"
+                  placeholder={
+                    movementType === PURCHASE_WITH_CASH
+                      ? "Descripcion de la compra"
+                      : "Motivo"
+                  }
                   value={movementReason}
                   onChange={(event) => setMovementReason(event.target.value)}
-                  maxLength={120}
+                  maxLength={180}
                 />
+                {movementType === PURCHASE_WITH_CASH && (
+                  <p className="text-xs text-muted-foreground">
+                    Esta opcion registra un gasto y descuenta el importe del efectivo esperado en caja.
+                  </p>
+                )}
                 <Button
                   variant="outline"
                   className="w-full"
                   onClick={handleAddMovement}
                   disabled={isSaving}
                 >
-                  Registrar Movimiento
+                  {movementType === PURCHASE_WITH_CASH
+                    ? "Registrar compra con caja"
+                    : "Registrar Movimiento"}
                 </Button>
               </div>
 
@@ -636,7 +845,7 @@ export function CashModule() {
 
               <div className="space-y-3 rounded-md border p-4 lg:col-span-2">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold">Retiros del turno</h3>
+                  <h3 className="text-sm font-semibold">Salidas del turno</h3>
                   <Badge variant="outline">
                     Total: {formatMoney(withdrawalTotal)}
                   </Badge>
@@ -644,7 +853,7 @@ export function CashModule() {
 
                 {withdrawalMovements.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    No hay retiros de caja registrados en este turno.
+                    No hay salidas de caja registradas en este turno.
                   </p>
                 ) : (
                   <div className="max-h-52 space-y-2 overflow-auto pr-1">
@@ -673,6 +882,39 @@ export function CashModule() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={isCloseConfirmOpen}
+        onOpenChange={(open) => {
+          if (isSaving) return;
+          setIsCloseConfirmOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar cierre de caja</AlertDialogTitle>
+            <AlertDialogDescription>
+              Te llevas <strong>{formatMoney(suggestedWithdrawal)}</strong> en
+              efectivo de la caja y te quedan{" "}
+              <strong>{formatMoney(amountToLeaveNumber)}</strong> para el
+              proximo turno. Estas seguro de confirmar?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSaving}>Volver</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmCloseCash();
+              }}
+              disabled={isSaving}
+            >
+              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirmar cierre
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

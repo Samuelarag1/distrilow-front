@@ -499,22 +499,6 @@ export function ExpensesModule() {
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button
-            variant="outline"
-            className="w-full sm:w-auto"
-            onClick={() => void refreshAll("manual")}
-            disabled={isRefreshing || isLoadingList || isLoadingAnalytics}
-          >
-            <RefreshCcw
-              className={`mr-2 h-4 w-4 ${
-                isRefreshing || isLoadingList || isLoadingAnalytics
-                  ? "animate-spin"
-                  : ""
-              }`}
-            />
-            Actualizar
-          </Button>
-
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
               <Button className="w-full sm:w-auto">
@@ -649,69 +633,6 @@ export function ExpensesModule() {
             </p>
           </CardContent>
         </Card>
-
-        <Card className="md:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Situacion del gasto
-            </CardTitle>
-            {evolutionSummary.trend === "UP" ? (
-              <ArrowUpRight className="h-4 w-4 text-red-500" />
-            ) : evolutionSummary.trend === "DOWN" ? (
-              <ArrowDownRight className="h-4 w-4 text-emerald-500" />
-            ) : (
-              <TrendingUp className="h-4 w-4 text-blue-500" />
-            )}
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                Ritmo
-              </p>
-              <p className="text-lg font-bold">
-                {evolutionSummary.trend === "UP"
-                  ? "En alza"
-                  : evolutionSummary.trend === "DOWN"
-                  ? "En baja"
-                  : "Estable"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {evolutionSummary.deltaPercent >= 0 ? "+" : ""}
-                {evolutionSummary.deltaPercent.toFixed(1)}% vs periodo previo
-              </p>
-            </div>
-
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                Concentracion
-              </p>
-              <p className="text-lg font-bold">
-                {topCategory?.sharePercent !== undefined
-                  ? `${topCategory.sharePercent.toFixed(1)}%`
-                  : "Sin datos"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {topCategory
-                  ? `Principal: ${getExpenseCategoryLabel(
-                      topCategory.category
-                    )}`
-                  : "No se identifica categoria dominante"}
-              </p>
-            </div>
-
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                Control
-              </p>
-              <p className="text-lg font-bold">
-                {formatMoney(averageVisibleExpense)}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Promedio de la pagina actual ({expenses.length} registros)
-              </p>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       <Card>
@@ -746,10 +667,6 @@ export function ExpensesModule() {
                   </option>
                 ))}
               </select>
-              <Badge variant="secondary" className="h-9 px-3 text-xs">
-                <ShieldCheck className="mr-1 h-3 w-3" />
-                Refresh seguro activo
-              </Badge>
             </div>
           </div>
 

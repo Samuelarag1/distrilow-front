@@ -259,6 +259,9 @@ export interface Product {
   branchId?: string | null;
   brand?: string | null;
   trackStock?: boolean;
+  stockBaseProductId?: string | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
   allowNegativeStock?: boolean;
   imageUrl?: string | null;
   measurementType: MeasurementType;
@@ -292,6 +295,9 @@ export interface CreateProductRequest {
   branchId?: string;
   brand?: string;
   trackStock?: boolean;
+  stockBaseProductId?: string;
+  stockConsumptionQuantity?: number;
+  stockBaseUnit?: MeasurementType;
   allowNegativeStock?: boolean;
   imageUrl?: string;
   measurementType: MeasurementType;
@@ -397,10 +403,48 @@ export interface Stock {
   id: string;
   branchId: string;
   productId: string;
+  stockProductId?: string | null;
   quantity: number;
+  baseQuantity?: number | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  sharedStock?: StockSharedRelation | null;
   averageCost: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface StockSharedProduct {
+  id: string;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  pluCode?: string | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  isBase?: boolean;
+}
+
+export interface StockSharedRelation {
+  stockProductId?: string | null;
+  isShared: boolean;
+  linkedProductsCount: number;
+  linkedProducts: StockSharedProduct[];
+}
+
+export interface StockListItem extends Stock {
+  name?: string | null;
+  product?: Partial<ProductListItem> | null;
+  sharedStock?: StockSharedRelation | null;
+}
+
+export interface StockDetail extends StockListItem {
+  stockProductId?: string | null;
+  quantity: number;
+  baseQuantity?: number | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  sharedStock?: StockSharedRelation | null;
 }
 
 export interface CreateStockRequest {
@@ -411,11 +455,16 @@ export interface CreateStockRequest {
 }
 
 export interface StockQuery {
+  page?: number;
   skip?: number;
   take?: number;
   offset?: number;
   limit?: number;
+  search?: string;
+  name?: string;
+  q?: string;
   productId?: string;
+  categoryId?: string;
   stockStatus?: string;
   lowStockThreshold?: number;
 }
@@ -563,19 +612,29 @@ export interface SalePaymentInput {
 export interface SalePayment extends SalePaymentInput {
   id: string;
   saleId: string;
+  receivedAmount?: number | null;
+  changeAmount?: number | null;
   createdAt?: string;
   updatedAt?: string;
 }
 
-export type SalePaymentBreakdown = Partial<
-  Record<PaymentMethod | string, number>
->;
+export interface SalePaymentBreakdown {
+  paidByMethod?: Record<string, number | null | undefined> | null;
+  byMethod?: Record<string, number | null | undefined> | null;
+  appliedByMethod?: Record<string, number | null | undefined> | null;
+  [key: string]:
+    | number
+    | Record<string, number | null | undefined>
+    | null
+    | undefined;
+}
 
 export interface CreateSaleRequest {
   branchId?: string;
   clientId?: string;
   items: SaleItemInput[];
   payments?: SalePaymentInput[];
+  notes?: string;
 }
 
 export interface SaleSummary {
@@ -598,6 +657,8 @@ export interface SaleSummary {
   itemsCount?: number;
   itemsQuantity?: number;
   paymentBreakdown?: SalePaymentBreakdown;
+  pendingReason?: string | null;
+  notes?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -875,14 +936,33 @@ export interface AnalyticsSalesQuery {
   metric: AnalyticsMetric;
 }
 
+export interface ReportingGlobalMetricsByPaymentMethod {
+  cashTotal?: number | null;
+  transferTotal?: number | null;
+  appliedTotal?: number | null;
+  receivedCashTotal?: number | null;
+  receivedTransferTotal?: number | null;
+  receivedTotal?: number | null;
+}
+
+export interface ReportingGlobalMetricsResponse {
+  range?: {
+    from?: string;
+    to?: string;
+  };
+  sales?: {
+    byPaymentMethod?: ReportingGlobalMetricsByPaymentMethod | null;
+  } | null;
+}
+
 export interface ReportsTopProductsQuery {
   branchId?: string;
   from: string;
   to: string;
-  limit?: number;
   offset?: number;
   skip?: number;
   page?: number;
+  limit?: number;
   search?: string;
   q?: string;
   categoryId?: string;
@@ -893,6 +973,8 @@ export interface ReportsTopProductItem {
   productName: string;
   categoryId?: string | null;
   categoryName?: string | null;
+  measurementType?: MeasurementType;
+  isWeighable?: boolean;
   unitsTotal: number;
   revenueTotal: number;
   unitsRetail: number;
@@ -915,6 +997,9 @@ export interface ReportsTopProductsResponse {
   };
   limit: number;
   items: ReportsTopProductItem[];
+  total?: number;
+  hasMore?: boolean;
+  meta?: OffsetPaginationMeta;
 }
 
 export interface ReportsSalesPriceTypesSummaryQuery {

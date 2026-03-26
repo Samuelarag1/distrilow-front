@@ -30,6 +30,11 @@ import { useToast } from "@/hooks/use-toast";
 import { Product } from "@/lib/products";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import type { ProductSaveInput } from "@/components/products/hooks/useProductSave";
+import { ProductStockLinkForm } from "@/components/products/components/ProductStockLinkForm";
+import {
+  mapProductStockLinkingBackendError,
+  useProductStockLinking,
+} from "@/components/products/hooks/useProductStockLinking";
 
 // IMPORTANTE: usÃ¡ el enum que ya tenÃ©s (ajustÃ¡ el path a tu estructura real)
 import { MeasurementType } from "@/lib/measurement-type";
@@ -69,6 +74,10 @@ type ProductDialogFormState = {
   categoryId: string;
   brand: string;
   trackStock: boolean;
+  useSharedStock: boolean;
+  stockBaseProductId: string;
+  stockConsumptionQuantity: OptionalNumericInput;
+  stockBaseUnit: MeasurementType;
   allowNegativeStock: boolean;
   measurementType: MeasurementType;
   isActive: boolean;
@@ -126,7 +135,11 @@ export function ProductDialog({
     costReviewPending: false,
     categoryId: "",
     brand: "",
-    trackStock: true,
+    trackStock: false,
+    useSharedStock: false,
+    stockBaseProductId: "__self__",
+    stockConsumptionQuantity: 1,
+    stockBaseUnit: MeasurementType.UNIT as MeasurementType,
     allowNegativeStock: false,
     measurementType: MeasurementType.UNIT as MeasurementType,
     // estado: en tu entity esActive boolean
@@ -137,12 +150,17 @@ export function ProductDialog({
   const [localImagePreview, setLocalImagePreview] = useState<string | null>(
     null
   );
+  const [baseSearchQuery, setBaseSearchQuery] = useState("");
 
   // Si tu Product del front NO tiene algunos campos (sku, etc), ajustÃ¡ el mapeo.
   useEffect(() => {
     if (!open) return;
 
     if (product) {
+      const currentProductId = String((product as any).id ?? "").trim();
+      const currentBaseId = String(
+        (product as any).stockBaseProductId ?? ""
+      ).trim();
       const productCategoryId =
         (product as any).categoryId ?? (product as any).category?.id ?? "";
 
@@ -163,10 +181,19 @@ export function ProductDialog({
         costReviewPending: Boolean((product as any).costReviewPending ?? false),
         categoryId: productCategoryId,
         brand: (product as any).brand ?? "",
-        trackStock:
-          typeof (product as any).trackStock === "boolean"
-            ? (product as any).trackStock
-            : true,
+        trackStock: Boolean((product as any).trackStock ?? false),
+        useSharedStock: Boolean(
+          currentProductId &&
+            currentBaseId &&
+            currentBaseId !== currentProductId
+        ),
+        stockBaseProductId: currentBaseId || currentProductId || "__self__",
+        stockConsumptionQuantity: Number(
+          (product as any).stockConsumptionQuantity ?? 1
+        ),
+        stockBaseUnit: ((product as any).stockBaseUnit ??
+          (product as any).measurementType ??
+          MeasurementType.UNIT) as MeasurementType,
         allowNegativeStock: Boolean(
           (product as any).allowNegativeStock ?? false
         ),
@@ -177,6 +204,7 @@ export function ProductDialog({
       });
       setImageFile(null);
       setLocalImagePreview(null);
+      setBaseSearchQuery("");
     } else {
       setFormData({
         sku: "",
@@ -193,7 +221,11 @@ export function ProductDialog({
         costReviewPending: false,
         categoryId: "",
         brand: "",
-        trackStock: true,
+        trackStock: false,
+        useSharedStock: false,
+        stockBaseProductId: "__self__",
+        stockConsumptionQuantity: 1,
+        stockBaseUnit: MeasurementType.UNIT as MeasurementType,
         allowNegativeStock: false,
         measurementType: MeasurementType.UNIT,
         isActive: true,
@@ -201,6 +233,7 @@ export function ProductDialog({
       });
       setImageFile(null);
       setLocalImagePreview(null);
+      setBaseSearchQuery("");
     }
   }, [product, open]);
 
@@ -256,6 +289,19 @@ export function ProductDialog({
     }
     if (costPrice < 0 || wholesalePrice < 0 || retailPrice < 0) return;
 
+    let stockPayload;
+    try {
+      stockPayload = await stockLinking.buildPayload();
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "No se pudo validar el stock",
+        description: mapProductStockLinkingBackendError(error),
+      });
+      return;
+    }
+    if (!stockPayload) return;
+
     // si querÃ©s autocalcular margen al guardar:
     const marginPercent = computeMargin(costPrice, retailPrice);
 
@@ -274,7 +320,10 @@ export function ProductDialog({
       costReviewPending: formData.costReviewPending,
       categoryId: formData.categoryId?.trim() || undefined,
       brand: formData.brand?.trim() || undefined,
-      trackStock: formData.trackStock,
+      trackStock: stockPayload.trackStock,
+      stockBaseProductId: stockPayload.stockBaseProductId,
+      stockConsumptionQuantity: stockPayload.stockConsumptionQuantity,
+      stockBaseUnit: stockPayload.stockBaseUnit as MeasurementType | undefined,
       allowNegativeStock: formData.allowNegativeStock,
       measurementType: formData.measurementType,
 
@@ -287,6 +336,18 @@ export function ProductDialog({
   const disableForm = isSaving;
   const previewSrc =
     localImagePreview || formData.imageUrl || resolveProductImageUrl(product);
+  const stockLinking = useProductStockLinking({
+    product,
+    activeBranchId,
+    values: {
+      trackStock: formData.trackStock,
+      useSharedStock: formData.useSharedStock,
+      stockBaseProductId: formData.stockBaseProductId,
+      stockConsumptionQuantity: formData.stockConsumptionQuantity,
+      stockBaseUnit: formData.stockBaseUnit,
+    },
+    baseSearchQuery,
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -472,6 +533,81 @@ export function ProductDialog({
                 </Select>
               </div>
             </div>
+
+            <ProductStockLinkForm
+              trackStock={formData.trackStock}
+              onTrackStockChange={(checked) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  trackStock: checked,
+                  useSharedStock: checked ? previous.useSharedStock : false,
+                  stockBaseProductId: checked
+                    ? previous.stockBaseProductId
+                    : "__self__",
+                }))
+              }
+              useSharedStock={formData.useSharedStock}
+              onUseSharedStockChange={(checked) => {
+                setFormData((previous) => {
+                  const currentProductId = String(
+                    (product as any)?.id ?? ""
+                  ).trim();
+                  const currentBaseId = String(
+                    previous.stockBaseProductId ?? ""
+                  ).trim();
+                  const shouldResetBase =
+                    !currentBaseId ||
+                    currentBaseId === "__self__" ||
+                    (currentProductId && currentBaseId === currentProductId);
+                  return {
+                    ...previous,
+                    useSharedStock: checked,
+                    stockBaseProductId: checked
+                      ? shouldResetBase
+                        ? ""
+                        : currentBaseId
+                      : "__self__",
+                    stockConsumptionQuantity: checked
+                      ? previous.stockConsumptionQuantity
+                      : 1,
+                  };
+                });
+                if (!checked) setBaseSearchQuery("");
+              }}
+              stockBaseProductId={formData.stockBaseProductId}
+              onStockBaseProductIdChange={(value) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  stockBaseProductId: value,
+                }))
+              }
+              stockConsumptionQuantity={formData.stockConsumptionQuantity}
+              onStockConsumptionQuantityChange={(value) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  stockConsumptionQuantity: value,
+                }))
+              }
+              stockBaseUnit={formData.stockBaseUnit}
+              onStockBaseUnitChange={(value) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  stockBaseUnit: value as MeasurementType,
+                }))
+              }
+              stockMode={stockLinking.stockMode}
+              consumptionPreview={stockLinking.consumptionPreview}
+              baseSearchQuery={baseSearchQuery}
+              onBaseSearchQueryChange={setBaseSearchQuery}
+              selectedBaseLabel={stockLinking.selectedBaseLabel}
+              baseOptions={stockLinking.baseOptions}
+              isCheckingRelation={stockLinking.isCheckingRelation}
+              isLoadingBaseOptions={stockLinking.isLoadingBaseOptions}
+              isBlockingModalOpen={stockLinking.isBlockingModalOpen}
+              blockingMessage={stockLinking.blockingMessage}
+              onCloseBlockingModal={stockLinking.closeBlockingModal}
+              disabled={disableForm}
+            />
 
             {/* Flags */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

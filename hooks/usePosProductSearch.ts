@@ -30,17 +30,41 @@ function pickFirstFinite(values: unknown[], fallback = 0) {
   return fallback;
 }
 
+function extractPosStock(value: unknown) {
+  const direct = Number(value);
+  if (Number.isFinite(direct)) {
+    return direct;
+  }
+
+  if (!value || typeof value !== "object") {
+    return Number.NaN;
+  }
+
+  const source = value as {
+    quantity?: unknown;
+    availableQuantity?: unknown;
+    baseQuantity?: unknown;
+  };
+
+  return pickFirstFinite(
+    [source.quantity, source.availableQuantity, source.baseQuantity],
+    Number.NaN
+  );
+}
+
 function normalizePosProduct(
   item: Partial<Product> & { id: string; name: string }
 ): Product {
   const measurementType =
     item.measurementType === "kg" ||
     item.measurementType === "gram" ||
-    item.measurementType === "unit"
+    item.measurementType === "unit" ||
+    item.measurementType === "ml" ||
+    item.measurementType === "liter"
       ? item.measurementType
       : "unit";
 
-  const parsedStock = Number(item.stock);
+  const parsedStock = extractPosStock(item.stock);
 
   return {
     ...item,
@@ -74,6 +98,7 @@ export function usePosProductSearch({
   enabled = true,
 }: UsePosProductSearchArgs) {
   const lastSyncAtRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const normalizedQuery = query.trim();
   const canSearch = normalizedQuery.length >= POS_MIN_SEARCH_LENGTH;
   const shouldFetch = Boolean(enabled && branchId && canSearch);
@@ -89,22 +114,30 @@ export function usePosProductSearch({
         ] as const)
       : null,
     async () => {
-      const payload = await backendApi.productsWithStock(
-        {
-          skip: 0,
-          take: safeTake,
-          q: normalizedQuery,
-          search: normalizedQuery,
-          name: normalizedQuery,
-          sortBy: "name",
-          sortOrder: "asc",
-        },
-        branchId
-      );
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
 
-      return payload.items.map((item) =>
-        normalizePosProduct(item as Product & { id: string; name: string })
-      );
+      try {
+        const payload = await backendApi.pos.search(
+          {
+            q: normalizedQuery,
+            limit: safeTake,
+          },
+          branchId,
+          {
+            signal: controller.signal,
+          }
+        );
+
+        return payload.map((item) =>
+          normalizePosProduct(item as Product & { id: string; name: string })
+        );
+      } finally {
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
+      }
     },
     {
       revalidateOnFocus: false,
@@ -126,10 +159,19 @@ export function usePosProductSearch({
     });
   }, [branchId, shouldFetch, mutate]);
 
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
   return {
     products: data ?? [],
     isLoading: shouldFetch && isLoading,
-    isError: error,
+    isError:
+      error instanceof DOMException && error.name === "AbortError"
+        ? null
+        : error,
     canSearch,
     mutateProducts: mutate,
   };
