@@ -84,11 +84,13 @@ type PersistedPosCart = {
   cashPaymentAmount: string;
   transferPaymentAmount: string;
   transferReference: string;
+  pendingPaymentReason: string;
 };
 
 const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
 const POS_CART_TTL_MS = 12 * 60 * 60 * 1000;
 const POS_SCAN_CACHE_TTL_MS = 5_000;
+const POS_PENDING_REASON_MAX_LENGTH = 180;
 
 type ScanCacheEntry = {
   cachedAt: number;
@@ -142,8 +144,11 @@ type PosPaymentCardProps = {
   changeDuePreview: number;
   cashPaymentAmount: string;
   transferPaymentAmount: string;
+  pendingPaymentReason: string;
+  isPendingReasonRequired: boolean;
   onCashPaymentAmountChange: (value: string) => void;
   onTransferPaymentAmountChange: (value: string) => void;
+  onPendingPaymentReasonChange: (value: string) => void;
   onHandlePayment: () => Promise<void>;
   onClearCart: () => void;
   isProcessingPayment: boolean;
@@ -164,6 +169,7 @@ type PosPaymentConfirmDialogProps = {
   previewBranchName: string;
   previewCashierName: string;
   paymentPreviewRows: PaymentPreviewRow[];
+  pendingPaymentReason: string;
   onProcessPayment: () => Promise<void>;
 };
 
@@ -209,6 +215,10 @@ function parsePersistedPosCart(raw: string | null): PersistedPosCart | null {
       transferReference:
         typeof parsed.transferReference === "string"
           ? parsed.transferReference
+          : "",
+      pendingPaymentReason:
+        typeof parsed.pendingPaymentReason === "string"
+          ? parsed.pendingPaymentReason
           : "",
     };
   } catch {
@@ -584,6 +594,10 @@ function getErrorMessage(error: unknown, fallback: string) {
   }
 
   return fallback;
+}
+
+function normalizePendingPaymentReason(value: string) {
+  return value.replace(/\s+/g, " ").trim().slice(0, POS_PENDING_REASON_MAX_LENGTH);
 }
 
 // function getAutoRuleLabel(item: CartItem): string | null {
@@ -1081,13 +1095,20 @@ const PosPaymentCard = memo(function PosPaymentCard({
   changeDuePreview,
   cashPaymentAmount,
   transferPaymentAmount,
+  pendingPaymentReason,
+  isPendingReasonRequired,
   onCashPaymentAmountChange,
   onTransferPaymentAmountChange,
+  onPendingPaymentReasonChange,
   onHandlePayment,
   onClearCart,
   isProcessingPayment,
   isSaleCommitted,
 }: PosPaymentCardProps) {
+  const showPendingReasonInput =
+    cartLength > 0 &&
+    (totalInitialPayments <= 0 || pendingPaymentReason.trim().length > 0);
+
   return (
     <Card>
       <CardHeader>
@@ -1157,6 +1178,27 @@ const PosPaymentCard = memo(function PosPaymentCard({
                 />
               </div>
             </div>
+            {showPendingReasonInput ? (
+              <div className="space-y-1">
+                <label className="text-md font-bold text-muted-foreground">
+                  Motivo de pendiente {isPendingReasonRequired ? "*" : "(opcional)"}
+                </label>
+                <Input
+                  value={pendingPaymentReason}
+                  maxLength={POS_PENDING_REASON_MAX_LENGTH}
+                  placeholder="Ej: Cliente conocido, paga manana"
+                  onChange={(event) =>
+                    onPendingPaymentReasonChange(event.target.value)
+                  }
+                  className="h-10"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {isPendingReasonRequired
+                    ? "Si no se cobra nada al momento, este motivo es obligatorio."
+                    : `Maximo ${POS_PENDING_REASON_MAX_LENGTH} caracteres.`}
+                </p>
+              </div>
+            ) : null}
           </div>
           {cartLength === 0 ? (
             <p className="text-center text-xs text-muted-foreground">
@@ -1217,9 +1259,11 @@ function PosPaymentConfirmDialog({
   previewBranchName,
   previewCashierName,
   paymentPreviewRows,
+  pendingPaymentReason,
   onProcessPayment,
 }: PosPaymentConfirmDialogProps) {
   if (!open) return null;
+  const normalizedPendingPaymentReason = pendingPaymentReason.trim();
 
   return (
     <Dialog
@@ -1428,6 +1472,16 @@ function PosPaymentConfirmDialog({
                     saldo pendiente.
                   </p>
                 )}
+                {pendingAfterInitialPayments > 0 && normalizedPendingPaymentReason ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                      Motivo pendiente
+                    </p>
+                    <p className="mt-1 text-sm text-amber-900">
+                      {normalizedPendingPaymentReason}
+                    </p>
+                  </div>
+                ) : null}
               </div>
             </div>
 
@@ -1521,6 +1575,7 @@ export function POSModule() {
   const [cashPaymentAmount, setCashPaymentAmount] = useState("");
   const [transferPaymentAmount, setTransferPaymentAmount] = useState("");
   const [transferReference, setTransferReference] = useState("");
+  const [pendingPaymentReason, setPendingPaymentReason] = useState("");
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isSaleCommitted, setIsSaleCommitted] = useState(false);
@@ -1561,6 +1616,7 @@ export function POSModule() {
       setCashPaymentAmount(persisted.cashPaymentAmount);
       setTransferPaymentAmount(persisted.transferPaymentAmount);
       setTransferReference(persisted.transferReference);
+      setPendingPaymentReason(persisted.pendingPaymentReason);
       setIsSaleCommitted(false);
 
       toast({
@@ -1588,7 +1644,8 @@ export function POSModule() {
         cart.length === 0 &&
         !cashPaymentAmount.trim() &&
         !transferPaymentAmount.trim() &&
-        !transferReference.trim();
+        !transferReference.trim() &&
+        !pendingPaymentReason.trim();
 
       if (isEmptyState) {
         window.localStorage.removeItem(posCartStorageKey);
@@ -1606,6 +1663,7 @@ export function POSModule() {
         cashPaymentAmount,
         transferPaymentAmount,
         transferReference,
+        pendingPaymentReason,
       };
 
       window.localStorage.setItem(posCartStorageKey, JSON.stringify(payload));
@@ -1623,6 +1681,7 @@ export function POSModule() {
     cashPaymentAmount,
     transferPaymentAmount,
     transferReference,
+    pendingPaymentReason,
     currentUser?.id,
     branchId,
   ]);
@@ -1649,6 +1708,10 @@ export function POSModule() {
     if (branchChanged && cart.length > 0) {
       setCart([]);
       setIsSaleCommitted(false);
+      setCashPaymentAmount("");
+      setTransferPaymentAmount("");
+      setTransferReference("");
+      setPendingPaymentReason("");
       toast({
         title: "Sucursal cambiada",
         description:
@@ -2133,6 +2196,12 @@ export function POSModule() {
     };
   }, [cart, cashPaymentAmount, transferPaymentAmount, transferReference]);
 
+  const normalizedPendingPaymentReason = normalizePendingPaymentReason(
+    pendingPaymentReason
+  );
+  const isPendingReasonRequired =
+    total > 0 && totalInitialPayments <= Number.EPSILON;
+
   const ensureOpenCashSession = async () => {
     if (!canManageCash) return true;
 
@@ -2183,6 +2252,20 @@ export function POSModule() {
       return;
     }
 
+    if (pendingPaymentReason !== normalizedPendingPaymentReason) {
+      setPendingPaymentReason(normalizedPendingPaymentReason);
+    }
+
+    if (isPendingReasonRequired && !normalizedPendingPaymentReason) {
+      toast({
+        variant: "destructive",
+        title: "Motivo requerido",
+        description:
+          "Si dejas la venta sin pago inicial, debes indicar el motivo del pendiente.",
+      });
+      return;
+    }
+
     const canProceed = await ensureOpenCashSession();
     if (!canProceed) return;
 
@@ -2196,6 +2279,7 @@ export function POSModule() {
       cashPaymentAmount: string;
       transferPaymentAmount: string;
       transferReference: string;
+      pendingPaymentReason: string;
     } | null = null;
 
     try {
@@ -2234,6 +2318,16 @@ export function POSModule() {
         return;
       }
 
+      if (isPendingReasonRequired && !normalizedPendingPaymentReason) {
+        toast({
+          variant: "destructive",
+          title: "Motivo requerido",
+          description:
+            "Si dejas la venta sin pago inicial, debes indicar el motivo del pendiente.",
+        });
+        return;
+      }
+
       setIsProcessingPayment(true);
       const payments: Array<{
         amount: number;
@@ -2259,6 +2353,7 @@ export function POSModule() {
         cashPaymentAmount,
         transferPaymentAmount,
         transferReference,
+        pendingPaymentReason,
       };
 
       setIsPaymentConfirmOpen(false);
@@ -2284,6 +2379,9 @@ export function POSModule() {
           };
         }),
         payments,
+        notes: isPendingReasonRequired
+          ? normalizedPendingPaymentReason
+          : undefined,
       });
 
       const paidAmount = Number(createdSale.paidAmount ?? 0);
@@ -2312,6 +2410,7 @@ export function POSModule() {
         setCashPaymentAmount(rollbackState.cashPaymentAmount);
         setTransferPaymentAmount(rollbackState.transferPaymentAmount);
         setTransferReference(rollbackState.transferReference);
+        setPendingPaymentReason(rollbackState.pendingPaymentReason);
         setIsPaymentConfirmOpen(true);
       }
       toast({
@@ -2333,6 +2432,7 @@ export function POSModule() {
     setCashPaymentAmount("");
     setTransferPaymentAmount("");
     setTransferReference("");
+    setPendingPaymentReason("");
     if (!options?.silent) {
       toast({
         title: "Carrito vaciado",
@@ -2406,8 +2506,13 @@ export function POSModule() {
               changeDuePreview={changeDuePreview}
               cashPaymentAmount={cashPaymentAmount}
               transferPaymentAmount={transferPaymentAmount}
+              pendingPaymentReason={pendingPaymentReason}
+              isPendingReasonRequired={isPendingReasonRequired}
               onCashPaymentAmountChange={setCashPaymentAmount}
               onTransferPaymentAmountChange={setTransferPaymentAmount}
+              onPendingPaymentReasonChange={(value) =>
+                setPendingPaymentReason(value.slice(0, POS_PENDING_REASON_MAX_LENGTH))
+              }
               onHandlePayment={handlePayment}
               onClearCart={() => clearCart()}
               isProcessingPayment={isProcessingPayment}
@@ -2430,6 +2535,7 @@ export function POSModule() {
           previewBranchName={previewBranchName}
           previewCashierName={previewCashierName}
           paymentPreviewRows={paymentPreviewRows}
+          pendingPaymentReason={normalizedPendingPaymentReason}
           onProcessPayment={processPayment}
         />
       </div>
@@ -2891,6 +2997,30 @@ export function POSModule() {
                       />
                     </div>
                   </div>
+                  {(totalInitialPayments <= 0 ||
+                    pendingPaymentReason.trim().length > 0) && (
+                    <div className="space-y-1">
+                      <label className="text-md font-bold text-muted-foreground">
+                        Motivo de pendiente {isPendingReasonRequired ? "*" : "(opcional)"}
+                      </label>
+                      <Input
+                        value={pendingPaymentReason}
+                        maxLength={POS_PENDING_REASON_MAX_LENGTH}
+                        placeholder="Ej: Cliente conocido, paga manana"
+                        onChange={(event) =>
+                          setPendingPaymentReason(
+                            event.target.value.slice(0, POS_PENDING_REASON_MAX_LENGTH)
+                          )
+                        }
+                        className="h-10"
+                      />
+                      <p className="text-[11px] text-muted-foreground">
+                        {isPendingReasonRequired
+                          ? "Si no se cobra nada al momento, este motivo es obligatorio."
+                          : `Maximo ${POS_PENDING_REASON_MAX_LENGTH} caracteres.`}
+                      </p>
+                    </div>
+                  )}
                 </div>
                 {cart.length === 0 ? (
                   <p className="text-center text-xs text-muted-foreground">
@@ -3150,13 +3280,24 @@ export function POSModule() {
                       </div>
                     ))
                   ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No cargaste pagos iniciales. La venta se registrara con
-                      saldo pendiente.
+                  <p className="text-sm text-muted-foreground">
+                    No cargaste pagos iniciales. La venta se registrara con
+                    saldo pendiente.
+                  </p>
+                )}
+                {pendingAfterInitialPayments > 0 &&
+                normalizedPendingPaymentReason ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                      Motivo pendiente
                     </p>
-                  )}
-                </div>
+                    <p className="mt-1 text-sm text-amber-900">
+                      {normalizedPendingPaymentReason}
+                    </p>
+                  </div>
+                ) : null}
               </div>
+            </div>
 
               <div className="rounded-2xl border bg-card p-5 shadow-sm">
                 <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">

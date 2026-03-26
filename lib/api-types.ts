@@ -576,6 +576,7 @@ export interface CreateSaleRequest {
   clientId?: string;
   items: SaleItemInput[];
   payments?: SalePaymentInput[];
+  notes?: string;
 }
 
 export interface SaleSummary {
@@ -598,6 +599,7 @@ export interface SaleSummary {
   itemsCount?: number;
   itemsQuantity?: number;
   paymentBreakdown?: SalePaymentBreakdown;
+  notes?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -893,6 +895,8 @@ export interface ReportsTopProductItem {
   productName: string;
   categoryId?: string | null;
   categoryName?: string | null;
+  measurementType?: MeasurementType;
+  isWeighable?: boolean;
   unitsTotal: number;
   revenueTotal: number;
   unitsRetail: number;

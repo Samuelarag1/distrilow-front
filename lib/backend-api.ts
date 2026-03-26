@@ -1720,20 +1720,36 @@ export const backendApi = {
     },
   },
   stockMovements: {
-    list: async (query: MovementQuery = {}) => {
+    list: async (query: MovementQuery = {}, branchIdOverride?: string | null) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
       const payload = await apiClientFetch.get<
         PaginatedResponse<Movement> | Movement[]
-      >(`/stock-movements${buildQuery(query)}`);
+      >(`/stock-movements${buildOffsetQuery(query)}`, {
+        headers: {
+          "x-branch-id": effectiveBranchId,
+        },
+      });
       return toPaginatedResponse(
         payload,
         Number(query.skip ?? query.offset ?? 0),
         Number(query.take ?? query.limit ?? 50)
       );
     },
-    history: async (query: MovementQuery = {}) => {
+    history: async (query: MovementQuery = {}, branchIdOverride?: string | null) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
       const payload = await apiClientFetch.get<
         PaginatedResponse<Movement> | Movement[]
-      >(`/stock-movements/history${buildQuery(query)}`);
+      >(`/stock-movements/history${buildOffsetQuery(query)}`, {
+        headers: {
+          "x-branch-id": effectiveBranchId,
+        },
+      });
       return toPaginatedResponse(
         payload,
         Number(query.skip ?? query.offset ?? 0),
@@ -1989,7 +2005,7 @@ export const backendApi = {
             ...reportQuery,
             limit: normalizedLimit,
             search: normalizedSearch,
-            q: normalizedSearch,
+            q: undefined,
             offset:
               normalizedOffset !== null && normalizedOffset >= 0
                 ? Math.floor(normalizedOffset)

@@ -85,6 +85,7 @@ export interface Sale {
   paymentMethods: string[];
   lineItems?: SaleLineItem[];
   payments?: SalePayment[];
+  notes?: string;
   date: string;
   businessType: BusinessType;
   userId: string;
@@ -354,6 +355,7 @@ function normalizeSale(
     itemsQuantity,
     paymentBreakdown,
     paymentMethods,
+    notes: String((row as ApiSaleSummary).notes ?? "").trim() || undefined,
     date: String(row.createdAt ?? row.updatedAt ?? new Date().toISOString()),
     businessType,
     userId: String((row as any).userId ?? "unknown"),

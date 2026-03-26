@@ -62,6 +62,53 @@ function getStatusText(status: string) {
   return "Cancelada";
 }
 
+function toFiniteNumber(value: unknown, fallback = 0) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function getPaymentMethodLabel(method: string) {
+  const normalized = String(method ?? "")
+    .trim()
+    .toUpperCase();
+  if (normalized === "CASH") return "Efectivo";
+  if (normalized === "TRANSFER" || normalized === "TRANSFERENCIA") {
+    return "Transferencia";
+  }
+  if (normalized === "DEBIT_CARD") return "Debito";
+  if (normalized === "CREDIT_CARD") return "Credito";
+  if (normalized === "MERCADO_PAGO") return "Mercado Pago";
+  if (normalized === "OTHER") return "Otro";
+  return normalized || "Sin pagos";
+}
+
+function getPaymentAmountByKeys(sale: Sale, keys: string[]) {
+  const wanted = new Set(
+    keys.map((key) =>
+      String(key ?? "")
+        .trim()
+        .toUpperCase()
+    )
+  );
+  if (wanted.size === 0) return 0;
+  return Object.entries(sale.paymentBreakdown ?? {}).reduce(
+    (sum, [method, amount]) => {
+      const normalizedMethod = String(method ?? "")
+        .trim()
+        .toUpperCase();
+      if (!wanted.has(normalizedMethod)) return sum;
+      return sum + toFiniteNumber(amount, 0);
+    },
+    0
+  );
+}
+
+function getPositivePaymentEntries(sale: Sale) {
+  return Object.entries(sale.paymentBreakdown ?? {}).filter(
+    ([, amount]) => toFiniteNumber(amount, 0) > 0
+  );
+}
+
 type SalesPaymentMethodFilter = "CASH" | "TRANSFER";
 type SalesPaymentFilter = "all" | SalesPaymentMethodFilter;
 
@@ -328,6 +375,7 @@ export function SalesTable() {
                     <th className="text-left p-3 font-medium">Cliente</th>
                     <th className="text-left p-3 font-medium">Total</th>
                     <th className="text-left p-3 font-medium">Pagado</th>
+                    <th className="text-left p-3 font-medium">Pago</th>
                     <th className="text-left p-3 font-medium">Saldo</th>
                     <th className="text-left p-3 font-medium">Estado</th>
                     <th className="text-left p-3 font-medium">Acciones</th>
@@ -350,6 +398,9 @@ export function SalesTable() {
                             <Skeleton className="h-4 w-20" />
                           </td>
                           <td className="p-3">
+                            <Skeleton className="h-10 w-44" />
+                          </td>
+                          <td className="p-3">
                             <Skeleton className="h-4 w-20" />
                           </td>
                           <td className="p-3">
@@ -366,6 +417,26 @@ export function SalesTable() {
                           sale.lifecycleStatus !== "CANCELLED" &&
                           sale.outstandingAmount > 0;
                         const canCancel = sale.lifecycleStatus !== "CANCELLED";
+                        const transferAmount = getPaymentAmountByKeys(sale, [
+                          "TRANSFER",
+                          "TRANSFERENCIA",
+                        ]);
+                        const cashAmount = getPaymentAmountByKeys(sale, [
+                          "CASH",
+                          "EFECTIVO",
+                        ]);
+                        const positivePaymentEntries = getPositivePaymentEntries(
+                          sale
+                        );
+                        const hasMultipleMethods = positivePaymentEntries.length > 1;
+                        const isMixedCashTransfer =
+                          transferAmount > 0 && cashAmount > 0;
+                        const paymentMethodsText =
+                          positivePaymentEntries.length > 0
+                            ? positivePaymentEntries
+                                .map(([method]) => getPaymentMethodLabel(method))
+                                .join(" + ")
+                            : "Sin pagos";
 
                         return (
                           <tr
@@ -383,6 +454,31 @@ export function SalesTable() {
                             </td>
                             <td className="p-3">
                               {formatMoney(sale.paidAmount)}
+                            </td>
+                            <td className="p-3">
+                              <div className="space-y-1 text-xs">
+                                {isMixedCashTransfer ? (
+                                  <Badge className="bg-sky-100 text-sky-800">
+                                    Mixto: efectivo + transferencia
+                                  </Badge>
+                                ) : hasMultipleMethods ? (
+                                  <Badge className="bg-indigo-100 text-indigo-800">
+                                    Mixto
+                                  </Badge>
+                                ) : (
+                                  <span className="font-medium text-foreground">
+                                    {paymentMethodsText}
+                                  </span>
+                                )}
+                                <p className="text-muted-foreground">
+                                  Transferido:{" "}
+                                  <span className="font-medium text-foreground">
+                                    {transferAmount > 0
+                                      ? formatMoney(transferAmount)
+                                      : "-"}
+                                  </span>
+                                </p>
+                              </div>
                             </td>
                             <td className="p-3">
                               {formatMoney(sale.outstandingAmount)}

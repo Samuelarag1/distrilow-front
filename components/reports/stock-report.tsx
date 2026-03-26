@@ -30,6 +30,8 @@ import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import { backendApi } from "@/lib/backend-api";
 import type {
+  Movement,
+  MovementType,
   ReportsInventoryLowStockItem,
   ReportsInventoryLowStockResponse,
   ReportsInventorySummaryResponse,
@@ -45,6 +47,9 @@ const CATEGORY_COLORS = [
   "#ea580c",
   "#be123c",
 ];
+const STOCK_MOVEMENTS_PAGE_SIZE = 100;
+const STOCK_MOVEMENTS_MAX_PAGES = 60;
+const PRODUCT_COST_BATCH_SIZE = 25;
 
 type Category = {
   id: string;
@@ -52,6 +57,82 @@ type Category = {
 };
 
 type InventoryValueMode = "cost" | "retail" | "wholesale";
+type DiscountPreset =
+  | "LOSS_EXPIRED"
+  | "LOSS"
+  | "EXPIRED"
+  | "ALL_WITH_ADJUSTMENT";
+
+function toInputDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function getDiscountTypes(preset: DiscountPreset): MovementType[] {
+  if (preset === "LOSS") return ["LOSS"];
+  if (preset === "EXPIRED") return ["EXPIRED"];
+  if (preset === "ALL_WITH_ADJUSTMENT") {
+    return ["LOSS", "EXPIRED", "ADJUSTMENT"];
+  }
+  return ["LOSS", "EXPIRED"];
+}
+
+function movementTypeLabel(type: string) {
+  if (type === "LOSS") return "Merma";
+  if (type === "EXPIRED") return "Vencido";
+  if (type === "ADJUSTMENT") return "Ajuste manual";
+  return type;
+}
+
+function normalizeReason(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text.length > 0 ? text : "Sin motivo cargado";
+}
+
+function normalizeProductName(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text.length > 0 ? text : null;
+}
+
+function formatQuantity(value: number, maximumFractionDigits = 3) {
+  return Number(value ?? 0).toLocaleString("es-AR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  });
+}
+
+async function fetchAllStockMovementsByType(
+  branchId: string,
+  type: MovementType,
+  from: string,
+  to: string
+) {
+  const rows: Movement[] = [];
+  let offset = 0;
+
+  for (let page = 0; page < STOCK_MOVEMENTS_MAX_PAGES; page += 1) {
+    const payload = await backendApi.stockMovements.list(
+      {
+        type,
+        from,
+        to,
+        offset,
+        limit: STOCK_MOVEMENTS_PAGE_SIZE,
+      },
+      branchId
+    );
+    rows.push(...payload.items);
+    if (!payload.meta.hasMore) break;
+    offset += Math.max(
+      1,
+      Number(payload.meta.limit ?? STOCK_MOVEMENTS_PAGE_SIZE)
+    );
+  }
+
+  return rows;
+}
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -81,6 +162,15 @@ export function StockReport() {
     useState<ReportsInventorySummaryResponse | null>(null);
   const [lowStock, setLowStock] =
     useState<ReportsInventoryLowStockResponse | null>(null);
+  const [discountPreset, setDiscountPreset] =
+    useState<DiscountPreset>("LOSS_EXPIRED");
+  const [discountFrom, setDiscountFrom] = useState(() => {
+    const current = new Date();
+    const from = new Date(current);
+    from.setDate(current.getDate() - 30);
+    return toInputDate(from);
+  });
+  const [discountTo, setDiscountTo] = useState(() => toInputDate(new Date()));
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -199,6 +289,208 @@ export function StockReport() {
   const lowStockItems = useMemo(() => lowStock?.items ?? [], [lowStock?.items]);
   const totalItems = Number(lowStock?.total ?? 0);
   const totalPages = Math.max(1, Math.ceil(totalItems / Math.max(limit, 1)));
+  const discountTypes = useMemo(
+    () => getDiscountTypes(discountPreset),
+    [discountPreset]
+  );
+
+  const {
+    data: stockDiscountData,
+    isLoading: isStockDiscountLoading,
+    error: stockDiscountError,
+  } = useSWR(
+    branchId
+      ? [
+          "reporting-stock-discounts",
+          branchId,
+          discountFrom,
+          discountTo,
+          discountPreset,
+        ]
+      : null,
+    async () => {
+      const movementGroups = await Promise.all(
+        discountTypes.map((type) =>
+          fetchAllStockMovementsByType(branchId, type, discountFrom, discountTo)
+        )
+      );
+
+      const combined = movementGroups.flat().map((movement) => {
+        const movementSource = movement as Movement & {
+          productName?: unknown;
+          product?: { name?: unknown };
+        };
+        const quantity = Math.abs(Number(movement.quantity ?? 0));
+        const unitCostRaw = Number(movement.unitCost ?? Number.NaN);
+        const unitCost = Number.isFinite(unitCostRaw) ? unitCostRaw : null;
+        const productName =
+          normalizeProductName(movementSource.productName) ??
+          normalizeProductName(movementSource.product?.name);
+        return {
+          ...movement,
+          quantity,
+          unitCost,
+          productName,
+        };
+      });
+
+      const missingCostProductIds = [
+        ...new Set(
+          combined
+            .filter((movement) => movement.unitCost === null)
+            .map((movement) => String(movement.productId ?? "").trim())
+            .filter(Boolean)
+        ),
+      ];
+
+      const costByProductId = new Map<string, number>();
+      const nameByProductId = new Map<string, string>();
+      for (
+        let index = 0;
+        index < missingCostProductIds.length;
+        index += PRODUCT_COST_BATCH_SIZE
+      ) {
+        const chunk = missingCostProductIds.slice(
+          index,
+          index + PRODUCT_COST_BATCH_SIZE
+        );
+        const chunkResults = await Promise.allSettled(
+          chunk.map((productId) => backendApi.products.getById(productId))
+        );
+
+        chunkResults.forEach((result, chunkIndex) => {
+          if (result.status !== "fulfilled") return;
+          const productId = chunk[chunkIndex];
+          const productName = normalizeProductName(result.value.name);
+          if (productName) {
+            nameByProductId.set(productId, productName);
+          }
+          const costPrice = Number(result.value.costPrice ?? Number.NaN);
+          if (!Number.isFinite(costPrice)) return;
+          costByProductId.set(productId, costPrice);
+        });
+      }
+
+      let rows = combined
+        .map((movement) => {
+          const fallbackCost = costByProductId.get(movement.productId);
+          const resolvedUnitCost =
+            movement.unitCost !== null
+              ? movement.unitCost
+              : Number.isFinite(Number(fallbackCost))
+              ? Number(fallbackCost)
+              : null;
+          const estimatedLoss =
+            resolvedUnitCost !== null
+              ? movement.quantity * resolvedUnitCost
+              : 0;
+          return {
+            id: movement.id,
+            createdAt: movement.createdAt ?? "",
+            type: movement.type,
+            productId: movement.productId,
+            productName:
+              movement.productName ??
+              nameByProductId.get(movement.productId) ??
+              null,
+            quantity: movement.quantity,
+            unitCost: resolvedUnitCost,
+            estimatedLoss,
+            reason: normalizeReason(movement.reason),
+          };
+        })
+        .sort(
+          (left, right) =>
+            new Date(right.createdAt ?? 0).getTime() -
+            new Date(left.createdAt ?? 0).getTime()
+        );
+
+      const recentMissingNameIds = [
+        ...new Set(
+          rows
+            .slice(0, 20)
+            .filter((row) => !row.productName)
+            .map((row) => String(row.productId ?? "").trim())
+            .filter(Boolean)
+        ),
+      ];
+
+      for (
+        let index = 0;
+        index < recentMissingNameIds.length;
+        index += PRODUCT_COST_BATCH_SIZE
+      ) {
+        const chunk = recentMissingNameIds.slice(
+          index,
+          index + PRODUCT_COST_BATCH_SIZE
+        );
+        const chunkResults = await Promise.allSettled(
+          chunk.map((productId) => backendApi.products.getById(productId))
+        );
+
+        chunkResults.forEach((result, chunkIndex) => {
+          if (result.status !== "fulfilled") return;
+          const productId = chunk[chunkIndex];
+          const productName = normalizeProductName(result.value.name);
+          if (productName) {
+            nameByProductId.set(productId, productName);
+          }
+        });
+      }
+
+      if (recentMissingNameIds.length > 0) {
+        rows = rows.map((row) => ({
+          ...row,
+          productName:
+            row.productName ?? nameByProductId.get(row.productId) ?? null,
+        }));
+      }
+
+      const totalsByType = rows.reduce<
+        Record<string, { qty: number; loss: number }>
+      >((acc, row) => {
+        if (!acc[row.type]) acc[row.type] = { qty: 0, loss: 0 };
+        acc[row.type].qty += row.quantity;
+        acc[row.type].loss += row.estimatedLoss;
+        return acc;
+      }, {});
+
+      const reasons = rows.reduce<
+        Record<string, { qty: number; loss: number; count: number }>
+      >((acc, row) => {
+        const key = row.reason;
+        if (!acc[key]) acc[key] = { qty: 0, loss: 0, count: 0 };
+        acc[key].qty += row.quantity;
+        acc[key].loss += row.estimatedLoss;
+        acc[key].count += 1;
+        return acc;
+      }, {});
+
+      const topReasons = Object.entries(reasons)
+        .map(([reason, values]) => ({ reason, ...values }))
+        .sort((left, right) => right.loss - left.loss)
+        .slice(0, 8);
+
+      const rowsWithMissingCost = rows.filter(
+        (row) => row.unitCost === null
+      ).length;
+      const totalLoss = rows.reduce((sum, row) => sum + row.estimatedLoss, 0);
+      const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0);
+
+      return {
+        rows,
+        totalsByType,
+        topReasons,
+        totalLoss,
+        totalQuantity,
+        rowsWithMissingCost,
+      };
+    },
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
 
   const exportRows = useMemo(
     () =>
@@ -369,6 +661,207 @@ export function StockReport() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Perdidas por ajustes de stock</CardTitle>
+          <CardDescription>
+            Motivo de descuento (`reason`) y costo estimado de merma/vencidos.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Desde</label>
+              <Input
+                type="date"
+                value={discountFrom}
+                onChange={(event) => setDiscountFrom(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Hasta</label>
+              <Input
+                type="date"
+                value={discountTo}
+                onChange={(event) => setDiscountTo(event.target.value)}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">
+                Tipos incluidos
+              </label>
+              <select
+                value={discountPreset}
+                onChange={(event) =>
+                  setDiscountPreset(event.target.value as DiscountPreset)
+                }
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="LOSS_EXPIRED">Merma + Vencido</option>
+                <option value="LOSS">Solo merma</option>
+                <option value="EXPIRED">Solo vencido</option>
+                <option value="ALL_WITH_ADJUSTMENT">
+                  Merma + Vencido + Ajuste manual
+                </option>
+              </select>
+            </div>
+            <div className="rounded-md border px-3 py-2">
+              <p className="text-xs text-muted-foreground">Perdida estimada</p>
+              <p className="text-2xl font-bold text-red-600">
+                {formatMoney(Number(stockDiscountData?.totalLoss ?? 0))}
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {formatQuantity(Number(stockDiscountData?.totalQuantity ?? 0))}{" "}
+                unidades descontadas
+              </p>
+            </div>
+          </div>
+
+          {isStockDiscountLoading && (
+            <p className="text-sm text-muted-foreground">
+              Cargando movimientos de descuento...
+            </p>
+          )}
+
+          {!isStockDiscountLoading && stockDiscountError && (
+            <p className="text-sm text-destructive">
+              {stockDiscountError instanceof Error
+                ? stockDiscountError.message
+                : "No se pudieron cargar las perdidas por ajuste."}
+            </p>
+          )}
+
+          {!isStockDiscountLoading && !stockDiscountError && (
+            <>
+              <div className="grid gap-3 sm:grid-cols-3">
+                {Object.entries(stockDiscountData?.totalsByType ?? {}).map(
+                  ([type, values]) => (
+                    <div key={type} className="rounded-md border p-3">
+                      <p className="text-xs text-muted-foreground">
+                        {movementTypeLabel(type)}
+                      </p>
+                      <p className="text-lg font-semibold">
+                        {formatMoney(Number(values.loss ?? 0))}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {formatQuantity(Number(values.qty ?? 0))} unidades
+                      </p>
+                    </div>
+                  )
+                )}
+              </div>
+
+              {Number(stockDiscountData?.rowsWithMissingCost ?? 0) > 0 && (
+                <p className="text-xs text-amber-600">
+                  {stockDiscountData?.rowsWithMissingCost} movimientos no tienen
+                  costo unitario; su perdida se calcula como $0.
+                </p>
+              )}
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Motivos principales</p>
+                {(stockDiscountData?.topReasons ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No hay descuentos para el rango seleccionado.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {stockDiscountData?.topReasons.map((reasonRow) => (
+                      <div
+                        key={reasonRow.reason}
+                        className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-4"
+                      >
+                        <div className="sm:col-span-2">
+                          <p className="text-muted-foreground">Motivo</p>
+                          <p className="font-medium">{reasonRow.reason}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Cantidad</p>
+                          <p className="font-medium">
+                            {formatQuantity(reasonRow.qty)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Perdida</p>
+                          <p className="font-medium text-red-600">
+                            {formatMoney(reasonRow.loss)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="space-y-2">
+                <p className="text-sm font-medium">Movimientos recientes</p>
+                {(stockDiscountData?.rows ?? []).length === 0 ? (
+                  <p className="text-sm text-muted-foreground">
+                    No hay movimientos para mostrar.
+                  </p>
+                ) : (
+                  <div className="space-y-2">
+                    {stockDiscountData?.rows.slice(0, 20).map((row) => (
+                      <div
+                        key={row.id}
+                        className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-7"
+                      >
+                        <div>
+                          <p className="text-muted-foreground">Fecha</p>
+                          <p className="font-medium">
+                            {row.createdAt
+                              ? new Date(row.createdAt).toLocaleString("es-AR")
+                              : "-"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Producto</p>
+                          <p className="font-medium">
+                            {row.productName ?? "-"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Tipo</p>
+                          <p className="font-medium">
+                            {movementTypeLabel(row.type)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Cantidad</p>
+                          <p className="font-medium">
+                            {formatQuantity(row.quantity)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">
+                            Costo unitario
+                          </p>
+                          <p className="font-medium">
+                            {row.unitCost === null
+                              ? "-"
+                              : formatMoney(row.unitCost)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Perdida</p>
+                          <p className="font-medium text-red-600">
+                            {formatMoney(row.estimatedLoss)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Motivo</p>
+                          <p className="font-medium">{row.reason}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </>
+          )}
+        </CardContent>
+      </Card>
 
       {isLoading && (
         <p className="text-sm text-muted-foreground">

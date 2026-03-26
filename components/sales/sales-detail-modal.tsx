@@ -115,6 +115,9 @@ export function SalesDetailModal({
     month: "long",
     day: "numeric",
   });
+  const pendingReason = String(sale.notes ?? "").trim();
+  const showPendingReason =
+    pendingReason.length > 0 && Number(sale.outstandingAmount ?? 0) > 0;
 
   const getDisplayProductName = (productId: string, providedName?: string) => {
     const rawName = String(providedName ?? "").trim();
@@ -190,6 +193,15 @@ export function SalesDetailModal({
               </div>
             )}
           </div>
+
+          {showPendingReason && (
+            <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                Motivo de saldo pendiente
+              </p>
+              <p className="mt-1 text-sm text-amber-900">{pendingReason}</p>
+            </div>
+          )}
 
           {/* Line Items Table */}
           <div className="space-y-2">

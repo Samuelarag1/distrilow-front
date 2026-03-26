@@ -8,6 +8,16 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Select,
   SelectContent,
   SelectItem,
@@ -68,6 +78,7 @@ export function CashModule() {
   const [movementAmount, setMovementAmount] = useState("");
   const [amountToLeave, setAmountToLeave] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
+  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
 
   const currentSessionValidatorsRef = useRef<{
     etag: string | null;
@@ -325,8 +336,8 @@ export function CashModule() {
     ? Number((expectedCash - amountToLeaveNumber).toFixed(2))
     : expectedCash;
 
-  const handleCloseCash = async () => {
-    if (!cashSession) return;
+  const validateCloseCashInput = () => {
+    if (!cashSession) return false;
 
     if (!hasValidAmountToLeave) {
       toast({
@@ -344,8 +355,14 @@ export function CashModule() {
         description:
           "El monto a dejar no puede ser mayor al efectivo esperado del turno.",
       });
-      return;
+      return false;
     }
+
+    return true;
+  };
+
+  const confirmCloseCash = async () => {
+    if (!cashSession) return;
 
     try {
       setIsSaving(true);
@@ -396,6 +413,7 @@ export function CashModule() {
         title: "Caja cerrada",
         description: "Turno cerrado correctamente.",
       });
+      setIsCloseConfirmOpen(false);
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -405,6 +423,11 @@ export function CashModule() {
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleCloseCash = () => {
+    if (!validateCloseCashInput()) return;
+    setIsCloseConfirmOpen(true);
   };
 
   const withdrawalMovements = useMemo(
@@ -673,6 +696,39 @@ export function CashModule() {
           )}
         </CardContent>
       </Card>
+
+      <AlertDialog
+        open={isCloseConfirmOpen}
+        onOpenChange={(open) => {
+          if (isSaving) return;
+          setIsCloseConfirmOpen(open);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Confirmar cierre de caja</AlertDialogTitle>
+            <AlertDialogDescription>
+              Te llevas <strong>{formatMoney(suggestedWithdrawal)}</strong> en
+              efectivo de la caja y te quedan{" "}
+              <strong>{formatMoney(amountToLeaveNumber)}</strong> para el
+              proximo turno. Estas seguro de confirmar?
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isSaving}>Volver</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmCloseCash();
+              }}
+              disabled={isSaving}
+            >
+              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              Confirmar cierre
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
