@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   CardContent,
@@ -47,9 +47,8 @@ const PIE_COLORS = [
   "#14b8a6",
 ];
 const DETAIL_PAGE_SIZE = 10;
-const METRICS_PAGE_SIZE = 300;
-const PRODUCT_LOOKUP_BATCH_SIZE = 30;
-const MAX_METRICS_PAGES = 100;
+const TOP_PRODUCTS_FETCH_LIMIT = 300;
+const PRODUCT_LOOKUP_PAGE_SIZE = 100;
 
 type DateRange = {
   from?: Date;
@@ -64,7 +63,7 @@ function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
     style: "currency",
     currency: "ARS",
-    maximumFractionDigits: 2,
+    maximumFractionDigits: 0,
   });
 }
 
@@ -118,6 +117,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const [detailSearchInput, setDetailSearchInput] = useState("");
   const [detailPage, setDetailPage] = useState(1);
   const debouncedDetailSearch = useDebouncedValue(detailSearchInput, 350);
+  const detailSearchAbortControllerRef = useRef<AbortController | null>(null);
 
   const range = useMemo(() => {
     const today = new Date();
@@ -148,6 +148,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     async () => {
       const [
         salesTrend,
+        globalMetrics,
         topProducts,
         priceTypesSummary,
         pricingSourcesSummary,
@@ -158,6 +159,13 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           groupBy: "day",
           metric: "revenue",
         }),
+        backendApi.reporting.global.metrics(
+          {
+            from: range.fromYmd,
+            to: range.toYmd,
+          },
+          branchId
+        ),
         backendApi.reporting.sales.topProducts.report(
           {
             from: range.fromYmd,
@@ -191,6 +199,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
       return {
         salesTrend,
+        globalMetrics,
         topProducts,
         priceTypesSummary,
         pricingSourcesSummary,
@@ -218,18 +227,32 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           normalizedDetailSearch,
         ]
       : null,
-    async () =>
-      backendApi.reporting.sales.topProducts.report(
-        {
-          from: range.fromYmd,
-          to: range.toYmd,
-          limit: DETAIL_PAGE_SIZE,
-          page: detailPage,
-          search: normalizedDetailSearch || undefined,
-          branchId: branchId ?? undefined,
-        },
-        branchId
-      ),
+    async () => {
+      detailSearchAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      detailSearchAbortControllerRef.current = controller;
+
+      try {
+        return await backendApi.reporting.sales.topProducts.report(
+          {
+            from: range.fromYmd,
+            to: range.toYmd,
+            limit: DETAIL_PAGE_SIZE,
+            page: detailPage,
+            search: normalizedDetailSearch || undefined,
+            branchId: branchId ?? undefined,
+          },
+          branchId,
+          {
+            signal: controller.signal,
+          }
+        );
+      } finally {
+        if (detailSearchAbortControllerRef.current === controller) {
+          detailSearchAbortControllerRef.current = null;
+        }
+      }
+    },
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
@@ -250,107 +273,88 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
         ]
       : null,
     async () => {
+      const report = await backendApi.reporting.sales.topProducts.report(
+        {
+          from: range.fromYmd,
+          to: range.toYmd,
+          branchId: branchId ?? undefined,
+          limit: TOP_PRODUCTS_FETCH_LIMIT,
+        },
+        branchId
+      );
+      const items = Array.isArray(report?.items) ? report.items : [];
       const productTotals = new Map<
         string,
         { quantity: number; measurementType: MeasurementType | null }
       >();
 
-      for (let page = 1; page <= MAX_METRICS_PAGES; page += 1) {
-        const report = await backendApi.reporting.sales.topProducts.report(
-          {
-            from: range.fromYmd,
-            to: range.toYmd,
-            branchId: branchId ?? undefined,
-            limit: METRICS_PAGE_SIZE,
-            page,
-          },
-          branchId
-        );
+      for (const item of items) {
+        const productId = String(item.productId ?? "").trim();
+        if (!productId) continue;
 
-        const items = Array.isArray(report?.items) ? report.items : [];
-        for (const item of items) {
-          const productId = String(item.productId ?? "").trim();
-          if (!productId) continue;
+        const quantity = Number(item.unitsTotal ?? 0);
+        if (!Number.isFinite(quantity) || quantity <= 0) continue;
 
-          const quantity = Number(item.unitsTotal ?? 0);
-          if (!Number.isFinite(quantity) || quantity <= 0) continue;
-
-          const existing = productTotals.get(productId);
-          if (existing) {
-            existing.quantity += quantity;
-            existing.measurementType =
-              existing.measurementType ?? getTopProductMeasurementType(item);
-            continue;
-          }
-
-          productTotals.set(productId, {
-            quantity,
-            measurementType: getTopProductMeasurementType(item),
-          });
-        }
-
-        const source = report as
-          | (typeof report & {
-              meta?: {
-                total?: number;
-                hasMore?: boolean;
-              };
-              total?: number;
-              hasMore?: boolean;
-            })
-          | undefined;
-
-        const totalFromMeta = Number(
-          source?.meta?.total ?? source?.total ?? Number.NaN
-        );
-        if (Number.isFinite(totalFromMeta) && totalFromMeta >= 0) {
-          const totalPages = Math.max(
-            1,
-            Math.ceil(totalFromMeta / METRICS_PAGE_SIZE)
-          );
-          if (page >= totalPages) break;
+        const existing = productTotals.get(productId);
+        if (existing) {
+          existing.quantity += quantity;
+          existing.measurementType =
+            existing.measurementType ?? getTopProductMeasurementType(item);
           continue;
         }
 
-        const hasMore =
-          typeof source?.meta?.hasMore === "boolean"
-            ? source.meta.hasMore
-            : typeof source?.hasMore === "boolean"
-            ? source.hasMore
-            : items.length >= METRICS_PAGE_SIZE;
-
-        if (!hasMore) break;
+        productTotals.set(productId, {
+          quantity,
+          measurementType: getTopProductMeasurementType(item),
+        });
       }
 
       const unresolvedProductIds = [...productTotals.entries()]
         .filter(([, value]) => !value.measurementType)
         .map(([productId]) => productId);
 
-      for (
-        let index = 0;
-        index < unresolvedProductIds.length;
-        index += PRODUCT_LOOKUP_BATCH_SIZE
-      ) {
-        const chunk = unresolvedProductIds.slice(
-          index,
-          index + PRODUCT_LOOKUP_BATCH_SIZE
-        );
-        const chunkResults = await Promise.allSettled(
-          chunk.map((productId) => backendApi.products.getById(productId))
-        );
+      if (unresolvedProductIds.length > 0) {
+        const unresolvedSet = new Set(unresolvedProductIds);
+        let skip = 0;
 
-        chunkResults.forEach((result, chunkIndex) => {
-          if (result.status !== "fulfilled") return;
+        while (unresolvedSet.size > 0) {
+          const productsPage = await backendApi.products.list(
+            {
+              skip,
+              take: PRODUCT_LOOKUP_PAGE_SIZE,
+            },
+            branchId
+          );
+          const rows = Array.isArray(productsPage.items) ? productsPage.items : [];
 
-          const productId = chunk[chunkIndex];
-          const measurementType =
-            normalizeMeasurementType(result.value.measurementType) ??
-            (result.value.isWeighable ? "kg" : "unit");
+          for (const product of rows) {
+            const productId = String(product.id ?? "").trim();
+            if (!productId || !unresolvedSet.has(productId)) continue;
 
-          const existing = productTotals.get(productId);
-          if (!existing) return;
-          existing.measurementType = measurementType;
-        });
+            const measurementType =
+              normalizeMeasurementType(product.measurementType) ??
+              (product.isWeighable ? "kg" : "unit");
+            const existing = productTotals.get(productId);
+            if (!existing) continue;
+
+            existing.measurementType = measurementType;
+            unresolvedSet.delete(productId);
+          }
+
+          const pageMeta = productsPage.meta;
+          const pageLimit = Math.max(
+            1,
+            Number(pageMeta?.limit ?? rows.length ?? PRODUCT_LOOKUP_PAGE_SIZE)
+          );
+          const pageOffset = Math.max(0, Number(pageMeta?.offset ?? skip));
+          const hasMore =
+            typeof pageMeta?.hasMore === "boolean"
+              ? pageMeta.hasMore
+              : rows.length >= pageLimit;
+
+          if (!hasMore || rows.length === 0) break;
+          skip = pageOffset + pageLimit;
+        }
       }
 
       return [...productTotals.values()].reduce(
@@ -370,6 +374,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
         {
           unitsTotal: 0,
           kilosTotal: 0,
+          isCapped: items.length >= TOP_PRODUCTS_FETCH_LIMIT,
         }
       );
     },
@@ -381,6 +386,12 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
   const isLoading = isOverviewLoading;
   const error = overviewError;
+
+  useEffect(() => {
+    return () => {
+      detailSearchAbortControllerRef.current?.abort();
+    };
+  }, []);
 
   const topProductsItems = useMemo(
     () => overviewData?.topProducts.items ?? [],
@@ -445,6 +456,13 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     }, seed);
   }, [topProductsItems]);
 
+  const salesByPaymentMethod = useMemo(
+    () => overviewData?.globalMetrics?.sales?.byPaymentMethod ?? null,
+    [overviewData?.globalMetrics]
+  );
+  const cashSalesTotal = Number(salesByPaymentMethod?.cashTotal ?? 0);
+  const transferSalesTotal = Number(salesByPaymentMethod?.transferTotal ?? 0);
+
   const effectiveTotals = useMemo(() => {
     if (!priceTypesSummaryTotals) return totals;
     return {
@@ -505,42 +523,36 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     () => detailTopProducts?.items ?? [],
     [detailTopProducts?.items]
   );
-
-  const detailMeta = useMemo(() => {
-    const source = detailTopProducts as
-      | (typeof detailTopProducts & {
-          meta?: {
-            total?: number;
-            limit?: number;
-            hasMore?: boolean;
-          };
-          total?: number;
-          hasMore?: boolean;
-        })
-      | undefined;
-
+  const detailTotalItems = useMemo(() => {
     const totalFromMeta = Number(
-      source?.meta?.total ?? source?.total ?? Number.NaN
+      detailTopProducts?.meta?.total ?? detailTopProducts?.total ?? Number.NaN
     );
-    const hasKnownTotal = Number.isFinite(totalFromMeta) && totalFromMeta >= 0;
-    const totalPages = hasKnownTotal
-      ? Math.max(1, Math.ceil(totalFromMeta / DETAIL_PAGE_SIZE))
-      : undefined;
+    if (Number.isFinite(totalFromMeta) && totalFromMeta >= 0) {
+      return totalFromMeta;
+    }
+    return detailProductsItems.length;
+  }, [detailProductsItems.length, detailTopProducts?.meta?.total, detailTopProducts?.total]);
+  const detailTotalPages = Math.max(
+    1,
+    Math.ceil(detailTotalItems / DETAIL_PAGE_SIZE)
+  );
+  const detailPageSafe = Math.min(detailPage, detailTotalPages);
 
-    const hasMore =
-      typeof source?.meta?.hasMore === "boolean"
-        ? source.meta.hasMore
-        : typeof source?.hasMore === "boolean"
-        ? source.hasMore
-        : detailProductsItems.length >= DETAIL_PAGE_SIZE;
-
-    return {
-      hasKnownTotal,
-      totalItems: hasKnownTotal ? totalFromMeta : undefined,
-      totalPages,
-      hasMore,
-    };
-  }, [detailProductsItems.length, detailTopProducts]);
+  const detailMeta = useMemo(
+    () => ({
+      hasKnownTotal: Number.isFinite(detailTotalItems),
+      totalItems: detailTotalItems,
+      totalPages: detailTotalPages,
+      hasMore:
+        typeof detailTopProducts?.meta?.hasMore === "boolean"
+          ? detailTopProducts.meta.hasMore
+          : typeof detailTopProducts?.hasMore === "boolean"
+          ? detailTopProducts.hasMore
+          : detailPageSafe < detailTotalPages,
+      isCapped: false,
+    }),
+    [detailPageSafe, detailTopProducts?.hasMore, detailTopProducts?.meta?.hasMore, detailTotalItems, detailTotalPages]
+  );
 
   const salesByPriceTypePie = useMemo(() => {
     if (priceTypesSummaryItems.length > 0) {
@@ -679,7 +691,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
         </Button>
       </div>
 
-      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">
@@ -717,6 +729,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                 Calculando desglose por medida...
               </p>
             )}
+            {soldQuantityBreakdown?.isCapped && (
+              <p className="text-xs text-muted-foreground">
+                Desglose calculado sobre hasta {TOP_PRODUCTS_FETCH_LIMIT} productos.
+              </p>
+            )}
             {soldQuantityBreakdownError && (
               <p className="text-xs text-destructive">
                 No se pudo separar unidades y kilos para este periodo.
@@ -738,6 +755,30 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             <p className="text-xs text-muted-foreground">
               {totalMarginPct.toFixed(2)}% sobre ingresos totales
             </p>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              Total vendido en efectivo
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">{formatMoney(cashSalesTotal)}</div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader className="pb-2">
+            <CardTitle className="text-sm font-medium">
+              Total vendido en transferencia
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold">
+              {formatMoney(transferSalesTotal)}
+            </div>
           </CardContent>
         </Card>
 
@@ -972,15 +1013,20 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                     </div>
                   ))}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground justify-end">
+                    {detailMeta.isCapped && (
+                      <span className="mr-auto">
+                        Mostrando hasta {TOP_PRODUCTS_FETCH_LIMIT} productos.
+                      </span>
+                    )}
                     <span>
                       {detailMeta.hasKnownTotal && detailMeta.totalPages
-                        ? `Pagina ${detailPage} de ${detailMeta.totalPages}`
-                        : `Pagina ${detailPage}`}
+                        ? `Pagina ${detailPageSafe} de ${detailMeta.totalPages}`
+                        : `Pagina ${detailPageSafe}`}
                     </span>
                     <Button
                       variant="outline"
                       size="sm"
-                      disabled={detailPage <= 1}
+                      disabled={detailPageSafe <= 1}
                       onClick={() =>
                         setDetailPage((current) => Math.max(1, current - 1))
                       }
@@ -991,7 +1037,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                       variant="outline"
                       size="sm"
                       disabled={!detailMeta.hasMore}
-                      onClick={() => setDetailPage((current) => current + 1)}
+                      onClick={() =>
+                        setDetailPage((current) =>
+                          Math.min(detailTotalPages, current + 1)
+                        )
+                      }
                     >
                       Siguiente
                     </Button>

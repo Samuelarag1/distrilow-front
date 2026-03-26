@@ -612,13 +612,22 @@ export interface SalePaymentInput {
 export interface SalePayment extends SalePaymentInput {
   id: string;
   saleId: string;
+  receivedAmount?: number | null;
+  changeAmount?: number | null;
   createdAt?: string;
   updatedAt?: string;
 }
 
-export type SalePaymentBreakdown = Partial<
-  Record<PaymentMethod | string, number>
->;
+export interface SalePaymentBreakdown {
+  paidByMethod?: Record<string, number | null | undefined> | null;
+  byMethod?: Record<string, number | null | undefined> | null;
+  appliedByMethod?: Record<string, number | null | undefined> | null;
+  [key: string]:
+    | number
+    | Record<string, number | null | undefined>
+    | null
+    | undefined;
+}
 
 export interface CreateSaleRequest {
   branchId?: string;
@@ -648,6 +657,7 @@ export interface SaleSummary {
   itemsCount?: number;
   itemsQuantity?: number;
   paymentBreakdown?: SalePaymentBreakdown;
+  pendingReason?: string | null;
   notes?: string | null;
   createdAt?: string;
   updatedAt?: string;
@@ -926,14 +936,33 @@ export interface AnalyticsSalesQuery {
   metric: AnalyticsMetric;
 }
 
+export interface ReportingGlobalMetricsByPaymentMethod {
+  cashTotal?: number | null;
+  transferTotal?: number | null;
+  appliedTotal?: number | null;
+  receivedCashTotal?: number | null;
+  receivedTransferTotal?: number | null;
+  receivedTotal?: number | null;
+}
+
+export interface ReportingGlobalMetricsResponse {
+  range?: {
+    from?: string;
+    to?: string;
+  };
+  sales?: {
+    byPaymentMethod?: ReportingGlobalMetricsByPaymentMethod | null;
+  } | null;
+}
+
 export interface ReportsTopProductsQuery {
   branchId?: string;
   from: string;
   to: string;
-  limit?: number;
   offset?: number;
   skip?: number;
   page?: number;
+  limit?: number;
   search?: string;
   q?: string;
   categoryId?: string;
@@ -968,6 +997,9 @@ export interface ReportsTopProductsResponse {
   };
   limit: number;
   items: ReportsTopProductItem[];
+  total?: number;
+  hasMore?: boolean;
+  meta?: OffsetPaginationMeta;
 }
 
 export interface ReportsSalesPriceTypesSummaryQuery {

@@ -22,10 +22,10 @@ interface MetricsCardsProps {
 type MetricCard = {
   title: string;
   value: string;
-  change: string;
-  trend: "up" | "down";
+  change?: string;
+  trend?: "up" | "down";
   icon: ComponentType<{ className?: string }>;
-  description: string;
+  description?: string;
   color: string;
   bg: string;
   details?: string[];
@@ -163,36 +163,29 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
       Number(dailyCashBreakdown?.movementIn ?? 0) -
       Number(dailyCashBreakdown?.movementOut ?? 0)
     : dailyCash;
-  const effectiveDailyCash = hasDailyCashBreakdown ? formulaDailyCash : dailyCash;
+  const effectiveDailyCash = hasDailyCashBreakdown
+    ? formulaDailyCash
+    : dailyCash;
 
   const commonMetrics: MetricCard[] = [
     {
       title: "Ingresos Totales",
       value: currencyFormatter.format(totalRevenue),
-      change: revenueChange,
-      trend: revenueTrend,
       icon: DollarSign,
-      description: "vs mes anterior",
       color: "text-blue-500",
       bg: "bg-blue-500/10",
     },
     {
       title: "Gastos Operativos",
       value: currencyFormatter.format(totalExpenses),
-      change: expensesChange,
-      trend: expensesTrend,
       icon: Receipt,
-      description: "vs mes anterior",
       color: "text-red-500",
       bg: "bg-red-500/10",
     },
     {
-      title: "Ganancia Neta",
+      title: "Ganancia Bruta",
       value: currencyFormatter.format(netProfit),
-      change: netProfitChange,
-      trend: netProfitTrend,
       icon: PiggyBank,
-      description: "vs mes anterior",
       color: "text-green-500",
       bg: "bg-green-500/10",
     },
@@ -202,10 +195,7 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
     {
       title: "Caja Diaria",
       value: currencyFormatter.format(effectiveDailyCash),
-      change: "+2.4%",
-      trend: "up",
       icon: Wallet,
-      description: "saldo actual",
       color: "text-purple-500",
       bg: "bg-purple-500/10",
     },
@@ -238,7 +228,7 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
             key={metric.title}
             className="cursor-pointer border-l-4 transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
             style={{
-              borderLeftColor: metric.trend === "up" ? "#22c55e" : "#ef4444",
+              borderLeftColor: "#22c55e",
             }}
           >
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -253,23 +243,7 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
             </CardHeader>
             <CardContent className="space-y-1">
               <div className="text-2xl font-bold">{metric.value}</div>
-              <div className="flex items-center text-xs">
-                <TrendIcon
-                  className={`mr-1 h-3 w-3 ${
-                    metric.trend === "up" ? "text-green-500" : "text-red-500"
-                  }`}
-                />
-                <span
-                  className={`font-medium ${
-                    metric.trend === "up" ? "text-green-500" : "text-red-500"
-                  }`}
-                >
-                  {metric.change}
-                </span>
-                <span className="ml-1 text-muted-foreground">
-                  {metric.description}
-                </span>
-              </div>
+
               {Array.isArray(metric.details) && metric.details.length > 0 && (
                 <div className="mt-2 space-y-1 text-[11px] text-muted-foreground">
                   {metric.details.map((detail) => (

@@ -6,19 +6,26 @@ import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
-  DialogHeader,
-  DialogTitle,
   DialogDescription,
   DialogFooter,
+  DialogHeader,
+  DialogTitle,
 } from "@/components/ui/dialog";
 import { Link } from "lucide-react";
 import type { Sale } from "@/components/providers/transactions-provider";
 import { backendApi } from "@/lib/backend-api";
+import {
+  getPaymentMethodLabel,
+  getSalePaymentTypeBadgeClassName,
+  getSalePaymentTypeLabel,
+  normalizeSalePaymentMethodKey,
+} from "@/lib/sales-payments";
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
     style: "currency",
     currency: "ARS",
+    maximumFractionDigits: 0,
   });
 }
 
@@ -38,10 +45,13 @@ export function SalesDetailModal({
   onOpenChange: (open: boolean) => void;
 }) {
   const nameCacheRef = useRef<Map<string, string>>(new Map());
-  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>({});
+  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>(
+    {}
+  );
   const saleId = sale?.id ?? "";
   const lineItems = useMemo(() => sale?.lineItems ?? [], [sale]);
-  const uniqueProductCount = new Set(lineItems.map((item) => item.productId)).size;
+  const uniqueProductCount = new Set(lineItems.map((item) => item.productId))
+    .size;
   const hasLinkedProducts = lineItems.some((item) => item.linkedProductId);
 
   const missingProductIds = useMemo(() => {
@@ -115,9 +125,8 @@ export function SalesDetailModal({
     month: "long",
     day: "numeric",
   });
-  const pendingReason = String(sale.notes ?? "").trim();
-  const showPendingReason =
-    pendingReason.length > 0 && Number(sale.outstandingAmount ?? 0) > 0;
+  const pendingReason = String(sale.pendingReason ?? "").trim();
+  const showPendingReason = Number(sale.outstandingAmount ?? 0) > 0;
 
   const getDisplayProductName = (productId: string, providedName?: string) => {
     const rawName = String(providedName ?? "").trim();
@@ -131,43 +140,41 @@ export function SalesDetailModal({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
+      <DialogContent className="max-h-[90vh] max-w-4xl overflow-y-auto">
         <DialogHeader>
           <DialogTitle>Detalles de Venta</DialogTitle>
           <DialogDescription>
-            {dateFormatted} a las {saleTime} • ID: {sale.id}
+            {dateFormatted} a las {saleTime} - ID: {sale.id}
           </DialogDescription>
         </DialogHeader>
 
         <div className="space-y-6">
-          {/* Summary Cards */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <div className="rounded-lg border p-3 bg-muted/50">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className="rounded-lg border bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">Total</p>
               <p className="text-lg font-bold">
                 {formatMoney(sale.totalAmount)}
               </p>
             </div>
-            <div className="rounded-lg border p-3 bg-muted/50">
+            <div className="rounded-lg border bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">Pagado</p>
               <p className="text-lg font-bold text-green-600">
                 {formatMoney(sale.paidAmount)}
               </p>
             </div>
-            <div className="rounded-lg border p-3 bg-muted/50">
+            <div className="rounded-lg border bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">Saldo</p>
               <p className="text-lg font-bold text-orange-600">
                 {formatMoney(sale.outstandingAmount)}
               </p>
             </div>
-            <div className="rounded-lg border p-3 bg-muted/50">
+            <div className="rounded-lg border bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">Productos</p>
               <p className="text-lg font-bold">{uniqueProductCount}</p>
             </div>
           </div>
 
-          {/* Status */}
-          <div className="flex items-center justify-between">
+          <div className="flex items-center justify-between gap-4">
             <div className="text-sm">
               <p className="text-muted-foreground">Estado de pago</p>
               <Badge className="mt-1">
@@ -179,46 +186,63 @@ export function SalesDetailModal({
               </Badge>
             </div>
             <div className="text-sm">
-              <p className="text-muted-foreground">Método de pago</p>
-              <p className="font-medium mt-1">
-                {sale.paymentMethods.join(" + ") || "Sin pago"}
-              </p>
-            </div>
-            {hasLinkedProducts && (
-              <div className="text-sm">
-                <p className="text-muted-foreground">Productos vinculados</p>
-                <p className="text-green-600 font-medium mt-1 flex items-center gap-1">
-                  <Link className="h-4 w-4" /> Sí
+              <p className="text-muted-foreground">Metodo de pago</p>
+              <div className="mt-1 space-y-1">
+                <Badge
+                  className={getSalePaymentTypeBadgeClassName(sale.paymentType)}
+                >
+                  {getSalePaymentTypeLabel(sale.paymentType)}
+                </Badge>
+                <p className="text-xs text-muted-foreground">
+                  {sale.paymentBreakdownByMethod.cash > 0
+                    ? `Efectivo: ${formatMoney(
+                        sale.paymentBreakdownByMethod.cash
+                      )}`
+                    : null}
+                  {sale.paymentBreakdownByMethod.transfer > 0
+                    ? `Transf.: ${formatMoney(
+                        sale.paymentBreakdownByMethod.transfer
+                      )}`
+                    : null}
                 </p>
               </div>
-            )}
+            </div>
+            {hasLinkedProducts ? (
+              <div className="text-sm">
+                <p className="text-muted-foreground">Productos vinculados</p>
+                <p className="mt-1 flex items-center gap-1 font-medium text-green-600">
+                  <Link className="h-4 w-4" /> Si
+                </p>
+              </div>
+            ) : null}
           </div>
 
-          {showPendingReason && (
+          {showPendingReason ? (
             <div className="rounded-lg border border-amber-200 bg-amber-50/70 p-3">
               <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                 Motivo de saldo pendiente
               </p>
-              <p className="mt-1 text-sm text-amber-900">{pendingReason}</p>
+              <p className="mt-1 text-sm text-amber-900">
+                {pendingReason || "Sin motivo informado"}
+              </p>
             </div>
-          )}
+          ) : null}
 
-          {/* Line Items Table */}
           <div className="space-y-2">
             <h3 className="font-semibold">Desglose de Productos</h3>
-            <div className="border rounded-lg overflow-hidden">
+            <div className="overflow-hidden rounded-lg border">
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
-                  <thead className="bg-muted/50 border-b">
+                  <thead className="border-b bg-muted/50">
                     <tr>
-                      <th className="text-left p-3 font-medium">Producto</th>
-                      <th className="text-right p-3 font-medium">Cantidad</th>
-                      <th className="text-right p-3 font-medium">
+                      <th className="p-3 text-left font-medium">Producto</th>
+                      <th className="p-3 text-right font-medium">Cantidad</th>
+                      <th className="p-3 text-right font-medium">
                         Precio Unit.
                       </th>
-                      <th className="text-right p-3 font-medium">Subtotal</th>
-                      <th className="text-center p-3 font-medium">Tipo</th>
-                      <th className="text-center p-3 font-medium">Vinculado</th>
+                      <th className="p-3 text-right font-medium">Subtotal</th>
+                      <th className="p-3 text-center font-medium">Tipo</th>
+                      <th className="p-3 text-center font-medium">Vinculado</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
@@ -226,7 +250,7 @@ export function SalesDetailModal({
                       <tr>
                         <td
                           colSpan={6}
-                          className="text-center p-4 text-muted-foreground"
+                          className="p-4 text-center text-muted-foreground"
                         >
                           Sin productos registrados
                         </td>
@@ -238,37 +262,40 @@ export function SalesDetailModal({
                         return (
                           <tr
                             key={`${item.productId}-${index}`}
-                            className="hover:bg-muted/25 transition-colors"
+                            className="transition-colors hover:bg-muted/25"
                           >
                             <td className="p-3">
                               <div className="space-y-1">
-                                <p className="font-medium text-sm">
-                                  {getDisplayProductName(item.productId, item.productName)}
+                                <p className="text-sm font-medium">
+                                  {getDisplayProductName(
+                                    item.productId,
+                                    item.productName
+                                  )}
                                 </p>
                                 <p className="text-xs text-muted-foreground">
                                   {item.productId.slice(0, 8)}
                                 </p>
                               </div>
                             </td>
-                            <td className="text-right p-3 font-medium">
+                            <td className="p-3 text-right font-medium">
                               {Number(item.quantity).toFixed(
                                 item.quantity % 1 !== 0 ? 2 : 0
                               )}
                             </td>
-                            <td className="text-right p-3">
+                            <td className="p-3 text-right">
                               {formatMoney(item.price)}
                             </td>
-                            <td className="text-right p-3 font-semibold">
+                            <td className="p-3 text-right font-semibold">
                               {formatMoney(subtotal)}
                             </td>
-                            <td className="text-center p-3">
+                            <td className="p-3 text-center">
                               {item.priceType ? (
                                 <Badge
                                   variant="outline"
                                   className={
                                     item.priceType === "WHOLESALE"
-                                      ? "bg-blue-50 text-blue-700 border-blue-200"
-                                      : "bg-amber-50 text-amber-700 border-amber-200"
+                                      ? "border-blue-200 bg-blue-50 text-blue-700"
+                                      : "border-amber-200 bg-amber-50 text-amber-700"
                                   }
                                 >
                                   {item.priceType === "WHOLESALE"
@@ -279,7 +306,7 @@ export function SalesDetailModal({
                                 "-"
                               )}
                             </td>
-                            <td className="text-center p-3">
+                            <td className="p-3 text-center">
                               {item.linkedProductId ? (
                                 <div
                                   className="flex items-center justify-center gap-1"
@@ -289,8 +316,8 @@ export function SalesDetailModal({
                                   )}`}
                                 >
                                   <Link className="h-4 w-4 text-green-600" />
-                                  <span className="text-xs text-green-600 font-medium">
-                                    Sí
+                                  <span className="text-xs font-medium text-green-600">
+                                    Si
                                   </span>
                                 </div>
                               ) : (
@@ -307,27 +334,63 @@ export function SalesDetailModal({
             </div>
           </div>
 
-          {/* Payments if available */}
-          {sale.payments && sale.payments.length > 0 && (
+          {sale.payments && sale.payments.length > 0 ? (
             <div className="space-y-2">
               <h3 className="font-semibold">Pagos Registrados</h3>
               <div className="space-y-2">
-                {sale.payments.map((payment, index) => (
-                  <div
-                    key={`${payment.id ?? index}`}
-                    className="rounded-lg border p-3 bg-muted/25 flex justify-between items-center text-sm"
-                  >
-                    <span className="font-medium uppercase">
-                      {payment.method}
-                    </span>
-                    <span className="font-semibold">
-                      {formatMoney(payment.amount)}
-                    </span>
-                  </div>
-                ))}
+                {sale.payments.map((payment, index) => {
+                  const normalizedMethod = normalizeSalePaymentMethodKey(
+                    payment.method
+                  );
+                  const receivedAmount = Number(
+                    payment.receivedAmount ?? payment.amount ?? 0
+                  );
+                  const appliedAmount = Number(payment.amount ?? 0);
+                  const changeAmount = Number(payment.changeAmount ?? 0);
+                  const hasTransferExcess =
+                    normalizedMethod === "TRANSFER" &&
+                    receivedAmount > appliedAmount;
+
+                  return (
+                    <div
+                      key={`${payment.id ?? index}`}
+                      className="rounded-lg border bg-muted/25 p-3 text-sm"
+                    >
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="space-y-2">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="font-medium">
+                              {getPaymentMethodLabel(payment.method)}
+                            </span>
+                            {hasTransferExcess ? (
+                              <Badge className="bg-blue-100 text-blue-800">
+                                Excedente transferido
+                              </Badge>
+                            ) : null}
+                          </div>
+                          <div className="space-y-1 text-xs text-muted-foreground">
+                            <p>Aplicado: {formatMoney(appliedAmount)}</p>
+                            {receivedAmount > 0 ? (
+                              <p>Ingresado: {formatMoney(receivedAmount)}</p>
+                            ) : null}
+                            {normalizedMethod === "CASH" && changeAmount > 0 ? (
+                              <p>Vuelto: {formatMoney(changeAmount)}</p>
+                            ) : null}
+                            {payment.reference ? (
+                              <p>Ref: {payment.reference}</p>
+                            ) : null}
+                          </div>
+                        </div>
+                        <span className="font-semibold">
+                          {formatMoney(appliedAmount)}
+                        </span>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             </div>
-          )}
+          ) : null}
         </div>
 
         <DialogFooter>

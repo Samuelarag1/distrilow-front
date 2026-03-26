@@ -33,13 +33,19 @@ import {
 import { SalesDetailModal } from "./sales-detail-modal";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useToast } from "@/hooks/use-toast";
-import { backendApi } from "@/lib/backend-api";
 import type { PaymentMethod } from "@/lib/api-types";
+import {
+  getSalePaymentTypeBadgeClassName,
+  getSalePaymentTypeLabel,
+  normalizeWholeAmountInput,
+  parseWholeAmount,
+} from "@/lib/sales-payments";
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
     style: "currency",
     currency: "ARS",
+    maximumFractionDigits: 0,
   });
 }
 
@@ -67,77 +73,17 @@ function toFiniteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function getPaymentMethodLabel(method: string) {
-  const normalized = String(method ?? "")
-    .trim()
-    .toUpperCase();
-  if (normalized === "CASH") return "Efectivo";
-  if (normalized === "TRANSFER" || normalized === "TRANSFERENCIA") {
-    return "Transferencia";
-  }
-  if (normalized === "DEBIT_CARD") return "Debito";
-  if (normalized === "CREDIT_CARD") return "Credito";
-  if (normalized === "MERCADO_PAGO") return "Mercado Pago";
-  if (normalized === "OTHER") return "Otro";
-  return normalized || "Sin pagos";
-}
-
-const PAYMENT_MIX_THRESHOLD = 0.01;
-
-function normalizePaymentMethodKey(method: unknown) {
-  const normalized = String(method ?? "")
-    .trim()
-    .toUpperCase();
-  if (normalized === "EFECTIVO") return "CASH";
-  if (normalized === "TRANSFERENCIA") return "TRANSFER";
-  return normalized;
-}
-
-function getPositivePaymentMethodTotals(sale: Sale) {
-  const totals = new Map<string, number>();
-  Object.entries(sale.paymentBreakdown ?? {}).forEach(([method, amount]) => {
-    const normalizedMethod = normalizePaymentMethodKey(method);
-    if (!normalizedMethod) return;
-
-    const normalizedAmount = toFiniteNumber(amount, 0);
-    if (normalizedAmount <= PAYMENT_MIX_THRESHOLD) return;
-
-    totals.set(
-      normalizedMethod,
-      Number(totals.get(normalizedMethod) ?? 0) + normalizedAmount
-    );
-  });
-  return totals;
-}
-
-type SalesPaymentMethodFilter = "CASH" | "TRANSFER";
+type SalesPaymentMethodFilter = "CASH" | "TRANSFER" | "MIXTO";
 type SalesPaymentFilter = "all" | SalesPaymentMethodFilter;
 
-const PAYMENT_FILTER_LIMIT = 100;
-const PAYMENT_FILTER_MAX_PAGES = 40;
-
-async function fetchSaleIdsByPaymentMethod(method: SalesPaymentMethodFilter) {
-  const saleIds = new Set<string>();
-  let offset = 0;
-
-  for (let page = 0; page < PAYMENT_FILTER_MAX_PAGES; page += 1) {
-    const response = await backendApi.sales.paymentsList({
-      method,
-      offset,
-      limit: PAYMENT_FILTER_LIMIT,
-    });
-
-    response.items.forEach((payment) => {
-      const saleId = String(payment.saleId ?? "").trim();
-      if (!saleId) return;
-      saleIds.add(saleId);
-    });
-
-    if (!response.meta.hasMore) break;
-    offset += Math.max(1, Number(response.meta.limit ?? PAYMENT_FILTER_LIMIT));
-  }
-
-  return Array.from(saleIds);
+function matchesSalePaymentFilter(
+  sale: Sale,
+  filter: SalesPaymentMethodFilter | null
+) {
+  if (!filter) return true;
+  if (filter === "CASH") return sale.paymentType === "SOLO_EFECTIVO";
+  if (filter === "TRANSFER") return sale.paymentType === "SOLO_TRANSFERENCIA";
+  return sale.paymentType === "MIXTO";
 }
 
 export function SalesTable() {
@@ -163,11 +109,7 @@ export function SalesTable() {
   const paymentMethodFilter =
     selectedPaymentMethod === "all" ? null : selectedPaymentMethod;
 
-  const {
-    data: detailSale,
-    isLoading: isLoadingDetailSale,
-    error: detailSaleError,
-  } = useSWR(
+  const { data: detailSale } = useSWR(
     detailSaleId ? (["/sales", detailSaleId] as const) : null,
     () => getSaleDetail(detailSaleId as string),
     {
@@ -175,36 +117,11 @@ export function SalesTable() {
       keepPreviousData: true,
     }
   );
-
-  const {
-    data: filteredSaleIdsByPaymentMethod,
-    isLoading: isLoadingPaymentMethodFilter,
-    error: paymentMethodFilterError,
-  } = useSWR(
-    paymentMethodFilter
-      ? (["/sales/payments/list", paymentMethodFilter] as const)
-      : null,
-    ([, method]) => fetchSaleIdsByPaymentMethod(method),
-    {
-      revalidateOnFocus: false,
-      keepPreviousData: false,
-    }
-  );
-  const filteredSaleIdsByPaymentMethodSet = useMemo(
-    () => new Set(filteredSaleIdsByPaymentMethod ?? []),
-    [filteredSaleIdsByPaymentMethod]
-  );
-  const isPaymentMethodFilterPending =
-    Boolean(paymentMethodFilter) &&
-    isLoadingPaymentMethodFilter &&
-    !paymentMethodFilterError &&
-    !filteredSaleIdsByPaymentMethod;
-  const isTableLoading = isLoading || isPaymentMethodFilterPending;
+  const isTableLoading = isLoading;
 
   const filteredSales = useMemo(
     () =>
       sales.filter((sale) => {
-        if (isPaymentMethodFilterPending) return false;
         if (sale.businessType !== businessType) return false;
         const status = getSaleRowStatus(sale);
         const query = searchQuery.trim().toLowerCase();
@@ -214,22 +131,13 @@ export function SalesTable() {
           sale.id.toLowerCase().includes(query);
         const matchesStatus =
           selectedStatus === "all" || selectedStatus === status;
-        const matchesPaymentMethod =
-          !paymentMethodFilter ||
-          Boolean(paymentMethodFilterError) ||
-          filteredSaleIdsByPaymentMethodSet.has(sale.id);
+        const matchesPaymentMethod = matchesSalePaymentFilter(
+          sale,
+          paymentMethodFilter
+        );
         return matchesSearch && matchesStatus && matchesPaymentMethod;
       }),
-    [
-      sales,
-      isPaymentMethodFilterPending,
-      businessType,
-      searchQuery,
-      selectedStatus,
-      paymentMethodFilter,
-      paymentMethodFilterError,
-      filteredSaleIdsByPaymentMethodSet,
-    ]
+    [sales, businessType, searchQuery, selectedStatus, paymentMethodFilter]
   );
 
   const totalPages = Math.max(1, Math.ceil(filteredSales.length / pageSize));
@@ -242,7 +150,9 @@ export function SalesTable() {
   const openPayDialog = (sale: Sale) => {
     setSaleToPay(sale);
     setPayAmount(
-      String(sale.outstandingAmount > 0 ? sale.outstandingAmount : "")
+      sale.outstandingAmount > 0
+        ? String(Math.trunc(toFiniteNumber(sale.outstandingAmount, 0)))
+        : ""
     );
     setPayMethod("CASH");
     setPayReference("");
@@ -251,12 +161,12 @@ export function SalesTable() {
 
   const handleRegisterPayment = async () => {
     if (!saleToPay) return;
-    const amount = Number(payAmount);
+    const amount = parseWholeAmount(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
-        description: "Ingresa un monto valido mayor a 0.",
+        description: "Ingresa un monto entero valido mayor a 0.",
       });
       return;
     }
@@ -349,7 +259,9 @@ export function SalesTable() {
             <select
               value={selectedPaymentMethod}
               onChange={(event) => {
-                setSelectedPaymentMethod(event.target.value as SalesPaymentFilter);
+                setSelectedPaymentMethod(
+                  event.target.value as SalesPaymentFilter
+                );
                 setCurrentPage(1);
               }}
               className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
@@ -357,15 +269,9 @@ export function SalesTable() {
               <option value="all">Todos los pagos</option>
               <option value="CASH">Solo efectivo</option>
               <option value="TRANSFER">Solo transferencia</option>
+              <option value="MIXTO">Mixto</option>
             </select>
           </div>
-
-          {paymentMethodFilterError && (
-            <p className="text-xs text-destructive">
-              No se pudo aplicar el filtro por metodo de pago. Se muestran todas
-              las ventas.
-            </p>
-          )}
 
           <div className="border rounded-lg overflow-hidden">
             <div className="overflow-x-auto">
@@ -418,25 +324,12 @@ export function SalesTable() {
                           sale.lifecycleStatus !== "CANCELLED" &&
                           sale.outstandingAmount > 0;
                         const canCancel = sale.lifecycleStatus !== "CANCELLED";
-                        const positivePaymentTotals =
-                          getPositivePaymentMethodTotals(sale);
-                        const transferAmount = Number(
-                          positivePaymentTotals.get("TRANSFER") ?? 0
-                        );
                         const cashAmount = Number(
-                          positivePaymentTotals.get("CASH") ?? 0
+                          sale.paymentBreakdownByMethod.cash ?? 0
                         );
-                        const hasMultipleMethods =
-                          positivePaymentTotals.size > 1;
-                        const isMixedCashTransfer =
-                          transferAmount > PAYMENT_MIX_THRESHOLD &&
-                          cashAmount > PAYMENT_MIX_THRESHOLD;
-                        const paymentMethodsText =
-                          positivePaymentTotals.size > 0
-                            ? Array.from(positivePaymentTotals.keys())
-                                .map((method) => getPaymentMethodLabel(method))
-                                .join(" + ")
-                            : "Sin pagos";
+                        const transferAmount = Number(
+                          sale.paymentBreakdownByMethod.transfer ?? 0
+                        );
 
                         return (
                           <tr
@@ -457,27 +350,13 @@ export function SalesTable() {
                             </td>
                             <td className="p-3">
                               <div className="space-y-1 text-xs">
-                                {isMixedCashTransfer ? (
-                                  <Badge className="bg-sky-100 text-sky-800">
-                                    Mixto: efectivo + transferencia
-                                  </Badge>
-                                ) : hasMultipleMethods ? (
-                                  <Badge className="bg-indigo-100 text-indigo-800">
-                                    Mixto
-                                  </Badge>
-                                ) : (
-                                  <span className="font-medium text-foreground">
-                                    {paymentMethodsText}
-                                  </span>
-                                )}
-                                <p className="text-muted-foreground">
-                                  Transferido:{" "}
-                                  <span className="font-medium text-foreground">
-                                    {transferAmount > 0
-                                      ? formatMoney(transferAmount)
-                                      : "-"}
-                                  </span>
-                                </p>
+                                <Badge
+                                  className={getSalePaymentTypeBadgeClassName(
+                                    sale.paymentType
+                                  )}
+                                >
+                                  {getSalePaymentTypeLabel(sale.paymentType)}
+                                </Badge>
                               </div>
                             </td>
                             <td className="p-3">
@@ -588,10 +467,13 @@ export function SalesTable() {
           <div className="space-y-3">
             <Input
               type="number"
-              min="0.01"
-              step="0.01"
+              min="1"
+              step="1"
+              inputMode="numeric"
               value={payAmount}
-              onChange={(event) => setPayAmount(event.target.value)}
+              onChange={(event) =>
+                setPayAmount(normalizeWholeAmountInput(event.target.value))
+              }
               placeholder="Monto"
             />
             <select

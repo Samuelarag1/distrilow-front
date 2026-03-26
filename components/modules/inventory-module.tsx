@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,7 @@ import type {
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import { backendApi } from "@/lib/backend-api";
 import { InventoryLotsSection } from "@/components/modules/inventory-lots-section";
+import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import {
   Popover,
   PopoverContent,
@@ -148,7 +149,9 @@ function resolveInventoryRowCategoryId(item: InventoryRow) {
 }
 
 function resolveInventoryRowImage(item: InventoryRow) {
-  return resolveProductImageUrl((item.product ?? (item as unknown as Product)) as Product);
+  return resolveProductImageUrl(
+    (item.product ?? (item as unknown as Product)) as Product
+  );
 }
 
 function resolveLinkedProducts(item: InventoryRow): StockSharedProduct[] {
@@ -449,7 +452,11 @@ function StockDetailDialog({
     open && branchId && productId
       ? ["stock-detail", branchId, productId]
       : null,
-    () => backendApi.stocks.getByBranchAndProduct(branchId as string, productId as string),
+    () =>
+      backendApi.stocks.getByBranchAndProduct(
+        branchId as string,
+        productId as string
+      ),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
@@ -472,7 +479,9 @@ function StockDetailDialog({
           </DialogDescription>
         </DialogHeader>
 
-        {isLoading && <p className="text-sm text-muted-foreground">Cargando detalle...</p>}
+        {isLoading && (
+          <p className="text-sm text-muted-foreground">Cargando detalle...</p>
+        )}
 
         {!isLoading && error && (
           <p className="text-sm text-destructive">
@@ -486,7 +495,9 @@ function StockDetailDialog({
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Producto consultado</p>
+                <p className="text-xs text-muted-foreground">
+                  Producto consultado
+                </p>
                 <p className="font-semibold">{data.productId || "-"}</p>
               </div>
               <div className="rounded-md border p-3">
@@ -494,7 +505,9 @@ function StockDetailDialog({
                 <p className="font-semibold">{data.stockProductId || "-"}</p>
               </div>
               <div className="rounded-md border p-3">
-                <p className="text-xs text-muted-foreground">Cantidad comercial</p>
+                <p className="text-xs text-muted-foreground">
+                  Cantidad comercial
+                </p>
                 <p className="font-semibold">
                   {Number(data.quantity ?? 0).toLocaleString("es-AR")}
                 </p>
@@ -502,7 +515,8 @@ function StockDetailDialog({
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Stock real base</p>
                 <p className="font-semibold">
-                  {Number(data.baseQuantity ?? 0).toLocaleString("es-AR")} {baseUnit}
+                  {Number(data.baseQuantity ?? 0).toLocaleString("es-AR")}{" "}
+                  {baseUnit}
                 </p>
               </div>
             </div>
@@ -510,7 +524,8 @@ function StockDetailDialog({
             {data.sharedStock?.isShared && (
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground mb-2">
-                  Productos vinculados: {Number(data.sharedStock.linkedProductsCount ?? 0)}
+                  Productos vinculados:{" "}
+                  {Number(data.sharedStock.linkedProductsCount ?? 0)}
                 </p>
                 <div className="space-y-2">
                   {linkedProducts.map((linked) => (
@@ -532,11 +547,15 @@ function StockDetailDialog({
                         )}
                         <div className="text-right text-muted-foreground">
                           <span>
-                            {Number(linked.stockConsumptionQuantity ?? 0).toLocaleString("es-AR")}{" "}
+                            {Number(
+                              linked.stockConsumptionQuantity ?? 0
+                            ).toLocaleString("es-AR")}{" "}
                             {linked.stockBaseUnit ?? "-"}
                           </span>
                           {Number(data.baseQuantity ?? Number.NaN) > 0 &&
-                            Number(linked.stockConsumptionQuantity ?? Number.NaN) > 0 && (
+                            Number(
+                              linked.stockConsumptionQuantity ?? Number.NaN
+                            ) > 0 && (
                               <p className="text-[10px]">
                                 ~{" "}
                                 {(
@@ -567,6 +586,7 @@ export function InventoryModule() {
   const { registerStockMovement } = useProductActions();
   const effectiveBranchId = normalizeBranchContextId(branchId);
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 350);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
@@ -577,6 +597,7 @@ export function InventoryModule() {
   } | null>(null);
   const pageSize = 20;
   const { toast } = useToast();
+  const stocksAbortControllerRef = useRef<AbortController | null>(null);
   const stockSummaryFilters = useMemo(
     () => ({
       branchId: effectiveBranchId,
@@ -593,11 +614,11 @@ export function InventoryModule() {
     () => ({
       page: currentPage,
       limit: pageSize,
-      search: searchQuery.trim() || undefined,
+      search: debouncedSearch.trim() || undefined,
       categoryId: selectedCategory !== "all" ? selectedCategory : undefined,
       stockStatus: "all",
     }),
-    [currentPage, pageSize, searchQuery, selectedCategory]
+    [currentPage, pageSize, debouncedSearch, selectedCategory]
   );
 
   const {
@@ -607,7 +628,25 @@ export function InventoryModule() {
     error: stocksError,
   } = useSWR(
     effectiveBranchId ? ["stocks", effectiveBranchId, stockListFilters] : null,
-    () => backendApi.stocks.list(stockListFilters, effectiveBranchId),
+    async () => {
+      stocksAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      stocksAbortControllerRef.current = controller;
+
+      try {
+        return await backendApi.stocks.list(
+          stockListFilters,
+          effectiveBranchId,
+          {
+            signal: controller.signal,
+          }
+        );
+      } finally {
+        if (stocksAbortControllerRef.current === controller) {
+          stocksAbortControllerRef.current = null;
+        }
+      }
+    },
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
@@ -637,14 +676,18 @@ export function InventoryModule() {
       );
       if (linkedProducts.length === 0) return;
 
-      const baseQuantity = Number(row.baseQuantity ?? row.quantity ?? Number.NaN);
+      const baseQuantity = Number(
+        row.baseQuantity ?? row.quantity ?? Number.NaN
+      );
       const hasBaseQuantity = Number.isFinite(baseQuantity);
 
       linkedProducts.forEach((linked) => {
         const linkedId = String(linked.id ?? "").trim();
         if (!linkedId || byProductId.has(linkedId)) return;
 
-        const consumption = Number(linked.stockConsumptionQuantity ?? Number.NaN);
+        const consumption = Number(
+          linked.stockConsumptionQuantity ?? Number.NaN
+        );
         const hasConsumption = Number.isFinite(consumption) && consumption > 0;
         const derivedQuantity =
           hasBaseQuantity && hasConsumption
@@ -666,7 +709,9 @@ export function InventoryModule() {
           productId: linkedId,
           name: linked.name,
           quantity: derivedQuantity,
-          baseQuantity: hasBaseQuantity ? baseQuantity : row.baseQuantity ?? null,
+          baseQuantity: hasBaseQuantity
+            ? baseQuantity
+            : row.baseQuantity ?? null,
           stockConsumptionQuantity: hasConsumption
             ? consumption
             : row.stockConsumptionQuantity ?? null,
@@ -688,12 +733,13 @@ export function InventoryModule() {
   );
   const take = Number(stocksPage?.meta?.limit ?? pageSize);
   const isLoading = isLoadingStocks;
-  const isError = stocksError;
+  const isError =
+    stocksError instanceof DOMException && stocksError.name === "AbortError"
+      ? null
+      : stocksError;
 
   const { data: inventorySummary, mutate: mutateInventorySummary } = useSWR(
-    effectiveBranchId
-      ? ["/stocks/summary", stockSummaryFilters]
-      : null,
+    effectiveBranchId ? ["/stocks/summary", stockSummaryFilters] : null,
     () =>
       backendApi.stocks.summary(
         { lowStockThreshold: LOW_STOCK_THRESHOLD },
@@ -720,10 +766,13 @@ export function InventoryModule() {
       ? ["stocks-low-list", effectiveBranchId, LOW_STOCK_THRESHOLD]
       : null,
     async () => {
-      const payload = await backendApi.stocks.list({
-        stockStatus: "low_stock",
-        lowStockThreshold: LOW_STOCK_THRESHOLD,
-      }, effectiveBranchId);
+      const payload = await backendApi.stocks.list(
+        {
+          stockStatus: "low_stock",
+          lowStockThreshold: LOW_STOCK_THRESHOLD,
+        },
+        effectiveBranchId
+      );
       return payload.items as LowStockRow[];
     }
   );
@@ -764,22 +813,37 @@ export function InventoryModule() {
     setCurrentPage(1);
   };
 
-  const filteredInventory = inventory.slice().sort((a: InventoryRow, b: InventoryRow) => {
-    const factor = sortOrder === "asc" ? 1 : -1;
-    if (sortKey === "name") {
-      return resolveInventoryRowName(a).localeCompare(resolveInventoryRowName(b)) * factor;
-    }
-    if (sortKey === "category") {
-      return getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) * factor;
-    }
-    if (sortKey === "stock") {
-      return (Number(a.quantity ?? 0) - Number(b.quantity ?? 0)) * factor;
-    }
-    return (
-      resolveInventoryRowPrices(a).wholesaleUnitPrice -
-      resolveInventoryRowPrices(b).wholesaleUnitPrice
-    ) * factor;
-  });
+  useEffect(() => {
+    return () => {
+      stocksAbortControllerRef.current?.abort();
+    };
+  }, []);
+
+  const filteredInventory = inventory
+    .slice()
+    .sort((a: InventoryRow, b: InventoryRow) => {
+      const factor = sortOrder === "asc" ? 1 : -1;
+      if (sortKey === "name") {
+        return (
+          resolveInventoryRowName(a).localeCompare(resolveInventoryRowName(b)) *
+          factor
+        );
+      }
+      if (sortKey === "category") {
+        return (
+          getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) *
+          factor
+        );
+      }
+      if (sortKey === "stock") {
+        return (Number(a.quantity ?? 0) - Number(b.quantity ?? 0)) * factor;
+      }
+      return (
+        (resolveInventoryRowPrices(a).wholesaleUnitPrice -
+          resolveInventoryRowPrices(b).wholesaleUnitPrice) *
+        factor
+      );
+    });
 
   const categories = useMemo(() => {
     return (categoriesData ?? [])
@@ -793,12 +857,16 @@ export function InventoryModule() {
 
   const totalValueFallback = inventory.reduce(
     (sum: number, item: InventoryRow) =>
-      sum + Number(item.quantity ?? 0) * resolveInventoryRowPrices(item).wholesaleUnitPrice,
+      sum +
+      Number(item.quantity ?? 0) *
+        resolveInventoryRowPrices(item).wholesaleUnitPrice,
     0
   );
   const inventoryNameById = useMemo(
     () =>
-      new Map(inventory.map((item) => [item.productId, resolveInventoryRowName(item)])),
+      new Map(
+        inventory.map((item) => [item.productId, resolveInventoryRowName(item)])
+      ),
     [inventory]
   );
   const lowStockNamesPreview = useMemo(() => {
@@ -806,8 +874,7 @@ export function InventoryModule() {
 
     const names = lowStockRows
       .map((row) => {
-        const directName =
-          typeof row.name === "string" ? row.name.trim() : "";
+        const directName = typeof row.name === "string" ? row.name.trim() : "";
         if (directName) return directName;
 
         const nestedName =
@@ -845,7 +912,11 @@ export function InventoryModule() {
   const showingFrom = inventoryTotal === 0 ? 0 : skip + 1;
   const showingTo = inventoryTotal === 0 ? 0 : skip + filteredInventory.length;
 
-  const getStockStatus = (stock: number, minStock: number, maxStock: number) => {
+  const getStockStatus = (
+    stock: number,
+    minStock: number,
+    maxStock: number
+  ) => {
     if (stock <= minStock) return "low";
     if (stock >= maxStock * 0.8) return "high";
     return "normal";
@@ -1007,7 +1078,10 @@ export function InventoryModule() {
                     status
                   )}`}
                 >
-                  {stockQuantity.toLocaleString("es-AR")}
+                  {stockQuantity.toLocaleString("es-AR", {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 2,
+                  })}
                 </div>
                 <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter mt-1">
                   {unitLabel} disponibles
@@ -1051,7 +1125,9 @@ export function InventoryModule() {
                           className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs"
                         >
                           <div className="min-w-0">
-                            <p className="truncate font-medium">{linked.name}</p>
+                            <p className="truncate font-medium">
+                              {linked.name}
+                            </p>
                             <p className="truncate text-muted-foreground">
                               {linked.sku ? `SKU ${linked.sku}` : linked.id}
                             </p>
@@ -1085,7 +1161,7 @@ export function InventoryModule() {
               <span className="font-semibold text-foreground">
                 {consumptionQuantity.toLocaleString("es-AR", {
                   minimumFractionDigits: 0,
-                  maximumFractionDigits: 4,
+                  maximumFractionDigits: 2,
                 })}{" "}
                 {consumptionLabel}
               </span>{" "}
@@ -1097,11 +1173,12 @@ export function InventoryModule() {
                 <span className="font-semibold text-foreground">
                   {Number(relativeStockFromBase).toLocaleString("es-AR", {
                     minimumFractionDigits: 0,
-                    maximumFractionDigits: 4,
+                    maximumFractionDigits: 2,
                   })}{" "}
                   {unitLabel}
                 </span>{" "}
-                (base real: {baseQuantity.toLocaleString("es-AR", {
+                (base real:{" "}
+                {baseQuantity.toLocaleString("es-AR", {
                   minimumFractionDigits: 0,
                   maximumFractionDigits: 4,
                 })}{" "}
@@ -1179,8 +1256,8 @@ export function InventoryModule() {
           <p className="text-xs text-muted-foreground">
             Sucursal activa:{" "}
             <span className="font-semibold text-foreground">
-              {branches.find((branch) => branch.id === effectiveBranchId)?.name ??
-                "Sin sucursal"}
+              {branches.find((branch) => branch.id === effectiveBranchId)
+                ?.name ?? "Sin sucursal"}
             </span>
           </p>
         </div>
@@ -1268,8 +1345,8 @@ export function InventoryModule() {
           <div className="flex-1">
             <h4 className="text-red-900 font-bold">Resumen de Reposición</h4>
             <p className="text-red-700 text-sm">
-              Hay {lowStockCountKpi} productos con stock crítico. Se
-              recomienda revisar:
+              Hay {lowStockCountKpi} productos con stock crítico. Se recomienda
+              revisar:
               <span className="font-bold ml-1">
                 {lowStockNamesPreview.length > 0
                   ? lowStockNamesPreview.join(", ")
@@ -1351,16 +1428,16 @@ export function InventoryModule() {
             </div>
           </div>
         </CardHeader>
-	        <CardContent>
-	          {isError && !isLoading && (
-	            <p className="mb-4 text-sm text-destructive">
-	              {isError instanceof Error
-	                ? isError.message
-	                : "No se pudo cargar el inventario."}
-	            </p>
-	          )}
-	          <div className="flex flex-col gap-4">
-	            {isLoading ? (
+        <CardContent>
+          {isError && !isLoading && (
+            <p className="mb-4 text-sm text-destructive">
+              {isError instanceof Error
+                ? isError.message
+                : "No se pudo cargar el inventario."}
+            </p>
+          )}
+          <div className="flex flex-col gap-4">
+            {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <Card key={i} className="w-full p-4">
                   <div className="flex flex-col md:flex-row items-center gap-6">
@@ -1378,11 +1455,11 @@ export function InventoryModule() {
                   </div>
                 </Card>
               ))
-	            ) : filteredInventory.length > 0 ? (
-	              filteredInventory.map((item: InventoryRow) => (
-	                <InventoryItemCard key={item.id} item={item} />
-	              ))
-	            ) : (
+            ) : filteredInventory.length > 0 ? (
+              filteredInventory.map((item: InventoryRow) => (
+                <InventoryItemCard key={item.id} item={item} />
+              ))
+            ) : (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">
                   No se encontraron productos con los filtros aplicados
@@ -1421,20 +1498,19 @@ export function InventoryModule() {
         </CardContent>
       </Card>
 
-	      <InventoryLotsSection
-	        branchId={effectiveBranchId}
-	        categories={categories}
-	      />
-	      <StockDetailDialog
-	        branchId={effectiveBranchId}
-	        productId={stockDetailTarget?.productId ?? null}
-	        productName={stockDetailTarget?.productName ?? null}
-	        open={Boolean(stockDetailTarget)}
-	        onOpenChange={(open) => {
-	          if (!open) setStockDetailTarget(null);
-	        }}
-	      />
-	    </div>
-	  );
-	}
-
+      <InventoryLotsSection
+        branchId={effectiveBranchId}
+        categories={categories}
+      />
+      <StockDetailDialog
+        branchId={effectiveBranchId}
+        productId={stockDetailTarget?.productId ?? null}
+        productName={stockDetailTarget?.productName ?? null}
+        open={Boolean(stockDetailTarget)}
+        onOpenChange={(open) => {
+          if (!open) setStockDetailTarget(null);
+        }}
+      />
+    </div>
+  );
+}

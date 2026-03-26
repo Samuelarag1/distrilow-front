@@ -16,6 +16,29 @@ export type Product = ApiProduct & {
   unit?: string;
 };
 
+function extractProductStock(value: unknown) {
+  const direct = Number(value);
+  if (Number.isFinite(direct)) {
+    return direct;
+  }
+
+  if (!value || typeof value !== "object") {
+    return 0;
+  }
+
+  const source = value as {
+    quantity?: unknown;
+    availableQuantity?: unknown;
+    baseQuantity?: unknown;
+  };
+
+  const nestedStock = Number(
+    source.quantity ?? source.availableQuantity ?? source.baseQuantity ?? 0
+  );
+
+  return Number.isFinite(nestedStock) ? nestedStock : 0;
+}
+
 function normalizeProduct(item: ApiProduct): Product {
   const measurement = item.measurementType as MeasurementType;
   return {
@@ -23,7 +46,7 @@ function normalizeProduct(item: ApiProduct): Product {
     isWeighable:
       item.isWeighable ??
       (item.measurementType === "kg" || item.measurementType === "gram"),
-    stock: Number(item.stock ?? 0),
+    stock: extractProductStock(item.stock),
     price: Number(item.retailPrice ?? item.costPrice ?? 0),
     category: item.categoryId ?? "Sin categoria",
     unit: measurement,

@@ -58,6 +58,11 @@ import { backendApi, type ResolvedBarcodeProduct } from "@/lib/backend-api";
 import { emitProductsSync } from "@/lib/products-live-sync";
 import type { PaymentMethod, PriceType, PricingMode } from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
+import {
+  getPaymentMethodLabel as getSharedPaymentMethodLabel,
+  normalizeWholeAmountInput,
+  parseWholeAmount,
+} from "@/lib/sales-payments";
 
 interface CartItem extends Product {
   quantity: number;
@@ -100,7 +105,9 @@ type ScanCacheEntry = {
 
 type PaymentPreviewRow = {
   method: PaymentMethod;
-  amount: number;
+  appliedAmount: number;
+  receivedAmount: number;
+  changeAmount?: number;
   reference?: string;
 };
 
@@ -197,6 +204,7 @@ type PosPaymentCardProps = {
   total: number;
   totalInitialPayments: number;
   changeDuePreview: number;
+  transferExcessPreview: number;
   cashPaymentAmount: string;
   transferPaymentAmount: string;
   pendingPaymentReason: string;
@@ -218,6 +226,7 @@ type PosPaymentConfirmDialogProps = {
   totalInitialPayments: number;
   itemCount: number;
   changeDuePreview: number;
+  transferExcessPreview: number;
   pendingAfterInitialPayments: number;
   previewItems: PosPreviewItem[];
   previewTotalUnits: number;
@@ -445,20 +454,7 @@ function getPriceTypeLabel(priceType: PriceType) {
 }
 
 function getPaymentMethodLabel(method: PaymentMethod) {
-  switch (method) {
-    case "CASH":
-      return "Efectivo";
-    case "TRANSFER":
-      return "Transferencia";
-    case "DEBIT_CARD":
-      return "Tarjeta de debito";
-    case "CREDIT_CARD":
-      return "Tarjeta de credito";
-    case "MERCADO_PAGO":
-      return "Mercado Pago";
-    default:
-      return "Otro";
-  }
+  return getSharedPaymentMethodLabel(method);
 }
 
 function formatThresholdQuantity(value: number) {
@@ -469,7 +465,31 @@ function formatThresholdQuantity(value: number) {
 function getMeasurementLabel(product: Product) {
   if (product.measurementType === "kg") return "kg";
   if (product.measurementType === "gram") return "gr";
+  if (product.measurementType === "ml") return "ml";
+  if (product.measurementType === "liter") return "litros";
   return "unidades";
+}
+
+function extractPosStockQuantity(value: unknown) {
+  const directStock = toSafeNumber(value, Number.NaN);
+  if (Number.isFinite(directStock)) {
+    return directStock;
+  }
+
+  if (!value || typeof value !== "object") {
+    return Number.NaN;
+  }
+
+  const source = value as {
+    quantity?: unknown;
+    availableQuantity?: unknown;
+    baseQuantity?: unknown;
+  };
+
+  return pickFirstFinite(
+    [source.quantity, source.availableQuantity, source.baseQuantity],
+    Number.NaN
+  );
 }
 
 function normalizeProductForPos(
@@ -478,10 +498,12 @@ function normalizeProductForPos(
   const measurementType =
     item.measurementType === "kg" ||
     item.measurementType === "gram" ||
-    item.measurementType === "unit"
+    item.measurementType === "unit" ||
+    item.measurementType === "ml" ||
+    item.measurementType === "liter"
       ? item.measurementType
       : "unit";
-  const parsedStock = toSafeNumber(item.stock, Number.NaN);
+  const parsedStock = extractPosStockQuantity(item.stock);
 
   return {
     ...item,
@@ -510,7 +532,9 @@ function normalizeProductForPos(
   };
 }
 
-const POS_MONEY_FORMATTER = new Intl.NumberFormat("es-AR");
+const POS_MONEY_FORMATTER = new Intl.NumberFormat("es-AR", {
+  maximumFractionDigits: 0,
+});
 
 function formatMoney(value: unknown) {
   return POS_MONEY_FORMATTER.format(toSafeNumber(value, 0));
@@ -699,11 +723,11 @@ const PosCartItemCard = memo(function PosCartItemCard({
           <div className="flex items-start justify-between gap-2">
             <h4 className="truncate text-sm font-medium">{item.name}</h4>
             <p className="whitespace-nowrap text-xs font-semibold">
-              Subtotal: ${roundTo(getCartLineTotal(item), 2).toFixed(2)}
+              Subtotal: ${formatMoney(getCartLineTotal(item))}
             </p>
           </div>
           <p className="text-xs text-muted-foreground">
-            ${toSafeNumber(getDisplayUnitPrice(item), 0).toFixed(2)} /{" "}
+            ${formatMoney(getDisplayUnitPrice(item))} /{" "}
             {item.measurementType === "kg"
               ? "kg"
               : item.measurementType === "gram"
@@ -1208,6 +1232,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
   total,
   totalInitialPayments,
   changeDuePreview,
+  transferExcessPreview,
   cashPaymentAmount,
   transferPaymentAmount,
   pendingPaymentReason,
@@ -1236,22 +1261,28 @@ const PosPaymentCard = memo(function PosPaymentCard({
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span>Subtotal:</span>
-            <span>${roundTo(total, 2).toFixed(2)}</span>
+            <span>${formatMoney(total)}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span>Pagos iniciales:</span>
-            <span>${roundTo(totalInitialPayments, 2).toFixed(2)}</span>
+            <span>${formatMoney(totalInitialPayments)}</span>
           </div>
           {changeDuePreview > 0 && (
             <div className="flex justify-between text-sm font-semibold text-emerald-700">
               <span>Vuelto a entregar:</span>
-              <span>${roundTo(changeDuePreview, 2).toFixed(2)}</span>
+              <span>${formatMoney(changeDuePreview)}</span>
+            </div>
+          )}
+          {transferExcessPreview > 0 && (
+            <div className="flex justify-between text-sm font-semibold text-blue-700">
+              <span>Excedente transferido:</span>
+              <span>${formatMoney(transferExcessPreview)}</span>
             </div>
           )}
           <Separator />
           <div className="flex justify-between font-bold">
             <span>Total:</span>
-            <span>${roundTo(total, 2).toFixed(2)}</span>
+            <span>${formatMoney(total)}</span>
           </div>
         </div>
         <div className="space-y-2">
@@ -1266,9 +1297,10 @@ const PosPaymentCard = memo(function PosPaymentCard({
                 </label>
                 <Input
                   type="number"
-                  step="0.01"
+                  step="1"
                   min="0"
-                  placeholder="0.00"
+                  inputMode="numeric"
+                  placeholder="0"
                   value={cashPaymentAmount}
                   onChange={(event) =>
                     onCashPaymentAmountChange(event.target.value)
@@ -1282,9 +1314,10 @@ const PosPaymentCard = memo(function PosPaymentCard({
                 </label>
                 <Input
                   type="number"
-                  step="0.01"
+                  step="1"
                   min="0"
-                  placeholder="0.00"
+                  inputMode="numeric"
+                  placeholder="0"
                   value={transferPaymentAmount}
                   onChange={(event) =>
                     onTransferPaymentAmountChange(event.target.value)
@@ -1368,6 +1401,7 @@ function PosPaymentConfirmDialog({
   totalInitialPayments,
   itemCount,
   changeDuePreview,
+  transferExcessPreview,
   pendingAfterInitialPayments,
   previewItems,
   previewTotalUnits,
@@ -1403,8 +1437,8 @@ function PosPaymentConfirmDialog({
                   Confirmar venta
                 </DialogTitle>
                 <DialogDescription className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Revisa el detalle, los pagos cargados y el importe a devolver
-                  antes de registrar definitivamente la venta.
+                  Revisa el detalle y los pagos cargados antes de registrar
+                  definitivamente la venta.
                 </DialogDescription>
               </DialogHeader>
 
@@ -1444,6 +1478,8 @@ function PosPaymentConfirmDialog({
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/90">
                   {changeDuePreview > 0
                     ? "Vuelto a entregar"
+                    : transferExcessPreview > 0
+                    ? "Excedente transferido"
                     : pendingAfterInitialPayments > 0
                     ? "Saldo pendiente"
                     : "Pago exacto"}
@@ -1453,6 +1489,8 @@ function PosPaymentConfirmDialog({
                   {formatMoney(
                     changeDuePreview > 0
                       ? changeDuePreview
+                      : transferExcessPreview > 0
+                      ? transferExcessPreview
                       : pendingAfterInitialPayments > 0
                       ? pendingAfterInitialPayments
                       : 0
@@ -1461,6 +1499,8 @@ function PosPaymentConfirmDialog({
                 <p className="mt-3 text-sm leading-6 text-white/90">
                   {changeDuePreview > 0
                     ? "Este es el importe que deberias devolver al cliente al cerrar la operacion."
+                    : transferExcessPreview > 0
+                    ? "El excedente por transferencia es informativo y no genera vuelto."
                     : pendingAfterInitialPayments > 0
                     ? "La venta se registrara con saldo pendiente si continuas."
                     : "El importe cargado coincide exactamente con el total."}
@@ -1569,14 +1609,28 @@ function PosPaymentConfirmDialog({
                           <p className="text-sm font-semibold">
                             {getPaymentMethodLabel(payment.method)}
                           </p>
+                          {payment.method === "TRANSFER" &&
+                          payment.receivedAmount > payment.appliedAmount ? (
+                            <Badge className="mt-2 bg-blue-100 text-blue-800 hover:bg-blue-100">
+                              Excedente transferido
+                            </Badge>
+                          ) : null}
                           {payment.reference ? (
                             <p className="mt-1 text-xs text-muted-foreground">
                               Ref: {payment.reference}
                             </p>
                           ) : null}
+                          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                            <p>Aplicado: ${formatMoney(payment.appliedAmount)}</p>
+                            <p>Ingresado: ${formatMoney(payment.receivedAmount)}</p>
+                            {payment.method === "CASH" &&
+                            Number(payment.changeAmount ?? 0) > 0 ? (
+                              <p>Vuelto: ${formatMoney(payment.changeAmount ?? 0)}</p>
+                            ) : null}
+                          </div>
                         </div>
                         <p className="text-sm font-black">
-                          ${formatMoney(payment.amount)}
+                          ${formatMoney(payment.receivedAmount)}
                         </p>
                       </div>
                     </div>
@@ -1626,6 +1680,8 @@ function PosPaymentConfirmDialog({
                   <span>
                     {changeDuePreview > 0
                       ? "Vuelto"
+                      : transferExcessPreview > 0
+                      ? "Excedente transferido"
                       : pendingAfterInitialPayments > 0
                       ? "Saldo"
                       : "Diferencia"}
@@ -1635,6 +1691,8 @@ function PosPaymentConfirmDialog({
                     {formatMoney(
                       changeDuePreview > 0
                         ? changeDuePreview
+                        : transferExcessPreview > 0
+                        ? transferExcessPreview
                         : pendingAfterInitialPayments > 0
                         ? pendingAfterInitialPayments
                         : 0
@@ -1702,6 +1760,12 @@ export function POSModule() {
     () => buildPosCartStorageKey(currentUser?.id ?? null, branchId ?? null),
     [currentUser?.id, branchId]
   );
+  const handleCashPaymentAmountChange = useCallback((value: string) => {
+    setCashPaymentAmount(normalizeWholeAmountInput(value));
+  }, []);
+  const handleTransferPaymentAmountChange = useCallback((value: string) => {
+    setTransferPaymentAmount(normalizeWholeAmountInput(value));
+  }, []);
 
   useEffect(() => {
     cartPersistenceReadyRef.current = false;
@@ -1728,8 +1792,10 @@ export function POSModule() {
 
     if (restoredCart.length > 0) {
       setCart(restoredCart);
-      setCashPaymentAmount(persisted.cashPaymentAmount);
-      setTransferPaymentAmount(persisted.transferPaymentAmount);
+      setCashPaymentAmount(normalizeWholeAmountInput(persisted.cashPaymentAmount));
+      setTransferPaymentAmount(
+        normalizeWholeAmountInput(persisted.transferPaymentAmount)
+      );
       setTransferReference(persisted.transferReference);
       setPendingPaymentReason(persisted.pendingPaymentReason);
       setIsSaleCommitted(false);
@@ -2250,24 +2316,34 @@ export function POSModule() {
     totalInitialPayments,
     pendingAfterInitialPayments,
     changeDuePreview,
+    transferExcessPreview,
     paymentPreviewRows,
     previewItems,
     previewTotalUnits,
   } = useMemo(() => {
     const nextTotal = cart.reduce((sum, item) => sum + getCartLineTotal(item), 0);
-    const cashPaymentPreview = Math.max(0, Number(cashPaymentAmount || 0));
-    const transferPaymentPreview = Math.max(
-      0,
-      Number(transferPaymentAmount || 0)
+    const cashPaymentPreview = parseWholeAmount(cashPaymentAmount);
+    const transferPaymentPreview = parseWholeAmount(transferPaymentAmount);
+    const nextTotalInitialPayments = cashPaymentPreview + transferPaymentPreview;
+    const cashAppliedPreview = Math.min(cashPaymentPreview, nextTotal);
+    const remainingAfterCash = Math.max(0, nextTotal - cashAppliedPreview);
+    const transferAppliedPreview = Math.min(
+      transferPaymentPreview,
+      remainingAfterCash
     );
-    const nextTotalInitialPayments =
-      cashPaymentPreview + transferPaymentPreview;
+    const nextChangeDuePreview = Math.max(0, cashPaymentPreview - nextTotal);
+    const nextTransferExcessPreview = Math.max(
+      0,
+      transferPaymentPreview - transferAppliedPreview
+    );
     const nextPaymentPreviewRows: PaymentPreviewRow[] = [];
 
     if (Number.isFinite(cashPaymentPreview) && cashPaymentPreview > 0) {
       nextPaymentPreviewRows.push({
         method: "CASH",
-        amount: cashPaymentPreview,
+        appliedAmount: cashAppliedPreview,
+        receivedAmount: cashPaymentPreview,
+        changeAmount: nextChangeDuePreview,
       });
     }
     if (
@@ -2276,7 +2352,8 @@ export function POSModule() {
     ) {
       nextPaymentPreviewRows.push({
         method: "TRANSFER",
-        amount: transferPaymentPreview,
+        appliedAmount: transferAppliedPreview,
+        receivedAmount: transferPaymentPreview,
         reference: transferReference.trim() || undefined,
       });
     }
@@ -2297,12 +2374,10 @@ export function POSModule() {
       totalInitialPayments: nextTotalInitialPayments,
       pendingAfterInitialPayments: Math.max(
         0,
-        nextTotal - nextTotalInitialPayments
+        nextTotal - (cashAppliedPreview + transferAppliedPreview)
       ),
-      changeDuePreview: Math.max(
-        0,
-        nextTotalInitialPayments - nextTotal
-      ),
+      changeDuePreview: nextChangeDuePreview,
+      transferExcessPreview: nextTransferExcessPreview,
       paymentPreviewRows: nextPaymentPreviewRows,
       previewItems: nextPreviewItems,
       previewTotalUnits: nextPreviewItems.reduce(
@@ -2450,8 +2525,8 @@ export function POSModule() {
         method: PaymentMethod;
         reference?: string;
       }> = [];
-      const cashAmount = Number(cashPaymentAmount || 0);
-      const transferAmount = Number(transferPaymentAmount || 0);
+      const cashAmount = parseWholeAmount(cashPaymentAmount);
+      const transferAmount = parseWholeAmount(transferPaymentAmount);
       if (Number.isFinite(cashAmount) && cashAmount > 0) {
         payments.push({ amount: cashAmount, method: "CASH" });
       }
@@ -2503,7 +2578,43 @@ export function POSModule() {
       const paidAmount = Number(createdSale.paidAmount ?? 0);
       const outstandingAmount = Number(createdSale.outstandingAmount ?? 0);
       const backendTotal = Number(createdSale.totalAmount ?? total);
-      const localChangeDue = Math.max(0, totalInitialPayments - backendTotal);
+      const createdSalePayments = Array.isArray(
+        (createdSale as {
+          payments?: Array<{
+            amount?: unknown;
+            method?: unknown;
+            receivedAmount?: unknown;
+            changeAmount?: unknown;
+          }>;
+        }).payments
+      )
+        ? (createdSale as {
+            payments?: Array<{
+              amount?: unknown;
+              method?: unknown;
+              receivedAmount?: unknown;
+              changeAmount?: unknown;
+            }>;
+          }).payments ?? []
+        : [];
+      const backendCashChange = createdSalePayments.reduce((sum, payment) => {
+        const isCash = String(payment.method ?? "").toUpperCase() === "CASH";
+        if (!isCash) return sum;
+        return sum + Number(payment.changeAmount ?? 0);
+      }, 0);
+      const backendTransferExcess = createdSalePayments.reduce((sum, payment) => {
+        const isTransfer = String(payment.method ?? "").toUpperCase() === "TRANSFER";
+        if (!isTransfer) return sum;
+        const appliedAmount = Number(payment.amount ?? 0);
+        const receivedAmount = Number(payment.receivedAmount ?? appliedAmount);
+        return sum + Math.max(0, receivedAmount - appliedAmount);
+      }, 0);
+      const effectiveCashChange =
+        backendCashChange > 0 ? backendCashChange : changeDuePreview;
+      const effectiveTransferExcess =
+        backendTransferExcess > 0
+          ? backendTransferExcess
+          : transferExcessPreview;
       toast({
         title: "Venta registrada",
         description:
@@ -2511,10 +2622,16 @@ export function POSModule() {
             ? `Total $${formatMoney(backendTotal)}. Cobrado $${formatMoney(
                 paidAmount
               )}. Saldo pendiente $${formatMoney(outstandingAmount)}.`
-            : localChangeDue > 0
+            : effectiveCashChange > 0
             ? `Total $${formatMoney(
                 backendTotal
-              )}. Vuelto sugerido $${formatMoney(localChangeDue)}.`
+              )}. Vuelto $${formatMoney(effectiveCashChange)}.`
+            : effectiveTransferExcess > 0
+            ? `Total $${formatMoney(
+                backendTotal
+              )}. Excedente transferido $${formatMoney(
+                effectiveTransferExcess
+              )}.`
             : `Total $${formatMoney(backendTotal)} registrado correctamente.`,
       });
       scanCacheRef.current.clear();
@@ -2620,12 +2737,13 @@ export function POSModule() {
               total={total}
               totalInitialPayments={totalInitialPayments}
               changeDuePreview={changeDuePreview}
+              transferExcessPreview={transferExcessPreview}
               cashPaymentAmount={cashPaymentAmount}
               transferPaymentAmount={transferPaymentAmount}
               pendingPaymentReason={pendingPaymentReason}
               isPendingReasonRequired={isPendingReasonRequired}
-              onCashPaymentAmountChange={setCashPaymentAmount}
-              onTransferPaymentAmountChange={setTransferPaymentAmount}
+              onCashPaymentAmountChange={handleCashPaymentAmountChange}
+              onTransferPaymentAmountChange={handleTransferPaymentAmountChange}
               onPendingPaymentReasonChange={(value) =>
                 setPendingPaymentReason(value.slice(0, POS_PENDING_REASON_MAX_LENGTH))
               }
@@ -2645,6 +2763,7 @@ export function POSModule() {
           totalInitialPayments={totalInitialPayments}
           itemCount={itemCount}
           changeDuePreview={changeDuePreview}
+          transferExcessPreview={transferExcessPreview}
           pendingAfterInitialPayments={pendingAfterInitialPayments}
           previewItems={previewItems}
           previewTotalUnits={previewTotalUnits}
@@ -2863,16 +2982,11 @@ export function POSModule() {
                               {item.name}
                             </h4>
                             <p className="whitespace-nowrap text-xs font-semibold">
-                              Subtotal: $
-                              {roundTo(getCartLineTotal(item), 2).toFixed(2)}
+                              Subtotal: ${formatMoney(getCartLineTotal(item))}
                             </p>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            $
-                            {toSafeNumber(getDisplayUnitPrice(item), 0).toFixed(
-                              2
-                            )}{" "}
-                            /{" "}
+                            ${formatMoney(getDisplayUnitPrice(item))} /{" "}
                             {item.measurementType === "kg"
                               ? "kg"
                               : item.measurementType === "gram"
@@ -3045,448 +3159,48 @@ export function POSModule() {
         </div>
 
         <div className="space-y-4">
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center justify-between">
-                <span>Pagar</span>
-                <Badge variant="secondary">{itemCount} items</Badge>
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex justify-between text-sm">
-                  <span>Subtotal:</span>
-                  <span>${roundTo(total, 2).toFixed(2)}</span>
-                </div>
-                <div className="flex justify-between text-sm">
-                  <span>Pagos iniciales:</span>
-                  <span>${roundTo(totalInitialPayments, 2).toFixed(2)}</span>
-                </div>
-                {changeDuePreview > 0 && (
-                  <div className="flex justify-between text-sm font-semibold text-emerald-700">
-                    <span>Vuelto a entregar:</span>
-                    <span>${roundTo(changeDuePreview, 2).toFixed(2)}</span>
-                  </div>
-                )}
-                <Separator />
-                <div className="flex justify-between font-bold">
-                  <span>Total:</span>
-                  <span>${roundTo(total, 2).toFixed(2)}</span>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <div className="rounded-md border p-3 space-y-2">
-                  <p className="text-xs font-semibold uppercase text-muted-foreground">
-                    Pagos
-                  </p>
-                  <div className="grid grid-cols-2 gap-2">
-                    <div className="space-y-1">
-                      <label className="text-md font-bold text-muted-foreground">
-                        Efectivo
-                      </label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="0.00"
-                        value={cashPaymentAmount}
-                        onChange={(event) =>
-                          setCashPaymentAmount(event.target.value)
-                        }
-                        className="h-10"
-                      />
-                    </div>
-                    <div className="space-y-1">
-                      <label className="text-md font-bold text-muted-foreground">
-                        Transferencia
-                      </label>
-                      <Input
-                        type="number"
-                        step="0.01"
-                        min="0"
-                        placeholder="0.00"
-                        value={transferPaymentAmount}
-                        onChange={(event) =>
-                          setTransferPaymentAmount(event.target.value)
-                        }
-                        className="h-10"
-                      />
-                    </div>
-                  </div>
-                  {(totalInitialPayments <= 0 ||
-                    pendingPaymentReason.trim().length > 0) && (
-                    <div className="space-y-1">
-                      <label className="text-md font-bold text-muted-foreground">
-                        Motivo de pendiente {isPendingReasonRequired ? "*" : "(opcional)"}
-                      </label>
-                      <Input
-                        value={pendingPaymentReason}
-                        maxLength={POS_PENDING_REASON_MAX_LENGTH}
-                        placeholder="Ej: Cliente conocido, paga manana"
-                        onChange={(event) =>
-                          setPendingPaymentReason(
-                            event.target.value.slice(0, POS_PENDING_REASON_MAX_LENGTH)
-                          )
-                        }
-                        className="h-10"
-                      />
-                      <p className="text-[11px] text-muted-foreground">
-                        {isPendingReasonRequired
-                          ? "Si no se cobra nada al momento, este motivo es obligatorio."
-                          : `Maximo ${POS_PENDING_REASON_MAX_LENGTH} caracteres.`}
-                      </p>
-                    </div>
-                  )}
-                </div>
-                {cart.length === 0 ? (
-                  <p className="text-center text-xs text-muted-foreground">
-                    Agrega productos para habilitar el cobro.
-                  </p>
-                ) : null}
-                <Button
-                  className="w-full"
-                  onClick={() => handlePayment()}
-                  disabled={isProcessingPayment || cart.length === 0}
-                >
-                  <Banknote className="mr-2 h-4 w-4" />
-                  {isSaleCommitted ? "Nueva venta" : "Registrar Venta"}
-                </Button>
-                <AlertDialog>
-                  <AlertDialogTrigger asChild>
-                    <Button
-                      className="w-full"
-                      variant="ghost"
-                      disabled={cart.length === 0}
-                    >
-                      Limpiar Carrito
-                    </Button>
-                  </AlertDialogTrigger>
-                  <AlertDialogContent>
-                    <AlertDialogHeader>
-                      <AlertDialogTitle>Limpiar el carrito?</AlertDialogTitle>
-                      <AlertDialogDescription>
-                        Se quitaran todos los productos seleccionados.
-                      </AlertDialogDescription>
-                    </AlertDialogHeader>
-                    <AlertDialogFooter>
-                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
-                      <AlertDialogAction
-                        onClick={() => {
-                          clearCart();
-                        }}
-                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                      >
-                        Limpiar
-                      </AlertDialogAction>
-                    </AlertDialogFooter>
-                  </AlertDialogContent>
-                </AlertDialog>
-              </div>
-            </CardContent>
-          </Card>
+          <PosPaymentCard
+            cartLength={cart.length}
+            itemCount={itemCount}
+            total={total}
+            totalInitialPayments={totalInitialPayments}
+            changeDuePreview={changeDuePreview}
+            transferExcessPreview={transferExcessPreview}
+            cashPaymentAmount={cashPaymentAmount}
+            transferPaymentAmount={transferPaymentAmount}
+            pendingPaymentReason={pendingPaymentReason}
+            isPendingReasonRequired={isPendingReasonRequired}
+            onCashPaymentAmountChange={handleCashPaymentAmountChange}
+            onTransferPaymentAmountChange={handleTransferPaymentAmountChange}
+            onPendingPaymentReasonChange={(value) =>
+              setPendingPaymentReason(value.slice(0, POS_PENDING_REASON_MAX_LENGTH))
+            }
+            onHandlePayment={handlePayment}
+            onClearCart={() => clearCart()}
+            isProcessingPayment={isProcessingPayment}
+            isSaleCommitted={isSaleCommitted}
+          />
         </div>
       </div>
 
-      <Dialog
+      <PosPaymentConfirmDialog
         open={isPaymentConfirmOpen}
-        onOpenChange={(open) => {
-          if (isProcessingPayment) return;
-          setIsPaymentConfirmOpen(open);
-        }}
-      >
-        <DialogContent className="flex max-h-[92vh] w-[min(96vw,1120px)] max-w-5xl flex-col gap-0 overflow-hidden border-0 bg-background p-0 shadow-2xl sm:max-h-[90vh]">
-          <div className="shrink-0 border-b bg-gradient-to-br from-[#E74E7F]/10 via-background to-[#E74E7F]/5 p-5 sm:p-6">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0 flex-1">
-                <Badge className="rounded-full bg-[#E74E7F]/70 px-3 py-1 text-xs font-semibold text-white hover:bg-[#E74E7F]/70">
-                  Confirmacion previa
-                </Badge>
-                <DialogHeader className="mt-4 text-left">
-                  <DialogTitle className="flex items-center gap-3 text-2xl font-black tracking-tight sm:text-3xl">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#E74E7F]/15 text-[#E74E7F]">
-                      <ReceiptText className="h-6 w-6" />
-                    </span>
-                    Confirmar venta
-                  </DialogTitle>
-                  <DialogDescription className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                    Revisa el detalle, los pagos cargados y el importe a
-                    devolver antes de registrar definitivamente la venta.
-                  </DialogDescription>
-                </DialogHeader>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      Total
-                    </p>
-                    <p className="mt-2 text-2xl font-black tracking-tight">
-                      ${formatMoney(total)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      Cobrado
-                    </p>
-                    <p className="mt-2 text-2xl font-black tracking-tight">
-                      ${formatMoney(totalInitialPayments)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      Items
-                    </p>
-                    <p className="mt-2 text-2xl font-black tracking-tight">
-                      {itemCount}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {formatThresholdQuantity(previewTotalUnits)} unidades
-                      totales
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="xl:w-[310px]">
-                <div className="rounded-[28px] border border-[#E74E7F]/25 bg-[#E74E7F]/70 p-5 text-white shadow-xl shadow-[#E74E7F]/20 sm:p-6">
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/90">
-                    {changeDuePreview > 0
-                      ? "Vuelto a entregar"
-                      : pendingAfterInitialPayments > 0
-                      ? "Saldo pendiente"
-                      : "Pago exacto"}
-                  </p>
-                  <p className="mt-4 text-4xl font-black tracking-tight sm:text-5xl">
-                    $
-                    {formatMoney(
-                      changeDuePreview > 0
-                        ? changeDuePreview
-                        : pendingAfterInitialPayments > 0
-                        ? pendingAfterInitialPayments
-                        : 0
-                    )}
-                  </p>
-                  <p className="mt-3 text-sm leading-6 text-white/90">
-                    {changeDuePreview > 0
-                      ? "Este es el importe que deberias devolver al cliente al cerrar la operacion."
-                      : pendingAfterInitialPayments > 0
-                      ? "La venta se registrara con saldo pendiente si continuas."
-                      : "El importe cargado coincide exactamente con el total."}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto p-5 sm:p-6 xl:grid-cols-[1.5fr_1fr]">
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <ReceiptText className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  Detalle vendido
-                </h3>
-              </div>
-
-              <div className="max-h-[34vh] space-y-3 overflow-y-auto pr-1 sm:max-h-[38vh]">
-                {previewItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-2xl border bg-card p-4 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-bold">
-                          {item.name}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <Badge variant="outline" className="text-[11px]">
-                            {formatThresholdQuantity(item.quantity)}{" "}
-                            {item.measurementType === "kg"
-                              ? "kg"
-                              : item.measurementType === "gram"
-                              ? "gr"
-                              : "un"}
-                          </Badge>
-                          <Badge variant="outline" className="text-[11px]">
-                            {getPriceTypeLabel(item.priceType)}
-                          </Badge>
-                          {item.pricingMode === "MANUAL" ? (
-                            <Badge className="bg-[#E74E7F]/15 text-[11px] font-semibold text-[#C43C69] hover:bg-[#E74E7F]/15">
-                              Manual
-                            </Badge>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-black">
-                          ${formatMoney(item.lineTotal)}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          ${formatMoney(item.unitPrice)} c/u
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="rounded-2xl border bg-muted/20 p-5">
-                <div className="flex items-center gap-2">
-                  <Clock3 className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                    Datos de la operacion
-                  </h3>
-                </div>
-
-                <div className="mt-4 space-y-3 text-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Sucursal</span>
-                    <span className="text-right font-semibold">
-                      {previewBranchName}
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Cajero</span>
-                    <span className="text-right font-semibold">
-                      {previewCashierName}
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Productos</span>
-                    <span className="text-right font-semibold">
-                      {itemCount}
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Unidades</span>
-                    <span className="text-right font-semibold">
-                      {formatThresholdQuantity(previewTotalUnits)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border bg-card p-5 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  Pagos cargados
-                </h3>
-                <div className="mt-4 space-y-3">
-                  {paymentPreviewRows.length > 0 ? (
-                    paymentPreviewRows.map((payment, index) => (
-                      <div
-                        key={`${payment.method}-${index}`}
-                        className="rounded-xl border bg-muted/20 p-3"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold">
-                              {getPaymentMethodLabel(payment.method)}
-                            </p>
-                            {payment.reference ? (
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                Ref: {payment.reference}
-                              </p>
-                            ) : null}
-                          </div>
-                          <p className="text-sm font-black">
-                            ${formatMoney(payment.amount)}
-                          </p>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                  <p className="text-sm text-muted-foreground">
-                    No cargaste pagos iniciales. La venta se registrara con
-                    saldo pendiente.
-                  </p>
-                )}
-                {pendingAfterInitialPayments > 0 &&
-                normalizedPendingPaymentReason ? (
-                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                      Motivo pendiente
-                    </p>
-                    <p className="mt-1 text-sm text-amber-900">
-                      {normalizedPendingPaymentReason}
-                    </p>
-                  </div>
-                ) : null}
-              </div>
-            </div>
-
-              <div className="rounded-2xl border bg-card p-5 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  Totales
-                </h3>
-                <div className="mt-4 space-y-3 text-sm">
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Total venta</span>
-                    <span className="font-semibold">${formatMoney(total)}</span>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Cobrado</span>
-                    <span className="font-semibold">
-                      ${formatMoney(totalInitialPayments)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Pendiente</span>
-                    <span className="font-semibold">
-                      ${formatMoney(pendingAfterInitialPayments)}
-                    </span>
-                  </div>
-                  <Separator />
-                  <div className="flex justify-between gap-3 text-base font-black">
-                    <span>
-                      {changeDuePreview > 0
-                        ? "Vuelto"
-                        : pendingAfterInitialPayments > 0
-                        ? "Saldo"
-                        : "Diferencia"}
-                    </span>
-                    <span>
-                      $
-                      {formatMoney(
-                        changeDuePreview > 0
-                          ? changeDuePreview
-                          : pendingAfterInitialPayments > 0
-                          ? pendingAfterInitialPayments
-                          : 0
-                      )}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter className="shrink-0 border-t bg-muted/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:space-x-0 sm:px-6">
-            <p className="text-sm text-muted-foreground">
-              Si todo esta correcto, confirma para registrar la venta.
-            </p>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
-              <Button
-                variant="outline"
-                onClick={() => setIsPaymentConfirmOpen(false)}
-                disabled={isProcessingPayment}
-              >
-                Volver
-              </Button>
-              <Button
-                onClick={processPayment}
-                className="min-w-[220px]"
-                disabled={isProcessingPayment}
-              >
-                {isProcessingPayment ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : null}
-                Confirmar y Registrar
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setIsPaymentConfirmOpen}
+        isProcessingPayment={isProcessingPayment}
+        total={total}
+        totalInitialPayments={totalInitialPayments}
+        itemCount={itemCount}
+        changeDuePreview={changeDuePreview}
+        transferExcessPreview={transferExcessPreview}
+        pendingAfterInitialPayments={pendingAfterInitialPayments}
+        previewItems={previewItems}
+        previewTotalUnits={previewTotalUnits}
+        previewBranchName={previewBranchName}
+        previewCashierName={previewCashierName}
+        paymentPreviewRows={paymentPreviewRows}
+        pendingPaymentReason={normalizedPendingPaymentReason}
+        onProcessPayment={processPayment}
+      />
     </div>
   );
 }

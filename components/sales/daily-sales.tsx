@@ -41,6 +41,12 @@ function toDateKey(date: Date) {
   return `${year}-${month}-${day}`;
 }
 
+function formatMoney(value: number) {
+  return Number(value ?? 0).toLocaleString("es-AR", {
+    maximumFractionDigits: 0,
+  });
+}
+
 export function DailySales() {
   const { sales, isLoading } = useTransactions();
   const { branchId } = useUser();
@@ -102,21 +108,11 @@ export function DailySales() {
   const avgOrder = completedOrders > 0 ? totalSales / completedOrders : 0;
 
   const cashIncome = todaySales.reduce((sum, sale) => {
-    const breakdown = sale.paymentBreakdown ?? {};
-    return sum + Number(breakdown.CASH ?? breakdown.cash ?? 0);
+    return sum + Number(sale.paymentBreakdownByMethod.cash ?? 0);
   }, 0);
 
   const transferIncome = todaySales.reduce((sum, sale) => {
-    const breakdown = sale.paymentBreakdown ?? {};
-    return (
-      sum +
-      Number(
-        breakdown.TRANSFER ??
-          breakdown.transfer ??
-          breakdown.TRANSFERENCIA ??
-          0
-      )
-    );
+    return sum + Number(sale.paymentBreakdownByMethod.transfer ?? 0);
   }, 0);
 
   return (
@@ -168,7 +164,7 @@ export function DailySales() {
                   <DollarSign className="h-8 w-8 mx-auto text-green-500" />
                   <p className="text-sm text-muted-foreground">Total del dia</p>
                   <p className="text-2xl font-bold text-green-600">
-                    ${totalSales.toFixed(2)}
+                    ${formatMoney(totalSales)}
                   </p>
                 </div>
               </CardContent>
@@ -194,7 +190,7 @@ export function DailySales() {
                   <Target className="h-8 w-8 mx-auto text-purple-500" />
                   <p className="text-sm text-muted-foreground">Ticket promedio</p>
                   <p className="text-2xl font-bold text-purple-600">
-                    ${avgOrder.toFixed(2)}
+                    ${formatMoney(avgOrder)}
                   </p>
                 </div>
               </CardContent>
@@ -206,7 +202,7 @@ export function DailySales() {
                   <Wallet className="h-8 w-8 mx-auto text-emerald-500" />
                   <p className="text-sm text-muted-foreground">Ingreso efectivo</p>
                   <p className="text-2xl font-bold text-emerald-600">
-                    ${cashIncome.toFixed(2)}
+                    ${formatMoney(cashIncome)}
                   </p>
                 </div>
               </CardContent>
@@ -220,7 +216,7 @@ export function DailySales() {
                     Ingreso transferencia
                   </p>
                   <p className="text-2xl font-bold text-sky-600">
-                    ${transferIncome.toFixed(2)}
+                    ${formatMoney(transferIncome)}
                   </p>
                 </div>
               </CardContent>

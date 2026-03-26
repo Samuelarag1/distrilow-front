@@ -49,6 +49,7 @@ import type {
   ProductsListResponse,
   ProductsQuery,
   RefreshRequest,
+  ReportingGlobalMetricsResponse,
   ReportsCashMonthlyQuery,
   ReportsCashMonthlyResponse,
   ReportsExpensesProjectionQuery,
@@ -381,9 +382,22 @@ function buildStockResolverContext(stocks: Stock[]): StockResolverContext {
   };
 }
 
+function extractProductStockQuantity(value: unknown) {
+  const directStock = toOptionalFiniteNumber(value);
+  if (directStock !== null) {
+    return directStock;
+  }
+
+  const source = asRecord(value);
+  return (
+    toOptionalFiniteNumber(source.quantity) ??
+    toOptionalFiniteNumber(source.availableQuantity) ??
+    toOptionalFiniteNumber(source.baseQuantity)
+  );
+}
+
 function readItemStock(item: ProductListItem) {
-  const value = Number((item as Product).stock);
-  return Number.isFinite(value) ? value : null;
+  return extractProductStockQuantity((item as Product).stock);
 }
 
 function resolveSharedRelativeStock(
@@ -454,6 +468,94 @@ function requireActiveBranchId() {
   return branchId;
 }
 
+function normalizeProductListItem(value: unknown): ProductListItem {
+  const source = asRecord(value);
+  const id = toOptionalText(source.id);
+  if (!id) {
+    throw new Error("Respuesta invalida: producto sin id.");
+  }
+
+  const measurementTypeRaw = toOptionalText(source.measurementType);
+  const measurementType =
+    measurementTypeRaw === "kg" ||
+    measurementTypeRaw === "gram" ||
+    measurementTypeRaw === "unit" ||
+    measurementTypeRaw === "ml" ||
+    measurementTypeRaw === "liter"
+      ? measurementTypeRaw
+      : "unit";
+
+  return {
+    id,
+    sku: toOptionalText(source.sku) ?? id,
+    barcode: toOptionalText(source.barcode),
+    pluCode: toOptionalText(source.pluCode),
+    isWeighable:
+      typeof source.isWeighable === "boolean"
+        ? source.isWeighable
+        : measurementType === "kg" || measurementType === "gram",
+    wholesaleMinQuantity: toOptionalFiniteNumber(source.wholesaleMinQuantity),
+    name: toOptionalText(source.name) ?? "Producto",
+    description: toOptionalText(source.description),
+    costPrice: toFiniteNumber(source.costPrice, 0),
+    wholesalePrice: toFiniteNumber(source.wholesalePrice, 0),
+    retailPrice: toFiniteNumber(source.retailPrice, 0),
+    marginPercent: toOptionalFiniteNumber(source.marginPercent),
+    priceReviewPending:
+      typeof source.priceReviewPending === "boolean"
+        ? source.priceReviewPending
+        : undefined,
+    costReviewPending:
+      typeof source.costReviewPending === "boolean"
+        ? source.costReviewPending
+        : undefined,
+    isActive: typeof source.isActive === "boolean" ? source.isActive : undefined,
+    categoryId: toOptionalText(source.categoryId),
+    categoryName: toOptionalText(source.categoryName),
+    branchId: toOptionalText(source.branchId),
+    brand: toOptionalText(source.brand),
+    trackStock:
+      typeof source.trackStock === "boolean" ? source.trackStock : undefined,
+    stockBaseProductId: toOptionalText(source.stockBaseProductId),
+    stockConsumptionQuantity: toOptionalFiniteNumber(
+      source.stockConsumptionQuantity
+    ),
+    stockBaseUnit: toOptionalText(source.stockBaseUnit) as
+      | MeasurementType
+      | null,
+    allowNegativeStock:
+      typeof source.allowNegativeStock === "boolean"
+        ? source.allowNegativeStock
+        : undefined,
+    imageUrl: toOptionalText(source.imageUrl),
+    measurementType,
+    stock: extractProductStockQuantity(source.stock) ?? undefined,
+    createdAt: toOptionalText(source.createdAt) ?? undefined,
+    updatedAt: toOptionalText(source.updatedAt) ?? undefined,
+  };
+}
+
+function normalizeProductListRows(payload: unknown): ProductListItem[] {
+  const source = asRecord(payload);
+  const rawItems = Array.isArray(payload)
+    ? payload
+    : Array.isArray(source.items)
+    ? source.items
+    : Array.isArray(source.results)
+    ? source.results
+    : [];
+
+  return rawItems
+    .map((item) => {
+      try {
+        return normalizeProductListItem(item);
+      } catch {
+        return null;
+      }
+    })
+    .filter((item): item is ProductListItem => Boolean(item));
+}
+
 function normalizeBarcodePayload(
   payload: BarcodeLookupResponse
 ): ResolvedBarcodeProduct {
@@ -468,74 +570,6 @@ function normalizeBarcodePayload(
       averageCost: toFiniteNumber(source.averageCost, 0),
       lastPurchaseCost: toFiniteNumber(source.lastPurchaseCost, 0),
       updatedAt: toOptionalText(source.updatedAt),
-    };
-  };
-
-  const normalizeProduct = (value: unknown): ProductListItem => {
-    const source = asRecord(value);
-    const id = toOptionalText(source.id);
-    if (!id) {
-      throw new Error("Respuesta invalida al escanear: producto sin id.");
-    }
-
-    const measurementTypeRaw = toOptionalText(source.measurementType);
-    const measurementType =
-      measurementTypeRaw === "kg" ||
-      measurementTypeRaw === "gram" ||
-      measurementTypeRaw === "unit" ||
-      measurementTypeRaw === "ml" ||
-      measurementTypeRaw === "liter"
-        ? measurementTypeRaw
-        : "unit";
-
-    return {
-      id,
-      sku: toOptionalText(source.sku) ?? id,
-      barcode: toOptionalText(source.barcode),
-      pluCode: toOptionalText(source.pluCode),
-      isWeighable:
-        typeof source.isWeighable === "boolean"
-          ? source.isWeighable
-          : measurementType === "kg" || measurementType === "gram",
-      wholesaleMinQuantity: toOptionalFiniteNumber(source.wholesaleMinQuantity),
-      name: toOptionalText(source.name) ?? "Producto",
-      description: toOptionalText(source.description),
-      costPrice: toFiniteNumber(source.costPrice, 0),
-      wholesalePrice: toFiniteNumber(source.wholesalePrice, 0),
-      retailPrice: toFiniteNumber(source.retailPrice, 0),
-      marginPercent: toOptionalFiniteNumber(source.marginPercent),
-      priceReviewPending:
-        typeof source.priceReviewPending === "boolean"
-          ? source.priceReviewPending
-          : undefined,
-      costReviewPending:
-        typeof source.costReviewPending === "boolean"
-          ? source.costReviewPending
-          : undefined,
-      isActive:
-        typeof source.isActive === "boolean" ? source.isActive : undefined,
-      categoryId: toOptionalText(source.categoryId),
-      categoryName: toOptionalText(source.categoryName),
-      branchId: toOptionalText(source.branchId),
-      brand: toOptionalText(source.brand),
-      trackStock:
-        typeof source.trackStock === "boolean" ? source.trackStock : undefined,
-      stockBaseProductId: toOptionalText(source.stockBaseProductId),
-      stockConsumptionQuantity: toOptionalFiniteNumber(
-        source.stockConsumptionQuantity
-      ),
-      stockBaseUnit: toOptionalText(source.stockBaseUnit) as
-        | MeasurementType
-        | null,
-      allowNegativeStock:
-        typeof source.allowNegativeStock === "boolean"
-          ? source.allowNegativeStock
-          : undefined,
-      imageUrl: toOptionalText(source.imageUrl),
-      measurementType,
-      stock: toOptionalFiniteNumber(source.stock) ?? undefined,
-      createdAt: toOptionalText(source.createdAt) ?? undefined,
-      updatedAt: toOptionalText(source.updatedAt) ?? undefined,
     };
   };
 
@@ -569,7 +603,7 @@ function normalizeBarcodePayload(
       stock?: unknown;
     };
     const normalizedStock = normalizeStock(barcodePayload.stock);
-    const normalizedProduct = normalizeProduct(barcodePayload.product);
+    const normalizedProduct = normalizeProductListItem(barcodePayload.product);
 
     return {
       product: {
@@ -599,7 +633,7 @@ function normalizeBarcodePayload(
   }
 
   return {
-    product: normalizeProduct(payload),
+    product: normalizeProductListItem(payload),
   };
 }
 
@@ -631,6 +665,38 @@ function toOptionalFiniteNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === "") return null;
   const parsed = toFiniteNumber(value, Number.NaN);
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+function normalizeReportingGlobalMetrics(
+  payload: unknown
+): ReportingGlobalMetricsResponse {
+  const source = asRecord(payload);
+  const rangeSource = asRecord(source.range);
+  const salesSource = asRecord(source.sales);
+  const byPaymentMethodSource = asRecord(salesSource.byPaymentMethod);
+
+  return {
+    range: {
+      from: toOptionalText(rangeSource.from) ?? undefined,
+      to: toOptionalText(rangeSource.to) ?? undefined,
+    },
+    sales: {
+      byPaymentMethod: {
+        cashTotal: toOptionalFiniteNumber(byPaymentMethodSource.cashTotal),
+        transferTotal: toOptionalFiniteNumber(
+          byPaymentMethodSource.transferTotal
+        ),
+        appliedTotal: toOptionalFiniteNumber(byPaymentMethodSource.appliedTotal),
+        receivedCashTotal: toOptionalFiniteNumber(
+          byPaymentMethodSource.receivedCashTotal
+        ),
+        receivedTransferTotal: toOptionalFiniteNumber(
+          byPaymentMethodSource.receivedTransferTotal
+        ),
+        receivedTotal: toOptionalFiniteNumber(byPaymentMethodSource.receivedTotal),
+      },
+    },
+  };
 }
 
 function extractDateKey(value: unknown): string | null {
@@ -1567,6 +1633,48 @@ export const backendApi = {
         branchScoped: false,
       }),
   },
+  pos: {
+    search: async (
+      query: { q: string; limit?: number },
+      branchIdOverride?: string | null,
+      options?: { signal?: AbortSignal }
+    ) => {
+      const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+      if (!effectiveBranchId) {
+        throw new Error("Missing branch context. Send x-branch-id header.");
+      }
+
+      const normalizedQuery = toTrimmedOrUndefined(query.q);
+      const safeLimit = Math.max(
+        1,
+        Math.min(20, Math.trunc(Number(query.limit ?? 8)) || 8)
+      );
+
+      if (!normalizedQuery) {
+        return [] as ProductListItem[];
+      }
+
+      const payload = await apiClientFetch.get<unknown>(
+        `/pos/search${buildQuery(
+          {
+            q: normalizedQuery,
+            limit: safeLimit,
+          },
+          {
+            preserveLimitAndOffset: true,
+          }
+        )}`,
+        {
+          headers: {
+            "x-branch-id": effectiveBranchId,
+          },
+          signal: options?.signal,
+        }
+      );
+
+      return normalizeProductListRows(payload);
+    },
+  },
   users: {
     list: () => apiClientFetch.get<User[]>("/users", { branchScoped: false }),
     getById: (id: string) =>
@@ -1727,7 +1835,8 @@ export const backendApi = {
     },
     list: async (
       query: ProductsQuery = {},
-      branchIdOverride?: string | null
+      branchIdOverride?: string | null,
+      options?: { signal?: AbortSignal }
     ) => {
       const normalizedTextSearch = toTrimmedOrUndefined(
         query.search ?? query.q ?? query.name
@@ -1751,6 +1860,7 @@ export const backendApi = {
               headers: {
                 "x-branch-id": effectiveBranchId,
               },
+              signal: options?.signal,
             }
           : undefined
       );
@@ -1883,7 +1993,11 @@ export const backendApi = {
       invalidateStockCache(payload.branchId);
       return normalizeStockListItem(created);
     },
-    list: async (query: StockQuery = {}, branchIdOverride?: string | null) => {
+    list: async (
+      query: StockQuery = {},
+      branchIdOverride?: string | null,
+      options?: { signal?: AbortSignal }
+    ) => {
       const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
       if (!effectiveBranchId) {
         throw new Error("Missing branch context. Send x-branch-id header.");
@@ -1926,6 +2040,7 @@ export const backendApi = {
           headers: {
             "x-branch-id": effectiveBranchId,
           },
+          signal: options?.signal,
         },
       );
       const page = toPaginatedResponse(
@@ -2253,6 +2368,30 @@ export const backendApi = {
       apiClientFetch.delete<SaleDetail | SaleSummary | true>(`/sales/${id}`),
   },
   reporting: {
+    global: {
+      metrics: async (
+        query: { from: string; to: string },
+        branchIdOverride?: string | null
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const payload = await apiClientFetch.get<unknown>(
+          `/reporting/global/metrics${buildQuery(query, {
+            preserveLimitAndOffset: true,
+          })}`,
+          {
+            headers: {
+              "x-branch-id": effectiveBranchId,
+            },
+          }
+        );
+
+        return normalizeReportingGlobalMetrics(payload);
+      },
+    },
     dashboard: {
       summary: (
         query: {
@@ -2578,10 +2717,8 @@ export const backendApi = {
   },
   expenses: {
     create: (body: CreateExpenseRequest) => {
-      const { context: ignoredContext, ...restBody } = body;
-      void ignoredContext;
       const payload: CreateExpenseRequest = {
-        ...restBody,
+        ...body,
         branchId: body.branchId ?? requireActiveBranchId(),
       };
       return apiClientFetch
@@ -3133,7 +3270,8 @@ export const backendApi = {
   },
   productsWithStock: async (
     query: ProductsQuery = {},
-    branchIdOverride?: string | null
+    branchIdOverride?: string | null,
+    options?: { signal?: AbortSignal }
   ) => {
     const normalizedSearch = toTrimmedOrUndefined(
       query.search ?? query.q ?? query.name
@@ -3150,7 +3288,8 @@ export const backendApi = {
     const explicitBranchId = branchIdOverride ?? null;
     const productsPayload = await backendApi.products.list(
       normalizedQuery,
-      explicitBranchId
+      explicitBranchId,
+      options
     );
     const take = Number(normalizedQuery.take ?? normalizedQuery.limit ?? 20);
     const skip = Number(normalizedQuery.skip ?? normalizedQuery.offset ?? 0);

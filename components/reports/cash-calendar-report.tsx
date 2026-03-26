@@ -19,7 +19,6 @@ import {
   Info,
   RefreshCcw,
   Ticket,
-  Users,
   Wallet,
 } from "lucide-react";
 
@@ -45,6 +44,7 @@ import { exportRowsToPdf } from "@/lib/report-export";
 import type {
   CashBookEntry,
   CashBookDailyResponse,
+  CashSession,
   ReportsCashMonthlyItem,
   ReportsCashMonthlyResponse,
 } from "@/lib/api-types";
@@ -88,6 +88,8 @@ function emptyDailyResponse(date: string): CashBookDailyResponse {
 }
 
 const DAILY_MOVEMENTS_LIMIT = 5;
+const DAILY_ENTRIES_FETCH_LIMIT = 500;
+const CASH_PURCHASE_REASON_PREFIX = "compra con caja";
 
 function getEntryMethodLabel(method?: string | null) {
   if (method === "CASH") return "Efectivo";
@@ -104,6 +106,45 @@ function getEntryLabel(entry: CashBookEntry) {
     return entry.notes?.trim() || "Retiro de caja";
   }
   return entry.notes?.trim() || "Movimiento de caja";
+}
+
+function isCashPurchaseEntry(entry: CashBookEntry) {
+  if (entry.direction !== "OUT") {
+    return false;
+  }
+
+  const label =
+    entry.notes?.trim() ||
+    entry.description?.trim() ||
+    entry.reference?.trim() ||
+    "";
+
+  return label.toLowerCase().startsWith(CASH_PURCHASE_REASON_PREFIX);
+}
+
+function toTimestamp(value?: string | null) {
+  if (!value) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function entryBelongsToSession(entry: CashBookEntry, session: CashSession) {
+  if (entry.sessionId && entry.sessionId === session.id) {
+    return true;
+  }
+
+  const createdAt = toTimestamp(entry.createdAt);
+  const openedAt = toTimestamp(session.openedAt);
+  if (createdAt === null || openedAt === null) {
+    return false;
+  }
+
+  const closedAt = toTimestamp(session.closedAt);
+  if (closedAt === null) {
+    return createdAt >= openedAt;
+  }
+
+  return createdAt >= openedAt && createdAt <= closedAt;
 }
 
 export function CashCalendarReport() {
@@ -174,7 +215,11 @@ export function CashCalendarReport() {
       setError(null);
 
       const payload = await backendApi.cash.dailyBook(
-        { date: selectedDateYmd },
+        {
+          date: selectedDateYmd,
+          page: 1,
+          limit: DAILY_ENTRIES_FETCH_LIMIT,
+        },
         branchId
       );
 
@@ -273,8 +318,51 @@ export function CashCalendarReport() {
             new Date(b.closedAt ?? 0).getTime() -
             new Date(a.closedAt ?? 0).getTime()
         )[0] ?? null
-    );
+      );
   }, [dailyPayload]);
+
+  const cashPurchaseEntries = useMemo(
+    () => (dailyPayload?.entries ?? []).filter((entry) => isCashPurchaseEntry(entry)),
+    [dailyPayload?.entries]
+  );
+
+  const cashPurchasesTotal = useMemo(
+    () =>
+      cashPurchaseEntries.reduce(
+        (sum, entry) => sum + Number(entry.amount ?? 0),
+        0
+      ),
+    [cashPurchaseEntries]
+  );
+
+  const cashPurchasesBySessionId = useMemo(() => {
+    const sessions = dailyPayload?.sessions ?? [];
+    const totals = new Map<string, number>();
+
+    cashPurchaseEntries.forEach((entry) => {
+      const matchedSession = sessions.find((session) =>
+        entryBelongsToSession(entry, session)
+      );
+      if (!matchedSession) return;
+
+      totals.set(
+        matchedSession.id,
+        (totals.get(matchedSession.id) ?? 0) + Number(entry.amount ?? 0)
+      );
+    });
+
+    return totals;
+  }, [cashPurchaseEntries, dailyPayload?.sessions]);
+
+  const reportedOutflowTotal = useMemo(
+    () => Number(dailyPayload?.summary.outflow.movementOut ?? 0),
+    [dailyPayload]
+  );
+
+  const withdrawalsTotal = useMemo(
+    () => Math.max(0, reportedOutflowTotal - cashPurchasesTotal),
+    [reportedOutflowTotal, cashPurchasesTotal]
+  );
 
   const dailyIncomeResult = useMemo(() => {
     if (!dailyPayload) return 0;
@@ -310,9 +398,16 @@ export function CashCalendarReport() {
       const cashIncome = Number(session.totals?.cashPayments ?? 0);
       const transferIncome = Number(session.totals?.transferPayments ?? 0);
       const manualIncome = Number(session.totals?.movementIn ?? 0);
-      const withdrawalsOut = Number(session.totals?.movementOut ?? 0);
+      const purchasesWithCash = Number(
+        cashPurchasesBySessionId.get(session.id) ?? 0
+      );
+      const withdrawalsOut = Math.max(
+        0,
+        Number(session.totals?.movementOut ?? 0) - purchasesWithCash
+      );
       const sessionIncomeTotal = cashIncome + transferIncome + manualIncome;
-      const sessionNetTotal = sessionIncomeTotal - withdrawalsOut;
+      const sessionNetTotal =
+        sessionIncomeTotal - withdrawalsOut - purchasesWithCash;
 
       return {
         label: `Sesion ${index + 1}`,
@@ -320,6 +415,7 @@ export function CashCalendarReport() {
         transferIncome,
         manualIncome,
         withdrawalsOut,
+        purchasesWithCash,
         sessionIncomeTotal,
         sessionNetTotal,
       };
@@ -341,9 +437,14 @@ export function CashCalendarReport() {
       (sum, session) => sum + session.withdrawalsOut,
       0
     );
+    const totalCashPurchases = sessionsSummary.reduce(
+      (sum, session) => sum + session.purchasesWithCash,
+      0
+    );
     const totalIncome =
       totalCashIncome + totalTransferIncome + totalManualIncome;
-    const totalNetDay = totalIncome - totalWithdrawals;
+    const totalNetDay =
+      totalIncome - totalWithdrawals - totalCashPurchases;
 
     const rows: Array<Record<string, unknown>> = [
       {
@@ -365,6 +466,11 @@ export function CashCalendarReport() {
         seccion: "Resumen general",
         detalle: "Total retiros de caja",
         valor: `-${formatMoney(totalWithdrawals)}`,
+      },
+      {
+        seccion: "Resumen general",
+        detalle: "Total compras con caja",
+        valor: `-${formatMoney(totalCashPurchases)}`,
       },
       {
         seccion: "Resumen general",
@@ -407,6 +513,11 @@ export function CashCalendarReport() {
         },
         {
           seccion: session.label,
+          detalle: "Compra con caja",
+          valor: `-${formatMoney(session.purchasesWithCash)}`,
+        },
+        {
+          seccion: session.label,
           detalle: "Total ingresos sesion",
           valor: formatMoney(session.sessionIncomeTotal),
         },
@@ -429,7 +540,7 @@ export function CashCalendarReport() {
       ],
       rows,
     });
-  }, [dailyPayload, nextShiftAmount]);
+  }, [cashPurchasesBySessionId, dailyPayload, nextShiftAmount]);
 
   return (
     <div className="space-y-4">
@@ -585,7 +696,7 @@ export function CashCalendarReport() {
                       <th className="px-4 py-3 text-right">
                         Ingreso Manual de Caja
                       </th>
-                      <th className="px-4 py-3 text-right">Retiro de Caja</th>
+                      <th className="px-4 py-3 text-right">Salidas de Caja</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50 bg-background">
@@ -701,13 +812,18 @@ export function CashCalendarReport() {
                         const manualIncome = Number(
                           session.totals?.movementIn ?? 0
                         );
+                        const purchasesWithCash = Number(
+                          cashPurchasesBySessionId.get(session.id) ?? 0
+                        );
                         const withdrawalsOut = Number(
-                          session.totals?.movementOut ?? 0
+                          Math.max(
+                            0,
+                            Number(session.totals?.movementOut ?? 0) -
+                              purchasesWithCash
+                          )
                         );
                         const sessionIncomeTotal =
                           cashIncome + transferIncome + manualIncome;
-                        const sessionNetTotal =
-                          sessionIncomeTotal - withdrawalsOut;
                         const projectedOperational =
                           Number(session.expectedCash ?? 0) + withdrawalsOut;
                         const countedOperational =
@@ -858,6 +974,14 @@ export function CashCalendarReport() {
                                 </p>
                                 <p className="font-bold text-red-600">
                                   {formatMoney(withdrawalsOut, 0)}
+                                </p>
+                              </div>
+                              <div className="rounded-md border bg-background p-2">
+                                <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                  Compra con caja
+                                </p>
+                                <p className="font-bold text-amber-600">
+                                  {formatMoney(purchasesWithCash, 0)}
                                 </p>
                               </div>
                               <div className="rounded-md border bg-background p-2">
@@ -1013,13 +1137,18 @@ export function CashCalendarReport() {
                       </div>
                       <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
                         <span className="text-muted-foreground font-medium">
-                          Egresos
+                          Retiros de caja
                         </span>
                         <span className="text-red-600 font-bold">
-                          -
-                          {formatMoney(
-                            dailyPayload.summary.outflow.movementOut
-                          )}
+                          -{formatMoney(withdrawalsTotal)}
+                        </span>
+                      </div>
+                      <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
+                        <span className="text-muted-foreground font-medium">
+                          Compras con caja
+                        </span>
+                        <span className="font-bold text-amber-600">
+                          -{formatMoney(cashPurchasesTotal)}
                         </span>
                       </div>
                     </div>

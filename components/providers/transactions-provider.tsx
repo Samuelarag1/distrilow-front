@@ -28,6 +28,15 @@ import type {
 } from "@/lib/api-types";
 import type { BusinessType } from "@/lib/data-service";
 import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
+import {
+  classifySalePaymentType,
+  getSalePaymentBreakdownByMethod,
+  normalizeSalePaymentBreakdown,
+  normalizeSalePaymentMethodKey,
+  parseWholeAmount,
+  type SalePaymentBreakdownByMethod,
+  type SalePaymentType,
+} from "@/lib/sales-payments";
 
 export interface Expense {
   id: string;
@@ -47,6 +56,8 @@ export interface SalePayment {
   method: string;
   reference?: string;
   notes?: string;
+  receivedAmount?: number;
+  changeAmount?: number;
   date: string;
 }
 
@@ -82,9 +93,12 @@ export interface Sale {
   itemsCount: number;
   itemsQuantity: number;
   paymentBreakdown: Record<string, number>;
+  paymentBreakdownByMethod: SalePaymentBreakdownByMethod;
+  paymentType: SalePaymentType;
   paymentMethods: string[];
   lineItems?: SaleLineItem[];
   payments?: SalePayment[];
+  pendingReason?: string;
   notes?: string;
   date: string;
   businessType: BusinessType;
@@ -161,6 +175,12 @@ function toOptionalFiniteNumber(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+function toOptionalText(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
 function normalizeQuantity(value: unknown) {
   const rounded = Math.round(toFiniteNumber(value, NaN) * 1_000) / 1_000;
   if (!Number.isFinite(rounded) || rounded < 0) return null;
@@ -209,24 +229,6 @@ function normalizeExpense(
   };
 }
 
-function normalizePaymentBreakdown(value: unknown): Record<string, number> {
-  if (!value || typeof value !== "object") return {};
-  const source = value as Record<string, unknown>;
-  const normalized: Record<string, number> = {};
-
-  Object.entries(source).forEach(([method, amount]) => {
-    const cleanMethod = String(method ?? "")
-      .trim()
-      .toUpperCase();
-    if (!cleanMethod) return;
-    const parsedAmount = toFiniteNumber(amount, Number.NaN);
-    if (!Number.isFinite(parsedAmount)) return;
-    normalized[cleanMethod] = parsedAmount;
-  });
-
-  return normalized;
-}
-
 function normalizeSale(
   row: ApiSaleSummary | ApiSaleDetail,
   businessType: BusinessType
@@ -257,7 +259,7 @@ function normalizeSale(
       })
     : [];
 
-  const paymentBreakdownFromSummary = normalizePaymentBreakdown(
+  const paymentBreakdownFromSummary = normalizeSalePaymentBreakdown(
     (row as ApiSaleSummary).paymentBreakdown
   );
   const computedTotal = lineItems.reduce(
@@ -277,9 +279,11 @@ function normalizeSale(
     ? detailPayments.map((payment) => ({
         id: payment.id,
         amount: toFiniteNumber(payment.amount, 0),
-        method: String(payment.method ?? "OTHER"),
+        method: normalizeSalePaymentMethodKey(payment.method ?? "OTHER"),
         reference: payment.reference ?? undefined,
         notes: payment.notes ?? undefined,
+        receivedAmount: toOptionalFiniteNumber(payment.receivedAmount),
+        changeAmount: toOptionalFiniteNumber(payment.changeAmount),
         date: String(
           payment.createdAt ??
             payment.updatedAt ??
@@ -292,14 +296,35 @@ function normalizeSale(
     Object.keys(paymentBreakdownFromSummary).length > 0
       ? paymentBreakdownFromSummary
       : payments.reduce<Record<string, number>>((acc, payment) => {
-          const method = String(payment.method ?? "OTHER")
-            .trim()
-            .toUpperCase();
+          const method = normalizeSalePaymentMethodKey(payment.method ?? "OTHER");
           if (!method) return acc;
           acc[method] =
             toFiniteNumber(acc[method], 0) + toFiniteNumber(payment.amount, 0);
           return acc;
         }, {});
+  const paymentBreakdownByMethod = getSalePaymentBreakdownByMethod(
+    (row as ApiSaleSummary).paymentBreakdown
+  );
+
+  if (
+    paymentBreakdownByMethod.cash <= Number.EPSILON &&
+    paymentBreakdownByMethod.transfer <= Number.EPSILON
+  ) {
+    paymentBreakdownByMethod.cash = payments.reduce(
+      (sum, payment) =>
+        normalizeSalePaymentMethodKey(payment.method) === "CASH"
+          ? sum + toFiniteNumber(payment.amount, 0)
+          : sum,
+      0
+    );
+    paymentBreakdownByMethod.transfer = payments.reduce(
+      (sum, payment) =>
+        normalizeSalePaymentMethodKey(payment.method) === "TRANSFER"
+          ? sum + toFiniteNumber(payment.amount, 0)
+          : sum,
+      0
+    );
+  }
   const paidAmount = toFiniteNumber(
     row.paidAmount,
     Object.values(paymentBreakdown).reduce((sum, value) => sum + value, 0)
@@ -335,9 +360,15 @@ function normalizeSale(
     0,
     toFiniteNumber((row as ApiSaleSummary).itemsQuantity, itemsFromDetail)
   );
-  const paymentMethods = Object.keys(paymentBreakdown);
+  const paymentMethods = Object.entries(paymentBreakdown)
+    .filter(([, amount]) => toFiniteNumber(amount, 0) > Number.EPSILON)
+    .map(([method]) => method);
+  const paymentType = classifySalePaymentType(paymentBreakdownByMethod);
   const hasDetailItems = Array.isArray((row as ApiSaleDetail).items);
   const hasDetailPayments = Array.isArray((row as ApiSaleDetail).payments);
+  const pendingReason =
+    toOptionalText((row as ApiSaleSummary).pendingReason) ??
+    toOptionalText((row as ApiSaleSummary).notes);
 
   const normalized: Sale = {
     id: String(row.id),
@@ -354,7 +385,10 @@ function normalizeSale(
     itemsCount,
     itemsQuantity,
     paymentBreakdown,
+    paymentBreakdownByMethod,
+    paymentType,
     paymentMethods,
+    pendingReason,
     notes: String((row as ApiSaleSummary).notes ?? "").trim() || undefined,
     date: String(row.createdAt ?? row.updatedAt ?? new Date().toISOString()),
     businessType,
@@ -677,7 +711,7 @@ export function TransactionsProvider({
 
       const payments = (newSale.payments ?? [])
         .map((payment) => ({
-          amount: toFiniteNumber(payment.amount, 0),
+          amount: parseWholeAmount(payment.amount),
           method: payment.method,
           reference: payment.reference?.trim() || undefined,
           notes: payment.notes?.trim() || undefined,
@@ -717,7 +751,7 @@ export function TransactionsProvider({
         notes?: string;
       }
     ) => {
-      const amount = toFiniteNumber(payment.amount, 0);
+      const amount = parseWholeAmount(payment.amount);
       if (amount <= 0) {
         throw new Error("El monto del pago debe ser mayor a 0.");
       }

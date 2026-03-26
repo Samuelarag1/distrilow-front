@@ -19,6 +19,7 @@ export type UseProductsArgs = {
 
 export function useProducts(args: UseProductsArgs = {}) {
   const lastSyncAtRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
   const effectiveBranchId = args.branchId ?? getApiSession().branchId ?? null;
   const requestedSkip = args.skip ?? 0;
   const requestedTake = args.take ?? 20;
@@ -50,6 +51,10 @@ export function useProducts(args: UseProductsArgs = {}) {
   const { data, error, isLoading, mutate } = useSWR<NormalizedProductsPage>(
     key,
     async () => {
+      abortControllerRef.current?.abort();
+      const controller = new AbortController();
+      abortControllerRef.current = controller;
+
       const normalizedQuery = {
         skip: requestedSkip,
         take: requestedTake,
@@ -61,34 +66,45 @@ export function useProducts(args: UseProductsArgs = {}) {
         sortOrder: args.sortOrder,
       };
 
-      const page = resolveStockFromStocksEndpoint
-        ? await backendApi.productsWithStock(normalizedQuery, effectiveBranchId)
-        : await (async () => {
-            const payload = await backendApi.products.list(
-              normalizedQuery,
-              effectiveBranchId
-            );
-            const offset = payload.meta.offset ?? requestedSkip;
-            const limit = payload.meta.limit ?? requestedTake;
-            return {
-              items: payload.items,
-              total: payload.meta.total,
-              skip: offset,
-              take: limit,
-              nextSkip: payload.meta.hasMore ? offset + limit : null,
-              hasMore: payload.meta.hasMore,
-            } satisfies NormalizedProductsPage;
-          })();
+      try {
+        const page = resolveStockFromStocksEndpoint
+          ? await backendApi.productsWithStock(normalizedQuery, effectiveBranchId, {
+              signal: controller.signal,
+            })
+          : await (async () => {
+              const payload = await backendApi.products.list(
+                normalizedQuery,
+                effectiveBranchId,
+                {
+                  signal: controller.signal,
+                }
+              );
+              const offset = payload.meta.offset ?? requestedSkip;
+              const limit = payload.meta.limit ?? requestedTake;
+              return {
+                items: payload.items,
+                total: payload.meta.total,
+                skip: offset,
+                take: limit,
+                nextSkip: payload.meta.hasMore ? offset + limit : null,
+                hasMore: payload.meta.hasMore,
+              } satisfies NormalizedProductsPage;
+            })();
 
-      return {
-        ...page,
-        items: page.items.map((item) => ({
-          ...item,
-          price: Number(item.retailPrice ?? item.costPrice ?? 0),
-          category: item.categoryId ?? "Sin categoria",
-          unit: item.measurementType,
-        })) as Product[],
-      };
+        return {
+          ...page,
+          items: page.items.map((item) => ({
+            ...item,
+            price: Number(item.retailPrice ?? item.costPrice ?? 0),
+            category: item.categoryId ?? "Sin categoria",
+            unit: item.measurementType,
+          })) as Product[],
+        };
+      } finally {
+        if (abortControllerRef.current === controller) {
+          abortControllerRef.current = null;
+        }
+      }
     },
     {
       revalidateOnFocus: true,
@@ -114,6 +130,12 @@ export function useProducts(args: UseProductsArgs = {}) {
     });
   }, [effectiveBranchId, mutate]);
 
+  useEffect(() => {
+    return () => {
+      abortControllerRef.current?.abort();
+    };
+  }, []);
+
   const fallbackPage: NormalizedProductsPage = {
     items: [],
     total: 0,
@@ -134,7 +156,10 @@ export function useProducts(args: UseProductsArgs = {}) {
     nextSkip: pageData.nextSkip,
     hasMore: pageData.hasMore,
     isLoading: !!effectiveBranchId && isLoading,
-    isError: error,
+    isError:
+      error instanceof DOMException && error.name === "AbortError"
+        ? null
+        : error,
     mutateProducts: mutate,
   };
 }
