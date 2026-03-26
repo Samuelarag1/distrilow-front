@@ -259,6 +259,9 @@ export interface Product {
   branchId?: string | null;
   brand?: string | null;
   trackStock?: boolean;
+  stockBaseProductId?: string | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
   allowNegativeStock?: boolean;
   imageUrl?: string | null;
   measurementType: MeasurementType;
@@ -292,6 +295,9 @@ export interface CreateProductRequest {
   branchId?: string;
   brand?: string;
   trackStock?: boolean;
+  stockBaseProductId?: string;
+  stockConsumptionQuantity?: number;
+  stockBaseUnit?: MeasurementType;
   allowNegativeStock?: boolean;
   imageUrl?: string;
   measurementType: MeasurementType;
@@ -397,10 +403,48 @@ export interface Stock {
   id: string;
   branchId: string;
   productId: string;
+  stockProductId?: string | null;
   quantity: number;
+  baseQuantity?: number | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  sharedStock?: StockSharedRelation | null;
   averageCost: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface StockSharedProduct {
+  id: string;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  pluCode?: string | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  isBase?: boolean;
+}
+
+export interface StockSharedRelation {
+  stockProductId?: string | null;
+  isShared: boolean;
+  linkedProductsCount: number;
+  linkedProducts: StockSharedProduct[];
+}
+
+export interface StockListItem extends Stock {
+  name?: string | null;
+  product?: Partial<ProductListItem> | null;
+  sharedStock?: StockSharedRelation | null;
+}
+
+export interface StockDetail extends StockListItem {
+  stockProductId?: string | null;
+  quantity: number;
+  baseQuantity?: number | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  sharedStock?: StockSharedRelation | null;
 }
 
 export interface CreateStockRequest {
@@ -411,11 +455,16 @@ export interface CreateStockRequest {
 }
 
 export interface StockQuery {
+  page?: number;
   skip?: number;
   take?: number;
   offset?: number;
   limit?: number;
+  search?: string;
+  name?: string;
+  q?: string;
   productId?: string;
+  categoryId?: string;
   stockStatus?: string;
   lowStockThreshold?: number;
 }

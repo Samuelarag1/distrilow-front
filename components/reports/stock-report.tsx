@@ -62,6 +62,10 @@ type DiscountPreset =
   | "LOSS"
   | "EXPIRED"
   | "ALL_WITH_ADJUSTMENT";
+type StockDiscountProductOption = {
+  id: string;
+  name: string;
+};
 
 function toInputDate(value: Date) {
   const year = value.getFullYear();
@@ -107,7 +111,8 @@ async function fetchAllStockMovementsByType(
   branchId: string,
   type: MovementType,
   from: string,
-  to: string
+  to: string,
+  productId?: string
 ) {
   const rows: Movement[] = [];
   let offset = 0;
@@ -120,6 +125,7 @@ async function fetchAllStockMovementsByType(
         to,
         offset,
         limit: STOCK_MOVEMENTS_PAGE_SIZE,
+        productId: productId || undefined,
       },
       branchId
     );
@@ -164,6 +170,8 @@ export function StockReport() {
     useState<ReportsInventoryLowStockResponse | null>(null);
   const [discountPreset, setDiscountPreset] =
     useState<DiscountPreset>("LOSS_EXPIRED");
+  const [selectedDiscountProductId, setSelectedDiscountProductId] =
+    useState("all");
   const [discountFrom, setDiscountFrom] = useState(() => {
     const current = new Date();
     const from = new Date(current);
@@ -183,6 +191,32 @@ export function StockReport() {
     swrFetcher,
     {
       revalidateOnFocus: false,
+    }
+  );
+  const { data: stockDiscountProductOptions } = useSWR<
+    StockDiscountProductOption[]
+  >(
+    branchId ? ["stock-discount-product-options", branchId] : null,
+    async () => {
+      const page = await backendApi.products.list(
+        {
+          skip: 0,
+          take: 300,
+          sortBy: "name",
+          sortOrder: "asc",
+        },
+        branchId
+      );
+      return page.items
+        .filter((item) => item?.id && item?.name)
+        .map((item) => ({
+          id: String(item.id),
+          name: String(item.name),
+        }));
+    },
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
     }
   );
 
@@ -301,17 +335,44 @@ export function StockReport() {
   } = useSWR(
     branchId
       ? [
-          "reporting-stock-discounts",
+          "stock-movements",
           branchId,
-          discountFrom,
-          discountTo,
-          discountPreset,
+          {
+            from: discountFrom,
+            to: discountTo,
+            preset: discountPreset,
+            productId:
+              selectedDiscountProductId !== "all"
+                ? selectedDiscountProductId
+                : undefined,
+          },
         ]
       : null,
     async () => {
+      const activeBranchId = branchId;
+      if (!activeBranchId) {
+        return {
+          rows: [],
+          totalsByType: {},
+          topReasons: [],
+          totalLoss: 0,
+          totalQuantity: 0,
+          rowsWithMissingCost: 0,
+        };
+      }
+
+      const requestedProductId =
+        selectedDiscountProductId !== "all" ? selectedDiscountProductId : null;
+
       const movementGroups = await Promise.all(
         discountTypes.map((type) =>
-          fetchAllStockMovementsByType(branchId, type, discountFrom, discountTo)
+          fetchAllStockMovementsByType(
+            activeBranchId,
+            type,
+            discountFrom,
+            discountTo,
+            requestedProductId ?? undefined
+          )
         )
       );
 
@@ -670,7 +731,7 @@ export function StockReport() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div className="space-y-2">
               <label className="text-xs text-muted-foreground">Desde</label>
               <Input
@@ -704,6 +765,23 @@ export function StockReport() {
                 <option value="ALL_WITH_ADJUSTMENT">
                   Merma + Vencido + Ajuste manual
                 </option>
+              </select>
+            </div>
+            <div className="space-y-2">
+              <label className="text-xs text-muted-foreground">Producto</label>
+              <select
+                value={selectedDiscountProductId}
+                onChange={(event) =>
+                  setSelectedDiscountProductId(event.target.value)
+                }
+                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="all">Todos los productos</option>
+                {(stockDiscountProductOptions ?? []).map((product) => (
+                  <option key={product.id} value={product.id}>
+                    {product.name}
+                  </option>
+                ))}
               </select>
             </div>
             <div className="rounded-md border px-3 py-2">

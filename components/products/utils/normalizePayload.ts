@@ -13,6 +13,14 @@ export function normalizeProductPayload(productData: Partial<Product>) {
   const categoryId = (productData as any).categoryId?.trim() || undefined;
   const description = (productData as any).description?.trim() || undefined;
   const brand = (productData as any).brand?.trim() || undefined;
+  const stockBaseProductId =
+    (productData as any).stockBaseProductId?.trim() || undefined;
+  const stockConsumptionRaw = Number((productData as any).stockConsumptionQuantity);
+  const stockConsumptionQuantity =
+    Number.isFinite(stockConsumptionRaw) && stockConsumptionRaw > 0
+      ? stockConsumptionRaw
+      : undefined;
+  const stockBaseUnit = (productData as any).stockBaseUnit ?? undefined;
 
   return {
     sku: normalizedSku,
@@ -43,6 +51,9 @@ export function normalizeProductPayload(productData: Partial<Product>) {
     branchId: (productData as any).branchId ?? undefined,
     brand,
     trackStock: (productData as any).trackStock,
+    stockBaseProductId,
+    stockConsumptionQuantity,
+    stockBaseUnit,
     allowNegativeStock: (productData as any).allowNegativeStock,
     imageUrl: (productData as any).imageUrl ?? undefined,
     measurementType: (productData as any).measurementType ?? "unit",

@@ -33,6 +33,7 @@ import type {
   LoginRequest,
   LogoutRequest,
   LogoutResponse,
+  MeasurementType,
   Movement,
   MovementQuery,
   OffsetPaginationMeta,
@@ -72,9 +73,13 @@ import type {
   SnapshotPeriod,
   SnapshotMetricsResponse,
   Stock,
+  StockDetail,
+  StockListItem,
   StockLot,
   StockLotsListQuery,
   StockLotsListResponse,
+  StockSharedProduct,
+  StockSharedRelation,
   StockSummaryCategoriesResponse,
   StockSummaryCategoryItem,
   StockSummaryResponse,
@@ -340,12 +345,40 @@ function normalizeProductsPage(
   };
 }
 
-function mapStockByProduct(stocks: Stock[]) {
+type StockResolverContext = {
+  stockByProductId: Map<string, number>;
+  baseStockByStockProductId: Map<string, number>;
+};
+
+function buildStockResolverContext(stocks: Stock[]): StockResolverContext {
   const stockByProductId = new Map<string, number>();
+  const baseStockByStockProductId = new Map<string, number>();
+
   stocks.forEach((stock) => {
-    stockByProductId.set(stock.productId, Number(stock.quantity ?? 0));
+    const productId = String(stock.productId ?? "").trim();
+    const stockProductId = String(stock.stockProductId ?? stock.productId ?? "").trim();
+    const quantity = toOptionalFiniteNumber(stock.quantity);
+    const baseQuantity =
+      toOptionalFiniteNumber(stock.baseQuantity) ?? toOptionalFiniteNumber(stock.quantity);
+
+    if (productId && quantity !== null) {
+      stockByProductId.set(productId, quantity);
+    }
+
+    if (stockProductId && baseQuantity !== null) {
+      const current = baseStockByStockProductId.get(stockProductId);
+      if (current === undefined) {
+        baseStockByStockProductId.set(stockProductId, baseQuantity);
+      } else {
+        baseStockByStockProductId.set(stockProductId, Math.max(current, baseQuantity));
+      }
+    }
   });
-  return stockByProductId;
+
+  return {
+    stockByProductId,
+    baseStockByStockProductId,
+  };
 }
 
 function readItemStock(item: ProductListItem) {
@@ -353,15 +386,55 @@ function readItemStock(item: ProductListItem) {
   return Number.isFinite(value) ? value : null;
 }
 
+function resolveSharedRelativeStock(
+  item: ProductListItem,
+  stockContext?: StockResolverContext
+) {
+  if (!stockContext) return null;
+  if (item.trackStock === false) return null;
+
+  const productId = String(item.id ?? "").trim();
+  const baseProductId = String(item.stockBaseProductId ?? "").trim();
+  if (!productId || !baseProductId || productId === baseProductId) {
+    return null;
+  }
+
+  const consumptionRaw = toOptionalFiniteNumber(item.stockConsumptionQuantity);
+  const consumption =
+    consumptionRaw !== null && consumptionRaw > 0 ? consumptionRaw : null;
+  if (consumption === null) return null;
+
+  const baseStock =
+    stockContext.baseStockByStockProductId.get(baseProductId) ??
+    stockContext.stockByProductId.get(baseProductId);
+  if (!Number.isFinite(baseStock)) return null;
+
+  const relative = Number(baseStock) / consumption;
+  if (!Number.isFinite(relative)) return null;
+  return Math.max(0, relative);
+}
+
 function applyStockToProduct(
   item: ProductListItem,
-  stockByProductId: Map<string, number>,
+  stockContext?: StockResolverContext,
   branchId?: string | null
 ) {
+  const directStock = stockContext?.stockByProductId.get(item.id);
+  const sharedRelativeStock = resolveSharedRelativeStock(item, stockContext);
+  const embeddedStock = readItemStock(item);
+
+  const resolvedStock = Number.isFinite(directStock) && Number(directStock) > 0
+    ? Number(directStock)
+    : Number.isFinite(sharedRelativeStock)
+    ? Number(sharedRelativeStock)
+    : Number.isFinite(directStock)
+    ? Number(directStock)
+    : embeddedStock ?? 0;
+
   return {
     ...item,
     branchId: item.branchId ?? branchId ?? null,
-    stock: stockByProductId.get(item.id) ?? readItemStock(item) ?? 0,
+    stock: resolvedStock,
   };
 }
 
@@ -447,6 +520,13 @@ function normalizeBarcodePayload(
       brand: toOptionalText(source.brand),
       trackStock:
         typeof source.trackStock === "boolean" ? source.trackStock : undefined,
+      stockBaseProductId: toOptionalText(source.stockBaseProductId),
+      stockConsumptionQuantity: toOptionalFiniteNumber(
+        source.stockConsumptionQuantity
+      ),
+      stockBaseUnit: toOptionalText(source.stockBaseUnit) as
+        | MeasurementType
+        | null,
       allowNegativeStock:
         typeof source.allowNegativeStock === "boolean"
           ? source.allowNegativeStock
@@ -727,6 +807,251 @@ function normalizeStockSummaryCategories(
     items,
     total: toFiniteNumber(source.total, items.length),
   };
+}
+
+function normalizeMeasurementTypeValue(value: unknown): MeasurementType | null {
+  const normalized = toOptionalText(value);
+  if (
+    normalized === "unit" ||
+    normalized === "gram" ||
+    normalized === "kg" ||
+    normalized === "ml" ||
+    normalized === "liter"
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeStockSharedProduct(payload: unknown): StockSharedProduct | null {
+  const source = asRecord(payload);
+  const id = toOptionalText(source.id);
+  const name = toOptionalText(source.name);
+  if (!id || !name) return null;
+
+  return {
+    id,
+    name,
+    sku: toOptionalText(source.sku),
+    barcode: toOptionalText(source.barcode),
+    pluCode: toOptionalText(source.pluCode),
+    stockConsumptionQuantity: toOptionalFiniteNumber(
+      source.stockConsumptionQuantity
+    ),
+    stockBaseUnit: normalizeMeasurementTypeValue(source.stockBaseUnit),
+    isBase: typeof source.isBase === "boolean" ? source.isBase : undefined,
+  };
+}
+
+function normalizeStockSharedRelation(
+  payload: unknown,
+  fallbackStockProductId?: string | null
+): StockSharedRelation | null {
+  const source = asRecord(payload);
+  const linkedProductsRaw = Array.isArray(source.linkedProducts)
+    ? source.linkedProducts
+    : [];
+  const linkedProducts = linkedProductsRaw
+    .map((item) => normalizeStockSharedProduct(item))
+    .filter((item): item is StockSharedProduct => Boolean(item));
+
+  const linkedProductsCountRaw = toOptionalFiniteNumber(source.linkedProductsCount);
+  const hasExplicitIsShared = typeof source.isShared === "boolean";
+  const stockProductId =
+    toOptionalText(source.stockProductId) ?? toOptionalText(fallbackStockProductId);
+
+  if (
+    !stockProductId &&
+    !hasExplicitIsShared &&
+    linkedProducts.length === 0 &&
+    linkedProductsCountRaw === null
+  ) {
+    return null;
+  }
+
+  return {
+    stockProductId,
+    isShared: hasExplicitIsShared ? Boolean(source.isShared) : false,
+    linkedProductsCount:
+      linkedProductsCountRaw === null
+        ? linkedProducts.length
+        : Math.max(0, Math.trunc(linkedProductsCountRaw)),
+    linkedProducts,
+  };
+}
+
+function normalizeStockProductSnapshot(
+  payload: unknown
+): Partial<ProductListItem> | null {
+  const source = asRecord(payload);
+  if (Object.keys(source).length === 0) return null;
+
+  return {
+    id: toOptionalText(source.id) ?? undefined,
+    name: toOptionalText(source.name) ?? undefined,
+    sku: toOptionalText(source.sku) ?? undefined,
+    barcode: toOptionalText(source.barcode) ?? undefined,
+    pluCode: toOptionalText(source.pluCode) ?? undefined,
+    categoryId: toOptionalText(source.categoryId) ?? undefined,
+    categoryName: toOptionalText(source.categoryName) ?? undefined,
+    costPrice: toOptionalFiniteNumber(source.costPrice) ?? undefined,
+    wholesalePrice: toOptionalFiniteNumber(source.wholesalePrice) ?? undefined,
+    retailPrice: toOptionalFiniteNumber(source.retailPrice) ?? undefined,
+    minStock: toOptionalFiniteNumber(source.minStock) ?? undefined,
+    maxStock: toOptionalFiniteNumber(source.maxStock) ?? undefined,
+    imageUrl: toOptionalText(source.imageUrl) ?? undefined,
+    trackStock:
+      typeof source.trackStock === "boolean" ? source.trackStock : undefined,
+    measurementType:
+      normalizeMeasurementTypeValue(source.measurementType) ?? undefined,
+  };
+}
+
+function normalizeStockListItem(payload: unknown): StockListItem {
+  const source = asRecord(payload);
+  const productSnapshot = normalizeStockProductSnapshot(source.product);
+  const productId =
+    toOptionalText(source.productId) ?? toOptionalText(productSnapshot?.id) ?? "";
+  const stockProductId =
+    toOptionalText(source.stockProductId) ?? toOptionalText(productId);
+  const rawQuantity = toOptionalFiniteNumber(source.quantity);
+  const baseQuantity = toOptionalFiniteNumber(source.baseQuantity);
+  const stockConsumptionQuantity = toOptionalFiniteNumber(
+    source.stockConsumptionQuantity
+  );
+  const isLinkedStock = Boolean(
+    productId && stockProductId && productId !== stockProductId
+  );
+  const canDeriveRelativeQuantity =
+    isLinkedStock &&
+    baseQuantity !== null &&
+    stockConsumptionQuantity !== null &&
+    stockConsumptionQuantity > 0;
+  const derivedRelativeQuantity = canDeriveRelativeQuantity
+    ? Math.max(0, baseQuantity / stockConsumptionQuantity)
+    : null;
+  const quantity =
+    rawQuantity !== null && (rawQuantity > 0 || derivedRelativeQuantity === null)
+      ? rawQuantity
+      : derivedRelativeQuantity ?? toFiniteNumber(source.quantity, 0);
+  const sharedStock = normalizeStockSharedRelation(
+    source.sharedStock,
+    stockProductId
+  );
+  const branchId = toOptionalText(source.branchId) ?? "";
+  const rowId =
+    toOptionalText(source.id) ??
+    [branchId || "branch", productId || "product"].join(":");
+
+  return {
+    id: rowId,
+    branchId,
+    productId,
+    stockProductId,
+    quantity,
+    baseQuantity,
+    stockConsumptionQuantity,
+    stockBaseUnit: normalizeMeasurementTypeValue(source.stockBaseUnit),
+    sharedStock,
+    averageCost: toFiniteNumber(source.averageCost, 0),
+    createdAt: toOptionalText(source.createdAt) ?? undefined,
+    updatedAt: toOptionalText(source.updatedAt) ?? undefined,
+    name: toOptionalText(source.name ?? productSnapshot?.name),
+    product: productSnapshot,
+  };
+}
+
+function normalizeStockDetail(payload: unknown): StockDetail {
+  const normalized = normalizeStockListItem(payload);
+  return {
+    ...normalized,
+    stockProductId:
+      normalized.stockProductId ?? toOptionalText(normalized.productId) ?? null,
+    baseQuantity:
+      normalized.baseQuantity ?? toOptionalFiniteNumber(normalized.quantity),
+  };
+}
+
+function resolveStockRowConsumptionQuantity(row: StockListItem) {
+  const direct = toOptionalFiniteNumber(row.stockConsumptionQuantity);
+  if (direct !== null && direct > 0) return direct;
+
+  const linkedProducts = Array.isArray(row.sharedStock?.linkedProducts)
+    ? row.sharedStock?.linkedProducts ?? []
+    : [];
+  const linkedCurrent = linkedProducts.find(
+    (linked) => String(linked.id ?? "").trim() === String(row.productId ?? "").trim()
+  );
+  const linkedConsumption = toOptionalFiniteNumber(
+    linkedCurrent?.stockConsumptionQuantity
+  );
+  if (linkedConsumption !== null && linkedConsumption > 0) {
+    return linkedConsumption;
+  }
+
+  return null;
+}
+
+function applyRelativeStockToStockRows(rows: StockListItem[]): StockListItem[] {
+  if (!Array.isArray(rows) || rows.length === 0) return rows;
+
+  const baseQuantityByStockProductId = new Map<string, number>();
+
+  rows.forEach((row) => {
+    const stockProductId = String(row.stockProductId ?? row.productId ?? "").trim();
+    if (!stockProductId) return;
+
+    const directBase = toOptionalFiniteNumber(row.baseQuantity);
+    const inferredBase =
+      directBase !== null
+        ? directBase
+        : String(row.productId ?? "").trim() === stockProductId
+        ? toOptionalFiniteNumber(row.quantity)
+        : null;
+    if (inferredBase === null) return;
+
+    const current = baseQuantityByStockProductId.get(stockProductId);
+    if (current === undefined) {
+      baseQuantityByStockProductId.set(stockProductId, inferredBase);
+      return;
+    }
+    baseQuantityByStockProductId.set(stockProductId, Math.max(current, inferredBase));
+  });
+
+  return rows.map((row) => {
+    const stockProductId = String(row.stockProductId ?? row.productId ?? "").trim();
+    const productId = String(row.productId ?? "").trim();
+    if (!stockProductId || !productId || stockProductId === productId) {
+      const baseQuantity = toOptionalFiniteNumber(row.baseQuantity);
+      if (baseQuantity === null) return row;
+      return {
+        ...row,
+        baseQuantity,
+      };
+    }
+
+    const baseQuantity = baseQuantityByStockProductId.get(stockProductId);
+    const consumption = resolveStockRowConsumptionQuantity(row);
+    if (
+      !Number.isFinite(baseQuantity) ||
+      consumption === null ||
+      !Number.isFinite(consumption) ||
+      consumption <= 0
+    ) {
+      return row;
+    }
+
+    const derivedQuantity = Math.max(0, Number(baseQuantity) / consumption);
+    const currentQuantity = toOptionalFiniteNumber(row.quantity);
+    const shouldOverrideQuantity =
+      currentQuantity === null || !Number.isFinite(currentQuantity) || currentQuantity <= 0;
+
+    return {
+      ...row,
+      quantity: shouldOverrideQuantity ? derivedQuantity : currentQuantity,
+      baseQuantity: row.baseQuantity ?? Number(baseQuantity),
+    };
+  });
 }
 
 function normalizeStockLot(payload: unknown): StockLot {
@@ -1554,35 +1879,77 @@ export const backendApi = {
         ...body,
         branchId: body.branchId ?? requireActiveBranchId(),
       };
-      const created = await apiClientFetch.post<Stock>("/stocks", payload);
+      const created = await apiClientFetch.post<unknown>("/stocks", payload);
       invalidateStockCache(payload.branchId);
-      return created;
+      return normalizeStockListItem(created);
     },
     list: async (query: StockQuery = {}, branchIdOverride?: string | null) => {
       const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
       if (!effectiveBranchId) {
         throw new Error("Missing branch context. Send x-branch-id header.");
       }
-      const payload = await apiClientFetch.get<
-        PaginatedResponse<Stock> | Stock[]
-      >(`/stocks${buildQuery(query)}`, {
-        headers: {
-          "x-branch-id": effectiveBranchId,
-        },
-      });
-      return toPaginatedResponse(
-        payload,
-        Number(query.skip ?? query.offset ?? 0),
-        Number(query.take ?? query.limit ?? 100)
+      const safeLimit = Math.max(
+        1,
+        Math.min(100, Math.trunc(Number(query.limit ?? query.take ?? 100)) || 100)
       );
+      const offsetCandidate = Number(query.offset ?? query.skip ?? Number.NaN);
+      const pageFromOffset = Number.isFinite(offsetCandidate)
+        ? Math.floor(Math.max(0, offsetCandidate) / safeLimit) + 1
+        : 1;
+      const safePage = Math.max(
+        1,
+        Math.trunc(Number(query.page ?? pageFromOffset)) || 1
+      );
+      const normalizedSearch =
+        toTrimmedOrUndefined(query.search) ??
+        toTrimmedOrUndefined(query.q) ??
+        toTrimmedOrUndefined(query.name);
+      const safeQuery = {
+        search: normalizedSearch,
+        productId: toTrimmedOrUndefined(query.productId),
+        categoryId: toTrimmedOrUndefined(query.categoryId),
+        stockStatus: toTrimmedOrUndefined(query.stockStatus),
+        lowStockThreshold:
+          query.lowStockThreshold === undefined || query.lowStockThreshold === null
+            ? undefined
+            : Number(query.lowStockThreshold),
+        page: safePage,
+        limit: safeLimit,
+      };
+      const payload = await apiClientFetch.get<
+        PaginatedResponse<unknown> | unknown[]
+      >(
+        `/stocks${buildQuery(safeQuery, {
+          preserveLimitAndOffset: true,
+        })}`,
+        {
+          headers: {
+            "x-branch-id": effectiveBranchId,
+          },
+        },
+      );
+      const page = toPaginatedResponse(
+        payload,
+        Math.max(0, (safePage - 1) * safeLimit),
+        safeLimit
+      );
+      const normalizedItems = applyRelativeStockToStockRows(
+        page.items.map((item) => normalizeStockListItem(item))
+      );
+      return {
+        ...page,
+        items: normalizedItems,
+      };
     },
     listByBranch: async (branchId: string) => {
       const payload = await apiClientFetch.get<
-        PaginatedResponse<Stock> | Stock[] | { items?: Stock[] | null }
+        PaginatedResponse<unknown> | unknown[] | { items?: unknown[] | null }
       >(`/stocks/branch/${branchId}`);
 
       if (Array.isArray(payload)) {
-        return payload;
+        return applyRelativeStockToStockRows(
+          payload.map((row) => normalizeStockListItem(row))
+        );
       }
 
       if (
@@ -1590,15 +1957,21 @@ export const backendApi = {
         typeof payload === "object" &&
         Array.isArray((payload as { items?: unknown }).items)
       ) {
-        return (payload as { items: Stock[] }).items;
+        return applyRelativeStockToStockRows(
+          (payload as { items: unknown[] }).items.map((row) =>
+            normalizeStockListItem(row)
+          )
+        );
       }
 
       return [];
     },
-    getByBranchAndProduct: (branchId: string, productId: string) =>
-      apiClientFetch.get<Stock>(
+    getByBranchAndProduct: async (branchId: string, productId: string) => {
+      const payload = await apiClientFetch.get<unknown>(
         `/stocks/branch/${branchId}/product/${productId}`
-      ),
+      );
+      return normalizeStockDetail(payload);
+    },
     summary: async (
       query: { lowStockThreshold?: number } = {},
       branchIdOverride?: string | null
@@ -2803,23 +3176,32 @@ export const backendApi = {
     const allRowsHaveStock = normalizedPage.items.every(
       (item) => readItemStock(item) !== null
     );
-    if (allRowsHaveStock) {
-      const emptyStockMap = new Map<string, number>();
+    const hasSharedStockProducts = normalizedPage.items.some((item) => {
+      const productId = String(item.id ?? "").trim();
+      const baseProductId = String(item.stockBaseProductId ?? "").trim();
+      return Boolean(
+        item.trackStock !== false &&
+          productId &&
+          baseProductId &&
+          baseProductId !== productId
+      );
+    });
+    if (allRowsHaveStock && !hasSharedStockProducts) {
       return {
         ...normalizedPage,
         items: normalizedPage.items.map((item) =>
-          applyStockToProduct(item, emptyStockMap, scopedBranchId)
+          applyStockToProduct(item, undefined, scopedBranchId)
         ),
       } satisfies NormalizedProductsPage;
     }
 
     const stocks = await getCachedStocksForBranch(scopedBranchId);
-    const stockByProductId = mapStockByProduct(stocks);
+    const stockContext = buildStockResolverContext(stocks);
 
     return {
       ...normalizedPage,
       items: normalizedPage.items.map((item) =>
-        applyStockToProduct(item, stockByProductId, scopedBranchId)
+        applyStockToProduct(item, stockContext, scopedBranchId)
       ),
     } satisfies NormalizedProductsPage;
   },

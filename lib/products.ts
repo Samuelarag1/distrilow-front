@@ -42,6 +42,13 @@ function normalizePluCode(value: unknown) {
   return /^\d{5}$/.test(normalized) ? normalized : undefined;
 }
 
+function normalizePositiveNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
+}
+
 async function attachStock(item: ApiProduct): Promise<Product> {
   const { branchId } = getApiSession();
   if (!branchId) return normalizeProduct(item);
@@ -105,6 +112,13 @@ export const productsApi = {
       branchId: (data.branchId ?? branchId ?? undefined) as string | undefined,
       brand: normalizeOptionalString(data.brand),
       trackStock: data.trackStock ?? true,
+      stockBaseProductId: normalizeOptionalString(data.stockBaseProductId),
+      stockConsumptionQuantity: normalizePositiveNumber(
+        data.stockConsumptionQuantity
+      ),
+      stockBaseUnit: (data.stockBaseUnit ?? undefined) as
+        | MeasurementType
+        | undefined,
       allowNegativeStock: data.allowNegativeStock ?? false,
       imageUrl: normalizeOptionalString(data.imageUrl),
     });
@@ -129,6 +143,13 @@ export const productsApi = {
       branchId: data.branchId ?? undefined,
       brand: normalizeOptionalString(data.brand),
       trackStock: data.trackStock,
+      stockBaseProductId: normalizeOptionalString(data.stockBaseProductId),
+      stockConsumptionQuantity: normalizePositiveNumber(
+        data.stockConsumptionQuantity
+      ),
+      stockBaseUnit: (data.stockBaseUnit ?? undefined) as
+        | MeasurementType
+        | undefined,
       allowNegativeStock: data.allowNegativeStock,
       imageUrl: normalizeOptionalString(data.imageUrl),
       measurementType: data.measurementType as MeasurementType | undefined,

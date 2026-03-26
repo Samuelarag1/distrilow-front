@@ -18,6 +18,8 @@ import {
   ArrowUp,
   ArrowDown,
   History,
+  Link2,
+  Info,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,13 +35,23 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Product } from "@/lib/products";
-import { useProducts } from "@/components/providers/product-provider";
+import { useProductActions } from "@/components/providers/product-provider";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
-import type { MovementType, Stock } from "@/lib/api-types";
+import type {
+  MovementType,
+  StockDetail,
+  StockListItem,
+  StockSharedProduct,
+} from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import { backendApi } from "@/lib/backend-api";
 import { InventoryLotsSection } from "@/components/modules/inventory-lots-section";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 type SortKey = "name" | "stock" | "category" | "price";
 type SortOrder = "asc" | "desc";
@@ -75,8 +87,13 @@ type Category = {
   isActive: boolean;
 };
 
-type LowStockRow = Stock & {
+type LowStockRow = StockListItem & {
   name?: string;
+  product?: Partial<Product> & { id?: string; name?: string };
+};
+
+type InventoryRow = StockListItem & {
+  name?: string | null;
   product?: Partial<Product> & { id?: string; name?: string };
 };
 
@@ -89,15 +106,54 @@ function getLooseCategoryLabel(category: unknown): string {
   return "Sin categoria";
 }
 
-function getWholesaleUnitPrice(item: Product): number {
-  const wholesale = Number(item.wholesalePrice ?? NaN);
-  if (Number.isFinite(wholesale) && wholesale > 0) return wholesale;
+function toDisplayMeasurementUnit(value: unknown) {
+  if (value === "kg") return "kg";
+  if (value === "gram") return "gr";
+  if (value === "ml") return "ml";
+  if (value === "liter") return "lt";
+  return "unidades";
+}
 
-  const retail = Number(item.retailPrice ?? NaN);
-  if (Number.isFinite(retail) && retail > 0) return retail;
+function resolveInventoryRowName(item: InventoryRow) {
+  const directName = String(item.name ?? "").trim();
+  if (directName) return directName;
+  const nestedName = String(item.product?.name ?? "").trim();
+  if (nestedName) return nestedName;
+  return item.productId;
+}
 
-  const fallback = Number(item.price ?? item.costPrice ?? 0);
-  return Number.isFinite(fallback) ? fallback : 0;
+function resolveInventoryRowPrices(item: InventoryRow) {
+  const product = item.product ?? {};
+  const costPrice = Number((product as any).costPrice ?? 0);
+  const wholesalePrice = Number((product as any).wholesalePrice ?? Number.NaN);
+  const retailPrice = Number((product as any).retailPrice ?? Number.NaN);
+  const wholesale =
+    Number.isFinite(wholesalePrice) && wholesalePrice > 0
+      ? wholesalePrice
+      : Number.isFinite(retailPrice) && retailPrice > 0
+      ? retailPrice
+      : Number.isFinite(costPrice)
+      ? costPrice
+      : 0;
+
+  return {
+    costPrice: Number.isFinite(costPrice) ? costPrice : 0,
+    wholesaleUnitPrice: wholesale,
+  };
+}
+
+function resolveInventoryRowCategoryId(item: InventoryRow) {
+  const categoryId = String((item.product as any)?.categoryId ?? "").trim();
+  return categoryId || null;
+}
+
+function resolveInventoryRowImage(item: InventoryRow) {
+  return resolveProductImageUrl((item.product ?? (item as unknown as Product)) as Product);
+}
+
+function resolveLinkedProducts(item: InventoryRow): StockSharedProduct[] {
+  const linked = item.sharedStock?.linkedProducts;
+  return Array.isArray(linked) ? linked : [];
 }
 
 function AdjustStockDialog({
@@ -105,7 +161,13 @@ function AdjustStockDialog({
   branches,
   onSubmitMovement,
 }: {
-  item: Product;
+  item: {
+    id: string;
+    name: string;
+    stock: number;
+    unit: string;
+    branchId?: string | null;
+  };
   branches: Array<{ id: string; name: string }>;
   onSubmitMovement: (input: {
     type: MovementType;
@@ -370,14 +432,149 @@ function SortButton({
   );
 }
 
+function StockDetailDialog({
+  branchId,
+  productId,
+  productName,
+  open,
+  onOpenChange,
+}: {
+  branchId: string | null;
+  productId: string | null;
+  productName: string | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data, isLoading, error } = useSWR<StockDetail>(
+    open && branchId && productId
+      ? ["stock-detail", branchId, productId]
+      : null,
+    () => backendApi.stocks.getByBranchAndProduct(branchId as string, productId as string),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+      shouldRetryOnError: false,
+    }
+  );
+
+  const baseUnit = String(data?.stockBaseUnit ?? "unidad");
+  const linkedProducts = Array.isArray(data?.sharedStock?.linkedProducts)
+    ? data?.sharedStock?.linkedProducts ?? []
+    : [];
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle>Detalle de stock</DialogTitle>
+          <DialogDescription>
+            {productName || productId || "Producto"} - referencia real de stock.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading && <p className="text-sm text-muted-foreground">Cargando detalle...</p>}
+
+        {!isLoading && error && (
+          <p className="text-sm text-destructive">
+            {error instanceof Error
+              ? error.message
+              : "No se pudo cargar el detalle del stock."}
+          </p>
+        )}
+
+        {!isLoading && !error && data && (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Producto consultado</p>
+                <p className="font-semibold">{data.productId || "-"}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Stock base real</p>
+                <p className="font-semibold">{data.stockProductId || "-"}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Cantidad comercial</p>
+                <p className="font-semibold">
+                  {Number(data.quantity ?? 0).toLocaleString("es-AR")}
+                </p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Stock real base</p>
+                <p className="font-semibold">
+                  {Number(data.baseQuantity ?? 0).toLocaleString("es-AR")} {baseUnit}
+                </p>
+              </div>
+            </div>
+
+            {data.sharedStock?.isShared && (
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground mb-2">
+                  Productos vinculados: {Number(data.sharedStock.linkedProductsCount ?? 0)}
+                </p>
+                <div className="space-y-2">
+                  {linkedProducts.map((linked) => (
+                    <div
+                      key={linked.id}
+                      className="flex items-center justify-between rounded-md border p-2 text-xs"
+                    >
+                      <div>
+                        <p className="font-medium">{linked.name}</p>
+                        <p className="text-muted-foreground">
+                          {linked.sku ? `SKU ${linked.sku}` : linked.id}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {linked.isBase && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Base
+                          </Badge>
+                        )}
+                        <div className="text-right text-muted-foreground">
+                          <span>
+                            {Number(linked.stockConsumptionQuantity ?? 0).toLocaleString("es-AR")}{" "}
+                            {linked.stockBaseUnit ?? "-"}
+                          </span>
+                          {Number(data.baseQuantity ?? Number.NaN) > 0 &&
+                            Number(linked.stockConsumptionQuantity ?? Number.NaN) > 0 && (
+                              <p className="text-[10px]">
+                                ~{" "}
+                                {(
+                                  Number(data.baseQuantity ?? 0) /
+                                  Number(linked.stockConsumptionQuantity ?? 1)
+                                ).toLocaleString("es-AR", {
+                                  minimumFractionDigits: 0,
+                                  maximumFractionDigits: 4,
+                                })}
+                              </p>
+                            )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function InventoryModule() {
   const { branches, branchId } = useUser();
+  const { registerStockMovement } = useProductActions();
   const effectiveBranchId = normalizeBranchContextId(branchId);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const [currentPage, setCurrentPage] = useState(1);
+  const [stockDetailTarget, setStockDetailTarget] = useState<{
+    productId: string;
+    productName: string;
+  } | null>(null);
   const pageSize = 20;
   const { toast } = useToast();
   const stockSummaryFilters = useMemo(
@@ -391,6 +588,108 @@ export function InventoryModule() {
     "/categories",
     swrFetcher
   );
+
+  const stockListFilters = useMemo(
+    () => ({
+      page: currentPage,
+      limit: pageSize,
+      search: searchQuery.trim() || undefined,
+      categoryId: selectedCategory !== "all" ? selectedCategory : undefined,
+      stockStatus: "all",
+    }),
+    [currentPage, pageSize, searchQuery, selectedCategory]
+  );
+
+  const {
+    data: stocksPage,
+    mutate: mutateStocksList,
+    isLoading: isLoadingStocks,
+    error: stocksError,
+  } = useSWR(
+    effectiveBranchId ? ["stocks", effectiveBranchId, stockListFilters] : null,
+    () => backendApi.stocks.list(stockListFilters, effectiveBranchId),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+      shouldRetryOnError: false,
+    }
+  );
+
+  const inventory = useMemo(() => {
+    const source = (stocksPage?.items ?? []) as InventoryRow[];
+    if (source.length === 0) return [];
+
+    const byProductId = new Map<string, InventoryRow>();
+    const expandedRows: InventoryRow[] = [];
+
+    const addRow = (row: InventoryRow) => {
+      const productId = String(row.productId ?? "").trim();
+      if (!productId || byProductId.has(productId)) return;
+      byProductId.set(productId, row);
+      expandedRows.push(row);
+    };
+
+    source.forEach((row) => addRow(row));
+
+    source.forEach((row) => {
+      const linkedProducts = resolveLinkedProducts(row).filter(
+        (linked) => !linked.isBase
+      );
+      if (linkedProducts.length === 0) return;
+
+      const baseQuantity = Number(row.baseQuantity ?? row.quantity ?? Number.NaN);
+      const hasBaseQuantity = Number.isFinite(baseQuantity);
+
+      linkedProducts.forEach((linked) => {
+        const linkedId = String(linked.id ?? "").trim();
+        if (!linkedId || byProductId.has(linkedId)) return;
+
+        const consumption = Number(linked.stockConsumptionQuantity ?? Number.NaN);
+        const hasConsumption = Number.isFinite(consumption) && consumption > 0;
+        const derivedQuantity =
+          hasBaseQuantity && hasConsumption
+            ? Math.max(0, baseQuantity / consumption)
+            : Number(row.quantity ?? 0);
+        const baseMeasurement = linked.stockBaseUnit ?? row.stockBaseUnit;
+        const productSnapshot = {
+          ...(row.product ?? {}),
+          id: linkedId,
+          name: linked.name,
+          sku: linked.sku ?? undefined,
+          barcode: linked.barcode ?? undefined,
+          pluCode: linked.pluCode ?? undefined,
+        };
+
+        addRow({
+          ...row,
+          id: `${row.id}:linked:${linkedId}`,
+          productId: linkedId,
+          name: linked.name,
+          quantity: derivedQuantity,
+          baseQuantity: hasBaseQuantity ? baseQuantity : row.baseQuantity ?? null,
+          stockConsumptionQuantity: hasConsumption
+            ? consumption
+            : row.stockConsumptionQuantity ?? null,
+          stockBaseUnit: baseMeasurement ?? row.stockBaseUnit,
+          product: productSnapshot,
+        });
+      });
+    });
+
+    return expandedRows;
+  }, [stocksPage?.items]);
+  const inventoryTotal = Math.max(
+    Number(stocksPage?.meta?.total ?? 0),
+    inventory.length
+  );
+  const hasMore = Boolean(stocksPage?.meta?.hasMore);
+  const skip = Number(
+    stocksPage?.meta?.offset ?? Math.max(0, (currentPage - 1) * pageSize)
+  );
+  const take = Number(stocksPage?.meta?.limit ?? pageSize);
+  const isLoading = isLoadingStocks;
+  const isError = stocksError;
+
   const { data: inventorySummary, mutate: mutateInventorySummary } = useSWR(
     effectiveBranchId
       ? ["/stocks/summary", stockSummaryFilters]
@@ -429,26 +728,6 @@ export function InventoryModule() {
     }
   );
 
-  const {
-    products: inventory,
-    total: inventoryTotal,
-    hasMore,
-    skip,
-    take,
-    isLoading,
-    registerStockMovement,
-    mutateProducts,
-  } = useProducts({
-    skip: (currentPage - 1) * pageSize,
-    take: pageSize,
-    search: searchQuery.trim() || undefined,
-    categoryId: selectedCategory === "all" ? null : selectedCategory,
-    branchId: effectiveBranchId,
-    sortBy:
-      sortKey === "name" ? "name" : sortKey === "price" ? "price" : undefined,
-    sortOrder,
-  });
-
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
     (categoriesData ?? []).forEach((category) => {
@@ -457,20 +736,21 @@ export function InventoryModule() {
     return map;
   }, [categoriesData]);
 
-  const getProductCategoryLabel = (item: Product) => {
-    if (item.categoryId) {
-      const mapped = categoryNameById.get(item.categoryId);
+  const getProductCategoryLabel = (item: InventoryRow) => {
+    const categoryId = resolveInventoryRowCategoryId(item);
+    if (categoryId) {
+      const mapped = categoryNameById.get(categoryId);
       if (mapped) return mapped;
 
       const loose = getLooseCategoryLabel(
-        (item as Product & { category?: unknown }).category
+        (item.product as Product & { category?: unknown })?.category
       );
-      if (loose && loose !== item.categoryId) return loose;
+      if (loose && loose !== categoryId) return loose;
 
       return "Sin categoria";
     }
     return getLooseCategoryLabel(
-      (item as Product & { category?: unknown }).category
+      (item.product as Product & { category?: unknown })?.category
     );
   };
 
@@ -484,17 +764,21 @@ export function InventoryModule() {
     setCurrentPage(1);
   };
 
-  const filteredInventory = inventory.slice().sort((a: Product, b: Product) => {
+  const filteredInventory = inventory.slice().sort((a: InventoryRow, b: InventoryRow) => {
     const factor = sortOrder === "asc" ? 1 : -1;
-    if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
-    if (sortKey === "category") {
-      return (
-        getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) *
-        factor
-      );
+    if (sortKey === "name") {
+      return resolveInventoryRowName(a).localeCompare(resolveInventoryRowName(b)) * factor;
     }
-    if (sortKey === "stock") return ((a.stock || 0) - (b.stock || 0)) * factor;
-    return (getWholesaleUnitPrice(a) - getWholesaleUnitPrice(b)) * factor;
+    if (sortKey === "category") {
+      return getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) * factor;
+    }
+    if (sortKey === "stock") {
+      return (Number(a.quantity ?? 0) - Number(b.quantity ?? 0)) * factor;
+    }
+    return (
+      resolveInventoryRowPrices(a).wholesaleUnitPrice -
+      resolveInventoryRowPrices(b).wholesaleUnitPrice
+    ) * factor;
   });
 
   const categories = useMemo(() => {
@@ -508,11 +792,13 @@ export function InventoryModule() {
   }, [categoriesData]);
 
   const totalValueFallback = inventory.reduce(
-    (sum: number, item: Product) => sum + item.stock * getWholesaleUnitPrice(item),
+    (sum: number, item: InventoryRow) =>
+      sum + Number(item.quantity ?? 0) * resolveInventoryRowPrices(item).wholesaleUnitPrice,
     0
   );
   const inventoryNameById = useMemo(
-    () => new Map(inventory.map((item) => [item.id, item.name])),
+    () =>
+      new Map(inventory.map((item) => [item.productId, resolveInventoryRowName(item)])),
     [inventory]
   );
   const lowStockNamesPreview = useMemo(() => {
@@ -559,9 +845,9 @@ export function InventoryModule() {
   const showingFrom = inventoryTotal === 0 ? 0 : skip + 1;
   const showingTo = inventoryTotal === 0 ? 0 : skip + filteredInventory.length;
 
-  const getStockStatus = (item: Product) => {
-    if (item.stock <= (item.minStock || 0)) return "low";
-    if (item.stock >= (item.maxStock || 100) * 0.8) return "high";
+  const getStockStatus = (stock: number, minStock: number, maxStock: number) => {
+    if (stock <= minStock) return "low";
+    if (stock >= maxStock * 0.8) return "high";
     return "normal";
   };
 
@@ -576,16 +862,49 @@ export function InventoryModule() {
     }
   };
 
-  const getProgressValue = (item: Product) => {
-    const max = item.maxStock || 100;
-    return (item.stock / max) * 100;
+  const getProgressValue = (stock: number, maxStock: number) => {
+    const max = maxStock || 100;
+    return (stock / max) * 100;
   };
 
-  function InventoryItemCard({ item }: { item: Product }) {
-    const status = getStockStatus(item);
-    const progressValue = getProgressValue(item);
-    const wholesaleUnitPrice = getWholesaleUnitPrice(item);
-    const inventoryValue = item.stock * wholesaleUnitPrice;
+  function InventoryItemCard({ item }: { item: InventoryRow }) {
+    const itemName = resolveInventoryRowName(item);
+    const categoryLabel = getProductCategoryLabel(item);
+    const stockQuantity = Number(item.quantity ?? 0);
+    const minStock = Number((item.product as any)?.minStock ?? 0);
+    const maxStock = Number((item.product as any)?.maxStock ?? 100);
+    const measurementType = (item.product as any)?.measurementType;
+    const unitLabel = toDisplayMeasurementUnit(measurementType);
+    const status = getStockStatus(stockQuantity, minStock, maxStock);
+    const progressValue = getProgressValue(stockQuantity, maxStock);
+    const { costPrice, wholesaleUnitPrice } = resolveInventoryRowPrices(item);
+    const inventoryValue = stockQuantity * wholesaleUnitPrice;
+    const linkedProducts = resolveLinkedProducts(item);
+    const linkedProductsCount = Number(
+      item.sharedStock?.linkedProductsCount ?? linkedProducts.length
+    );
+    const isSharedStock = Boolean(item.sharedStock?.isShared);
+    const consumptionQuantity = Number(item.stockConsumptionQuantity ?? 1);
+    const consumptionLabel = item.stockBaseUnit ?? "unidad";
+    const baseQuantity = Number(item.baseQuantity ?? Number.NaN);
+    const hasLinkedBase =
+      Boolean(item.stockProductId) &&
+      Boolean(item.productId) &&
+      item.stockProductId !== item.productId;
+    const relativeStockFromBase =
+      hasLinkedBase &&
+      Number.isFinite(baseQuantity) &&
+      Number.isFinite(consumptionQuantity) &&
+      consumptionQuantity > 0
+        ? Math.max(0, baseQuantity / consumptionQuantity)
+        : null;
+    const adjustDialogItem = {
+      id: item.productId,
+      name: itemName,
+      stock: stockQuantity,
+      unit: unitLabel,
+      branchId: item.branchId ?? effectiveBranchId ?? null,
+    };
 
     const handleMovementSubmit = async (input: {
       type: MovementType;
@@ -596,17 +915,17 @@ export function InventoryModule() {
     }) => {
       try {
         await registerStockMovement({
-          productId: item.id,
+          productId: item.productId,
           branchId: item.branchId ?? effectiveBranchId ?? undefined,
           quantity: input.quantity,
           type: input.type,
-          unitCost: Number(item.costPrice ?? 0),
+          unitCost: costPrice,
           direction: input.direction,
           reason: input.reason,
           toBranchId: input.toBranchId,
         });
         await Promise.all([
-          mutateProducts(),
+          mutateStocksList(),
           mutateInventorySummary(),
           mutateInventorySummaryCategories(),
           mutateLowStockRows(),
@@ -614,9 +933,7 @@ export function InventoryModule() {
 
         toast({
           title: "Movimiento registrado",
-          description: `Se registro ${input.type} para ${item.name} (${
-            input.quantity
-          } ${item.unit || "unidades"}).`,
+          description: `Se registro ${input.type} para ${itemName} (${input.quantity} ${unitLabel}).`,
         });
       } catch (error: any) {
         toast({
@@ -642,11 +959,10 @@ export function InventoryModule() {
       >
         {status === "low" && (
           <div className="absolute top-0 right-0 p-1 bg-red-500 text-white transform rotate-0 text-[8px] font-black uppercase px-2 rounded-bl-lg">
-            Reposición Urgente
+            Reposicion Urgente
           </div>
         )}
         <div className="flex flex-col md:flex-row items-center gap-6">
-          {/* Item Info */}
           <div className="flex-1 min-w-0 w-full">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
@@ -656,23 +972,33 @@ export function InventoryModule() {
                   }`}
                 >
                   <img
-                    src={resolveProductImageUrl(item)}
-                    alt={item.name}
+                    src={resolveInventoryRowImage(item)}
+                    alt={itemName}
                     className="h-10 w-10 rounded-md object-cover"
                   />
                 </div>
                 <div>
                   <h3 className="font-bold text-lg leading-tight truncate group-hover:text-primary transition-colors">
-                    {item.name}
+                    {itemName}
                   </h3>
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] uppercase font-black tracking-widest mt-1 ${getCategoryColor(
-                      getProductCategoryLabel(item)
-                    )}`}
-                  >
-                    {getProductCategoryLabel(item)}
-                  </Badge>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] uppercase font-black tracking-widest ${getCategoryColor(
+                        categoryLabel
+                      )}`}
+                    >
+                      {categoryLabel}
+                    </Badge>
+                    {isSharedStock && (
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] font-black uppercase tracking-widest"
+                      >
+                        Stock compartido
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="text-right flex flex-col items-end">
@@ -681,13 +1007,107 @@ export function InventoryModule() {
                     status
                   )}`}
                 >
-                  {item.stock}
+                  {stockQuantity.toLocaleString("es-AR")}
                 </div>
                 <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter mt-1">
-                  {item.unit || "unidades"} disponibles
+                  {unitLabel} disponibles
                 </div>
               </div>
             </div>
+
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+              {isSharedStock ? (
+                <div className="inline-flex items-center gap-1 text-muted-foreground">
+                  <Link2 className="h-3.5 w-3.5" />
+                  <span>{linkedProductsCount} productos vinculados</span>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-1 text-muted-foreground">
+                  <Package className="h-3.5 w-3.5" />
+                  <span>Stock propio</span>
+                </div>
+              )}
+              {isSharedStock && linkedProductsCount > 0 && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 px-2 text-[11px]"
+                    >
+                      <Info className="h-3 w-3" />
+                      Ver vinculados
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 p-3" align="start">
+                    <p className="mb-2 text-xs font-semibold text-muted-foreground">
+                      Productos vinculados al mismo stock base
+                    </p>
+                    <div className="space-y-2">
+                      {linkedProducts.map((linked) => (
+                        <div
+                          key={linked.id}
+                          className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">{linked.name}</p>
+                            <p className="truncate text-muted-foreground">
+                              {linked.sku ? `SKU ${linked.sku}` : linked.id}
+                            </p>
+                          </div>
+                          <div className="ml-3 flex items-center gap-1">
+                            {linked.isBase && (
+                              <Badge variant="outline" className="text-[10px]">
+                                Base
+                              </Badge>
+                            )}
+                            <span className="text-muted-foreground">
+                              {Number(
+                                linked.stockConsumptionQuantity ?? 0
+                              ).toLocaleString("es-AR", {
+                                minimumFractionDigits: 0,
+                                maximumFractionDigits: 4,
+                              })}{" "}
+                              {linked.stockBaseUnit ?? "-"}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
+            </div>
+
+            <p className="mb-3 text-xs text-muted-foreground">
+              Consume{" "}
+              <span className="font-semibold text-foreground">
+                {consumptionQuantity.toLocaleString("es-AR", {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 4,
+                })}{" "}
+                {consumptionLabel}
+              </span>{" "}
+              por unidad vendida
+            </p>
+            {relativeStockFromBase !== null && (
+              <p className="mb-3 text-xs text-muted-foreground">
+                Stock relativo estimado:{" "}
+                <span className="font-semibold text-foreground">
+                  {Number(relativeStockFromBase).toLocaleString("es-AR", {
+                    minimumFractionDigits: 0,
+                    maximumFractionDigits: 4,
+                  })}{" "}
+                  {unitLabel}
+                </span>{" "}
+                (base real: {baseQuantity.toLocaleString("es-AR", {
+                  minimumFractionDigits: 0,
+                  maximumFractionDigits: 4,
+                })}{" "}
+                {consumptionLabel})
+              </p>
+            )}
 
             <div className="space-y-1.5 mt-4">
               <Progress
@@ -698,18 +1118,17 @@ export function InventoryModule() {
               />
               <div className="flex justify-between text-[10px] text-muted-foreground font-black uppercase tracking-wider">
                 <span className={status === "low" ? "text-red-500" : ""}>
-                  Mín: {item.minStock || 0}
+                  Min: {minStock}
                 </span>
-                <span>Capacidad: {item.maxStock || 100}</span>
+                <span>Capacidad: {maxStock}</span>
               </div>
             </div>
           </div>
 
-          {/* Pricing & Valorization */}
           <div className="hidden lg:flex flex-col items-end justify-center px-8 border-l border-dashed min-w-[180px]">
             <div className="flex flex-col items-end">
               <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
-                Valorización
+                Valorizacion
               </span>
               <span className="text-xl font-black text-primary">
                 ${inventoryValue.toLocaleString()}
@@ -720,13 +1139,27 @@ export function InventoryModule() {
             </div>
           </div>
 
-          {/* New Control Flow */}
           <div className="flex items-center gap-3 w-full md:w-auto md:pl-4 border-t md:border-t-0 md:border-l pt-4 md:pt-0">
             <AdjustStockDialog
-              item={item}
+              item={adjustDialogItem}
               branches={branches}
               onSubmitMovement={handleMovementSubmit}
             />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-10 px-4 font-bold gap-2"
+              onClick={() =>
+                setStockDetailTarget({
+                  productId: item.productId,
+                  productName: itemName,
+                })
+              }
+            >
+              <Info className="h-4 w-4" />
+              Detalle
+            </Button>
           </div>
         </div>
       </Card>
@@ -918,9 +1351,16 @@ export function InventoryModule() {
             </div>
           </div>
         </CardHeader>
-        <CardContent>
-          <div className="flex flex-col gap-4">
-            {isLoading ? (
+	        <CardContent>
+	          {isError && !isLoading && (
+	            <p className="mb-4 text-sm text-destructive">
+	              {isError instanceof Error
+	                ? isError.message
+	                : "No se pudo cargar el inventario."}
+	            </p>
+	          )}
+	          <div className="flex flex-col gap-4">
+	            {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
                 <Card key={i} className="w-full p-4">
                   <div className="flex flex-col md:flex-row items-center gap-6">
@@ -938,11 +1378,11 @@ export function InventoryModule() {
                   </div>
                 </Card>
               ))
-            ) : filteredInventory.length > 0 ? (
-              filteredInventory.map((item: Product) => (
-                <InventoryItemCard key={item.id} item={item} />
-              ))
-            ) : (
+	            ) : filteredInventory.length > 0 ? (
+	              filteredInventory.map((item: InventoryRow) => (
+	                <InventoryItemCard key={item.id} item={item} />
+	              ))
+	            ) : (
               <div className="text-center py-12">
                 <p className="text-muted-foreground">
                   No se encontraron productos con los filtros aplicados
@@ -981,10 +1421,20 @@ export function InventoryModule() {
         </CardContent>
       </Card>
 
-      <InventoryLotsSection
-        branchId={effectiveBranchId}
-        categories={categories}
-      />
-    </div>
-  );
-}
+	      <InventoryLotsSection
+	        branchId={effectiveBranchId}
+	        categories={categories}
+	      />
+	      <StockDetailDialog
+	        branchId={effectiveBranchId}
+	        productId={stockDetailTarget?.productId ?? null}
+	        productName={stockDetailTarget?.productName ?? null}
+	        open={Boolean(stockDetailTarget)}
+	        onOpenChange={(open) => {
+	          if (!open) setStockDetailTarget(null);
+	        }}
+	      />
+	    </div>
+	  );
+	}
+

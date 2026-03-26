@@ -82,31 +82,32 @@ function getPaymentMethodLabel(method: string) {
   return normalized || "Sin pagos";
 }
 
-function getPaymentAmountByKeys(sale: Sale, keys: string[]) {
-  const wanted = new Set(
-    keys.map((key) =>
-      String(key ?? "")
-        .trim()
-        .toUpperCase()
-    )
-  );
-  if (wanted.size === 0) return 0;
-  return Object.entries(sale.paymentBreakdown ?? {}).reduce(
-    (sum, [method, amount]) => {
-      const normalizedMethod = String(method ?? "")
-        .trim()
-        .toUpperCase();
-      if (!wanted.has(normalizedMethod)) return sum;
-      return sum + toFiniteNumber(amount, 0);
-    },
-    0
-  );
+const PAYMENT_MIX_THRESHOLD = 0.01;
+
+function normalizePaymentMethodKey(method: unknown) {
+  const normalized = String(method ?? "")
+    .trim()
+    .toUpperCase();
+  if (normalized === "EFECTIVO") return "CASH";
+  if (normalized === "TRANSFERENCIA") return "TRANSFER";
+  return normalized;
 }
 
-function getPositivePaymentEntries(sale: Sale) {
-  return Object.entries(sale.paymentBreakdown ?? {}).filter(
-    ([, amount]) => toFiniteNumber(amount, 0) > 0
-  );
+function getPositivePaymentMethodTotals(sale: Sale) {
+  const totals = new Map<string, number>();
+  Object.entries(sale.paymentBreakdown ?? {}).forEach(([method, amount]) => {
+    const normalizedMethod = normalizePaymentMethodKey(method);
+    if (!normalizedMethod) return;
+
+    const normalizedAmount = toFiniteNumber(amount, 0);
+    if (normalizedAmount <= PAYMENT_MIX_THRESHOLD) return;
+
+    totals.set(
+      normalizedMethod,
+      Number(totals.get(normalizedMethod) ?? 0) + normalizedAmount
+    );
+  });
+  return totals;
 }
 
 type SalesPaymentMethodFilter = "CASH" | "TRANSFER";
@@ -417,24 +418,23 @@ export function SalesTable() {
                           sale.lifecycleStatus !== "CANCELLED" &&
                           sale.outstandingAmount > 0;
                         const canCancel = sale.lifecycleStatus !== "CANCELLED";
-                        const transferAmount = getPaymentAmountByKeys(sale, [
-                          "TRANSFER",
-                          "TRANSFERENCIA",
-                        ]);
-                        const cashAmount = getPaymentAmountByKeys(sale, [
-                          "CASH",
-                          "EFECTIVO",
-                        ]);
-                        const positivePaymentEntries = getPositivePaymentEntries(
-                          sale
+                        const positivePaymentTotals =
+                          getPositivePaymentMethodTotals(sale);
+                        const transferAmount = Number(
+                          positivePaymentTotals.get("TRANSFER") ?? 0
                         );
-                        const hasMultipleMethods = positivePaymentEntries.length > 1;
+                        const cashAmount = Number(
+                          positivePaymentTotals.get("CASH") ?? 0
+                        );
+                        const hasMultipleMethods =
+                          positivePaymentTotals.size > 1;
                         const isMixedCashTransfer =
-                          transferAmount > 0 && cashAmount > 0;
+                          transferAmount > PAYMENT_MIX_THRESHOLD &&
+                          cashAmount > PAYMENT_MIX_THRESHOLD;
                         const paymentMethodsText =
-                          positivePaymentEntries.length > 0
-                            ? positivePaymentEntries
-                                .map(([method]) => getPaymentMethodLabel(method))
+                          positivePaymentTotals.size > 0
+                            ? Array.from(positivePaymentTotals.keys())
+                                .map((method) => getPaymentMethodLabel(method))
                                 .join(" + ")
                             : "Sin pagos";
 

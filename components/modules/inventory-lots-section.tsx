@@ -191,6 +191,28 @@ export function InventoryLotsSection({
 
   const safeDays = Math.max(0, Math.trunc(Number(days)) || 0);
   const normalizedSearch = debouncedSearch.trim();
+  const lotsFilters = useMemo(
+    () => ({
+      search: normalizedSearch || undefined,
+      productId: filterProductId || undefined,
+      categoryId: categoryId !== "all" ? categoryId : undefined,
+      days: safeDays,
+      includeExpired,
+      onlyPositive,
+      page,
+      limit,
+    }),
+    [
+      normalizedSearch,
+      filterProductId,
+      categoryId,
+      safeDays,
+      includeExpired,
+      onlyPositive,
+      page,
+      limit,
+    ]
+  );
 
   const {
     data: lotsResponse,
@@ -200,31 +222,11 @@ export function InventoryLotsSection({
     isValidating,
   } = useSWR(
     branchId
-      ? [
-          "stock-lots",
-          branchId,
-          normalizedSearch,
-          filterProductId,
-          categoryId,
-          safeDays,
-          includeExpired,
-          onlyPositive,
-          page,
-          limit,
-        ]
+      ? ["stock-lots", branchId, lotsFilters]
       : null,
     () =>
       backendApi.stocks.lots.list(
-        {
-          search: normalizedSearch || undefined,
-          productId: filterProductId || undefined,
-          categoryId: categoryId !== "all" ? categoryId : undefined,
-          days: safeDays,
-          includeExpired,
-          onlyPositive,
-          page,
-          limit,
-        },
+        lotsFilters,
         branchId
       ),
     {

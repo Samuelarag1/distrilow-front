@@ -65,6 +65,32 @@ function hasSameRetailAndWholesalePrice(product: Product) {
   return Number(product.retailPrice ?? 0) === Number(product.wholesalePrice ?? 0);
 }
 
+function resolveStockMode(product: Product) {
+  const productId = String(product.id ?? "").trim();
+  const baseProductId = String(
+    (product as any).stockBaseProductId ?? product.id ?? ""
+  ).trim();
+  if (
+    product.trackStock !== false &&
+    productId &&
+    baseProductId &&
+    baseProductId !== productId
+  ) {
+    return "shared" as const;
+  }
+  return "own" as const;
+}
+
+function resolveStockConsumptionLabel(product: Product) {
+  if (product.trackStock === false) return null;
+  const qtyRaw = Number((product as any).stockConsumptionQuantity ?? 1);
+  const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
+  const unit = String(
+    (product as any).stockBaseUnit ?? product.measurementType ?? "unit"
+  );
+  return `Consume ${qty} ${unit}/venta`;
+}
+
 function escapeHtml(value: unknown) {
   return String(value ?? "")
     .replaceAll("&", "&amp;")
@@ -745,7 +771,24 @@ export function ProductsModule() {
                               {product.pluCode ?? "-"}
                             </td>
                             <td className="p-2 text-sm border-r font-medium">
-                              {product.name}
+                              <div className="flex flex-col gap-1">
+                                <span>{product.name}</span>
+                                {product.trackStock !== false && (
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px] font-semibold py-0 px-2"
+                                    >
+                                      {resolveStockMode(product) === "shared"
+                                        ? "Stock compartido"
+                                        : "Stock propio"}
+                                    </Badge>
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {resolveStockConsumptionLabel(product)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </td>
                             <td className="p-2 text-xs border-r">
                               {product.categoryId

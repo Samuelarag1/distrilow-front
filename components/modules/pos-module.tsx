@@ -91,7 +91,8 @@ const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
 const POS_CART_TTL_MS = 12 * 60 * 60 * 1000;
 const POS_SCAN_CACHE_TTL_MS = 5_000;
 const POS_PENDING_REASON_MAX_LENGTH = 180;
-
+const POS_SCANNER_BURST_MS = 450;
+const POS_SCANNER_CONCAT_CODE_LENGTHS = [13, 12, 8] as const;
 type ScanCacheEntry = {
   cachedAt: number;
   value: ResolvedBarcodeProduct;
@@ -113,6 +114,60 @@ type PosPreviewItem = {
   priceType: PriceType;
   pricingMode: PricingMode;
 };
+
+function splitScannerPayload(rawValue: string): string[] {
+  const normalized = rawValue.replace(/[\r\n\t]+/g, " ").trim();
+  if (!normalized) return [];
+
+  const bySeparators = normalized
+    .split(/[\s,;|]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (bySeparators.length > 1) return bySeparators;
+
+  const token = bySeparators[0] ?? "";
+  if (!token) return [];
+
+  if (!/^\d+$/.test(token)) {
+    return [token];
+  }
+
+  for (const chunkLength of POS_SCANNER_CONCAT_CODE_LENGTHS) {
+    if (token.length < chunkLength * 2) continue;
+    if (token.length % chunkLength !== 0) continue;
+    const chunks: string[] = [];
+    for (let index = 0; index < token.length; index += chunkLength) {
+      chunks.push(token.slice(index, index + chunkLength));
+    }
+    if (chunks.length > 1) {
+      return chunks;
+    }
+  }
+
+  return [token];
+}
+
+function extractBurstScanDelta(
+  currentInput: string,
+  previousInput: string,
+  previousSubmittedAt: number
+) {
+  const current = currentInput.trim();
+  if (!current) return "";
+
+  const previous = previousInput.trim();
+  if (!previous) return current;
+
+  if (Date.now() - previousSubmittedAt > POS_SCANNER_BURST_MS) {
+    return current;
+  }
+
+  if (current.length > previous.length && current.startsWith(previous)) {
+    return current.slice(previous.length).trim();
+  }
+
+  return current;
+}
 
 type PosCartListProps = {
   cart: CartItem[];
@@ -857,7 +912,15 @@ const PosCatalogCard = memo(function PosCatalogCard({
   const [searchQuery, setSearchQuery] = useState("");
   const [scanQuery, setScanQuery] = useState("");
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
+  const [queuedScanCount, setQueuedScanCount] = useState(0);
+  const [isProcessingScanQueue, setIsProcessingScanQueue] = useState(false);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const scanQueueRef = useRef<string[]>([]);
+  const isProcessingScanQueueRef = useRef(false);
+  const lastSubmittedScanRef = useRef<{ value: string; submittedAt: number }>({
+    value: "",
+    submittedAt: 0,
+  });
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const debouncedSearch = useDebouncedValue(deferredSearchQuery, 250);
   const {
@@ -902,20 +965,63 @@ const PosCatalogCard = memo(function PosCatalogCard({
     });
   }, [isSaleCommitted, isPaymentConfirmOpen]);
 
-  const handleScan = useCallback(async (rawCode?: string) => {
-    const code = (rawCode ?? scanQuery).trim();
-    if (!code) {
-      focusScanInput();
-      return;
-    }
+  const processScanQueue = useCallback(async () => {
+    if (isProcessingScanQueueRef.current) return;
+    isProcessingScanQueueRef.current = true;
+    setIsProcessingScanQueue(true);
 
-    const added = await onScanCode(code);
-    if (added) {
-      setScanQuery("");
+    try {
+      while (scanQueueRef.current.length > 0) {
+        const nextCode = scanQueueRef.current.shift();
+        setQueuedScanCount(scanQueueRef.current.length);
+        if (!nextCode) continue;
+        await onScanCode(nextCode);
+      }
+    } finally {
+      isProcessingScanQueueRef.current = false;
+      setIsProcessingScanQueue(false);
+      setQueuedScanCount(scanQueueRef.current.length);
+      focusScanInput();
     }
-    setIsSearchDropdownOpen(false);
-    focusScanInput();
-  }, [scanQuery, onScanCode, focusScanInput]);
+  }, [onScanCode, focusScanInput]);
+
+  const enqueueScannedCodes = useCallback(
+    (rawCode: string) => {
+      if (isSaleCommitted || isPaymentConfirmOpen) return false;
+      const normalizedInput = String(rawCode ?? "").trim();
+      if (!normalizedInput) return false;
+
+      const deltaInput = extractBurstScanDelta(
+        normalizedInput,
+        lastSubmittedScanRef.current.value,
+        lastSubmittedScanRef.current.submittedAt
+      );
+      lastSubmittedScanRef.current = {
+        value: normalizedInput,
+        submittedAt: Date.now(),
+      };
+
+      const nextCodes = splitScannerPayload(deltaInput || normalizedInput);
+      if (nextCodes.length === 0) return false;
+      scanQueueRef.current.push(...nextCodes);
+      setQueuedScanCount(scanQueueRef.current.length);
+      void processScanQueue();
+      return true;
+    },
+    [isSaleCommitted, isPaymentConfirmOpen, processScanQueue]
+  );
+
+  const handleScan = useCallback(
+    (rawCode?: string) => {
+      const rawInput = String(rawCode ?? scanQuery ?? "");
+      const queued = enqueueScannedCodes(rawInput);
+      setScanQuery("");
+      setIsSearchDropdownOpen(false);
+      focusScanInput();
+      return queued;
+    },
+    [scanQuery, enqueueScannedCodes, focusScanInput]
+  );
 
   const handleSelectProduct = useCallback(
     async (product: Product) => {
@@ -958,6 +1064,15 @@ const PosCatalogCard = memo(function PosCatalogCard({
               Agregar
             </Button>
           </div>
+          {(isProcessingScanQueue || queuedScanCount > 0) && (
+            <p className="text-xs text-muted-foreground">
+              {queuedScanCount > 0
+                ? `Cola de escaneo: ${queuedScanCount} pendiente${
+                    queuedScanCount === 1 ? "" : "s"
+                  }.`
+                : "Procesando escaneo..."}
+            </p>
+          )}
 
           <div className="flex flex-col gap-4 sm:flex-row">
             <div className="relative flex-1">
@@ -2039,6 +2154,7 @@ export function POSModule() {
   }, []);
 
   const handleScanProduct = useCallback(async (code?: unknown) => {
+    if (isSaleCommitted) return false;
     const normalizedCode = typeof code === "string" ? code.trim() : "";
     if (!normalizedCode) return false;
     if (!branchId) {
@@ -2122,7 +2238,7 @@ export function POSModule() {
       });
       return false;
     }
-  }, [branchId, addToCart, toast]);
+  }, [isSaleCommitted, branchId, addToCart, toast]);
 
   const itemCount = cart.length;
   const previewBranchName =
@@ -2461,7 +2577,7 @@ export function POSModule() {
   const setSearchQuery: (value: string) => void = () => {};
   const setScanQuery: (value: string) => void = () => {};
   const setIsSearchDropdownOpen: (open: boolean) => void = () => {};
-  const useOptimizedPosView = process.env.NODE_ENV !== "__legacy_pos__";
+  const useOptimizedPosView = String(process.env.NODE_ENV) !== "__legacy_pos__";
 
   if (useOptimizedPosView) {
     return (
