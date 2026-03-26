@@ -187,10 +187,7 @@ export function ProductDialog({
             currentBaseId &&
             currentBaseId !== currentProductId
         ),
-        stockBaseProductId:
-          currentBaseId ||
-          currentProductId ||
-          "__self__",
+        stockBaseProductId: currentBaseId || currentProductId || "__self__",
         stockConsumptionQuantity: Number(
           (product as any).stockConsumptionQuantity ?? 1
         ),
@@ -544,14 +541,20 @@ export function ProductDialog({
                   ...previous,
                   trackStock: checked,
                   useSharedStock: checked ? previous.useSharedStock : false,
-                  stockBaseProductId: checked ? previous.stockBaseProductId : "__self__",
+                  stockBaseProductId: checked
+                    ? previous.stockBaseProductId
+                    : "__self__",
                 }))
               }
               useSharedStock={formData.useSharedStock}
               onUseSharedStockChange={(checked) => {
                 setFormData((previous) => {
-                  const currentProductId = String((product as any)?.id ?? "").trim();
-                  const currentBaseId = String(previous.stockBaseProductId ?? "").trim();
+                  const currentProductId = String(
+                    (product as any)?.id ?? ""
+                  ).trim();
+                  const currentBaseId = String(
+                    previous.stockBaseProductId ?? ""
+                  ).trim();
                   const shouldResetBase =
                     !currentBaseId ||
                     currentBaseId === "__self__" ||
@@ -619,6 +622,21 @@ export function ProductDialog({
                   checked={formData.isWeighable}
                   onCheckedChange={(checked) =>
                     setFormData((p) => ({ ...p, isWeighable: checked }))
+                  }
+                  disabled={disableForm}
+                />
+              </div>
+              <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
+                <div className="flex flex-col gap-1">
+                  <Label className="font-bold">Control de stock</Label>
+                  <span className="text-xs text-muted-foreground">
+                    Activa control de inventario para este producto
+                  </span>
+                </div>
+                <Switch
+                  checked={formData.trackStock}
+                  onCheckedChange={(checked) =>
+                    setFormData((p) => ({ ...p, trackStock: checked }))
                   }
                   disabled={disableForm}
                 />

@@ -211,6 +211,8 @@ type PosPaymentCardProps = {
   isPendingReasonRequired: boolean;
   onCashPaymentAmountChange: (value: string) => void;
   onTransferPaymentAmountChange: (value: string) => void;
+  onCashPaymentAmountBlur: () => void;
+  onTransferPaymentAmountBlur: () => void;
   onPendingPaymentReasonChange: (value: string) => void;
   onHandlePayment: () => Promise<void>;
   onClearCart: () => void;
@@ -565,8 +567,10 @@ function getProductSearchMetaLabel(product: Product) {
   const details: string[] = [];
   const brand = typeof product.brand === "string" ? product.brand.trim() : "";
   const sku = typeof product.sku === "string" ? product.sku.trim() : "";
-  const barcode = typeof product.barcode === "string" ? product.barcode.trim() : "";
-  const pluCode = typeof product.pluCode === "string" ? product.pluCode.trim() : "";
+  const barcode =
+    typeof product.barcode === "string" ? product.barcode.trim() : "";
+  const pluCode =
+    typeof product.pluCode === "string" ? product.pluCode.trim() : "";
 
   if (brand && !isOpaqueIdentifier(brand)) {
     details.push(brand);
@@ -676,7 +680,10 @@ function getErrorMessage(error: unknown, fallback: string) {
 }
 
 function normalizePendingPaymentReason(value: string) {
-  return value.replace(/\s+/g, " ").trim().slice(0, POS_PENDING_REASON_MAX_LENGTH);
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, POS_PENDING_REASON_MAX_LENGTH);
 }
 
 // function getAutoRuleLabel(item: CartItem): string | null {
@@ -808,12 +815,25 @@ const PosCartItemCard = memo(function PosCartItemCard({
               inputMode="decimal"
               min={getQuantityStep(item)}
               step={getQuantityStep(item)}
-              defaultValue={formatThresholdQuantity(toSafeNumber(item.quantity, 0))}
+              defaultValue={formatThresholdQuantity(
+                toSafeNumber(item.quantity, 0)
+              )}
               key={`${item.id}-${item.quantity}`}
               className="h-8 w-24 text-center text-sm"
+              placeholder={
+                item.measurementType === "kg" ? "kg o gramos" : "Cantidad"
+              }
+              title={
+                item.measurementType === "kg"
+                  ? "Puedes ingresar kg (ej. 1.5) o gramos enteros (ej. 1500)."
+                  : undefined
+              }
               disabled={isSaleCommitted}
               onBlur={(event) => {
-                const committed = onCommitManualQuantity(item, event.target.value);
+                const committed = onCommitManualQuantity(
+                  item,
+                  event.target.value
+                );
                 if (!committed) {
                   event.target.value = formatThresholdQuantity(
                     toSafeNumber(item.quantity, 0)
@@ -1084,7 +1104,10 @@ const PosCatalogCard = memo(function PosCatalogCard({
                 disabled={isSaleCommitted}
               />
             </div>
-            <Button onClick={() => void handleScan()} disabled={isSaleCommitted}>
+            <Button
+              onClick={() => void handleScan()}
+              disabled={isSaleCommitted}
+            >
               Agregar
             </Button>
           </div>
@@ -1239,6 +1262,8 @@ const PosPaymentCard = memo(function PosPaymentCard({
   isPendingReasonRequired,
   onCashPaymentAmountChange,
   onTransferPaymentAmountChange,
+  onCashPaymentAmountBlur,
+  onTransferPaymentAmountBlur,
   onPendingPaymentReasonChange,
   onHandlePayment,
   onClearCart,
@@ -1262,14 +1287,17 @@ const PosPaymentCard = memo(function PosPaymentCard({
           <div className="flex justify-between text-sm">
             <span>Subtotal:</span>
             <span>${formatMoney(total)}</span>
+            <span>${formatMoney(total)}</span>
           </div>
           <div className="flex justify-between text-sm">
             <span>Pagos iniciales:</span>
+            <span>${formatMoney(totalInitialPayments)}</span>
             <span>${formatMoney(totalInitialPayments)}</span>
           </div>
           {changeDuePreview > 0 && (
             <div className="flex justify-between text-sm font-semibold text-emerald-700">
               <span>Vuelto a entregar:</span>
+              <span>${formatMoney(changeDuePreview)}</span>
               <span>${formatMoney(changeDuePreview)}</span>
             </div>
           )}
@@ -1282,6 +1310,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
           <Separator />
           <div className="flex justify-between font-bold">
             <span>Total:</span>
+            <span>${formatMoney(total)}</span>
             <span>${formatMoney(total)}</span>
           </div>
         </div>
@@ -1305,6 +1334,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
                   onChange={(event) =>
                     onCashPaymentAmountChange(event.target.value)
                   }
+                  onBlur={onCashPaymentAmountBlur}
                   className="h-10"
                 />
               </div>
@@ -1322,6 +1352,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
                   onChange={(event) =>
                     onTransferPaymentAmountChange(event.target.value)
                   }
+                  onBlur={onTransferPaymentAmountBlur}
                   className="h-10"
                 />
               </div>
@@ -1329,7 +1360,8 @@ const PosPaymentCard = memo(function PosPaymentCard({
             {showPendingReasonInput ? (
               <div className="space-y-1">
                 <label className="text-md font-bold text-muted-foreground">
-                  Motivo de pendiente {isPendingReasonRequired ? "*" : "(opcional)"}
+                  Motivo de pendiente{" "}
+                  {isPendingReasonRequired ? "*" : "(opcional)"}
                 </label>
                 <Input
                   value={pendingPaymentReason}
@@ -1363,7 +1395,11 @@ const PosPaymentCard = memo(function PosPaymentCard({
           </Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button className="w-full" variant="ghost" disabled={cartLength === 0}>
+              <Button
+                className="w-full"
+                variant="ghost"
+                disabled={cartLength === 0}
+              >
                 Limpiar Carrito
               </Button>
             </AlertDialogTrigger>
@@ -1467,7 +1503,8 @@ function PosPaymentConfirmDialog({
                     {itemCount}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {formatThresholdQuantity(previewTotalUnits)} unidades totales
+                    {formatThresholdQuantity(previewTotalUnits)} unidades
+                    totales
                   </p>
                 </div>
               </div>
@@ -1521,7 +1558,10 @@ function PosPaymentConfirmDialog({
 
             <div className="max-h-[34vh] space-y-3 overflow-y-auto pr-1 sm:max-h-[38vh]">
               {previewItems.map((item) => (
-                <div key={item.id} className="rounded-2xl border bg-card p-4 shadow-sm">
+                <div
+                  key={item.id}
+                  className="rounded-2xl border bg-card p-4 shadow-sm"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold">{item.name}</p>
@@ -1621,11 +1661,18 @@ function PosPaymentConfirmDialog({
                             </p>
                           ) : null}
                           <div className="mt-2 space-y-1 text-xs text-muted-foreground">
-                            <p>Aplicado: ${formatMoney(payment.appliedAmount)}</p>
-                            <p>Ingresado: ${formatMoney(payment.receivedAmount)}</p>
+                            <p>
+                              Aplicado: ${formatMoney(payment.appliedAmount)}
+                            </p>
+                            <p>
+                              Ingresado: ${formatMoney(payment.receivedAmount)}
+                            </p>
                             {payment.method === "CASH" &&
                             Number(payment.changeAmount ?? 0) > 0 ? (
-                              <p>Vuelto: ${formatMoney(payment.changeAmount ?? 0)}</p>
+                              <p>
+                                Vuelto: $
+                                {formatMoney(payment.changeAmount ?? 0)}
+                              </p>
                             ) : null}
                           </div>
                         </div>
@@ -1641,7 +1688,8 @@ function PosPaymentConfirmDialog({
                     saldo pendiente.
                   </p>
                 )}
-                {pendingAfterInitialPayments > 0 && normalizedPendingPaymentReason ? (
+                {pendingAfterInitialPayments > 0 &&
+                normalizedPendingPaymentReason ? (
                   <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                       Motivo pendiente
@@ -1766,6 +1814,12 @@ export function POSModule() {
   const handleTransferPaymentAmountChange = useCallback((value: string) => {
     setTransferPaymentAmount(normalizeWholeAmountInput(value));
   }, []);
+  const handleCashPaymentAmountBlur = useCallback(() => {
+    setCashPaymentAmount((prev) => normalizeWholeAmountInput(prev));
+  }, []);
+  const handleTransferPaymentAmountBlur = useCallback(() => {
+    setTransferPaymentAmount(normalizeWholeAmountInput(value));
+  }, []);
 
   useEffect(() => {
     cartPersistenceReadyRef.current = false;
@@ -1792,7 +1846,9 @@ export function POSModule() {
 
     if (restoredCart.length > 0) {
       setCart(restoredCart);
-      setCashPaymentAmount(normalizeWholeAmountInput(persisted.cashPaymentAmount));
+      setCashPaymentAmount(
+        normalizeWholeAmountInput(persisted.cashPaymentAmount)
+      );
       setTransferPaymentAmount(
         normalizeWholeAmountInput(persisted.transferPaymentAmount)
       );
@@ -1907,7 +1963,10 @@ export function POSModule() {
     const categoryLabel = getLooseCategoryLabel(
       (product as Product & { category?: unknown }).category
     );
-    if (categoryLabel !== "Sin categoria" && !isOpaqueIdentifier(categoryLabel)) {
+    if (
+      categoryLabel !== "Sin categoria" &&
+      !isOpaqueIdentifier(categoryLabel)
+    ) {
       return categoryLabel;
     }
 
@@ -1977,59 +2036,132 @@ export function POSModule() {
       : "stock --";
   };
 
-  const addToCart = useCallback((
-    product: Product,
-    options?: {
-      quantity?: number;
-      backendUnitPrice?: number;
-      backendSubtotal?: number;
-      backendPriceType?: PriceType;
-      backendPricingSource?: PricingMode;
-    }
-  ) => {
-    if (branchId && product.branchId && product.branchId !== branchId) {
-      toast({
-        variant: "destructive",
-        title: "Producto de otra sucursal",
-        description: "No puedes vender productos de una sucursal diferente.",
-      });
-      return;
-    }
+  const addToCart = useCallback(
+    (
+      product: Product,
+      options?: {
+        quantity?: number;
+        backendUnitPrice?: number;
+        backendSubtotal?: number;
+        backendPriceType?: PriceType;
+        backendPricingSource?: PricingMode;
+      }
+    ) => {
+      if (branchId && product.branchId && product.branchId !== branchId) {
+        toast({
+          variant: "destructive",
+          title: "Producto de otra sucursal",
+          description: "No puedes vender productos de una sucursal diferente.",
+        });
+        return;
+      }
 
-    const stock = toSafeNumber(product.stock, Number.NaN);
-    const hasKnownStock = Number.isFinite(stock);
-    const trackStock = product.trackStock !== false;
+      const stock = toSafeNumber(product.stock, Number.NaN);
+      const hasKnownStock = Number.isFinite(stock);
+      const trackStock = product.trackStock !== false;
 
-    if (trackStock && hasKnownStock && stock <= 0) {
-      toast({
-        title: "Sin stock",
-        description: `No hay unidades disponibles de ${product.name}`,
-        variant: "destructive",
-      });
-      return;
-    }
+      if (trackStock && hasKnownStock && stock <= 0) {
+        toast({
+          title: "Sin stock",
+          description: `No hay unidades disponibles de ${product.name}`,
+          variant: "destructive",
+        });
+        return;
+      }
 
-    const step = getQuantityStep(product);
-    const requestedQuantity =
-      options?.quantity && options.quantity > 0
-        ? roundTo(options.quantity, 3)
-        : isWeighableProduct(product)
-        ? step
-        : 1;
-    const normalizedBackendUnitPrice = toSafeNumber(
-      options?.backendUnitPrice,
-      NaN
-    );
-    const normalizedBackendSubtotal = toSafeNumber(
-      options?.backendSubtotal,
-      NaN
-    );
+      const step = getQuantityStep(product);
+      const requestedQuantity =
+        options?.quantity && options.quantity > 0
+          ? roundTo(options.quantity, 3)
+          : isWeighableProduct(product)
+          ? step
+          : 1;
+      const normalizedBackendUnitPrice = toSafeNumber(
+        options?.backendUnitPrice,
+        NaN
+      );
+      const normalizedBackendSubtotal = toSafeNumber(
+        options?.backendSubtotal,
+        NaN
+      );
 
-    setCart((prev) => {
-      const existing = prev.find((item) => item.id === product.id);
-      if (existing) {
-        const nextQuantity = roundTo(existing.quantity + requestedQuantity, 3);
-        if (trackStock && hasKnownStock && nextQuantity > stock) {
+      setCart((prev) => {
+        const existing = prev.find((item) => item.id === product.id);
+        if (existing) {
+          const nextQuantity = roundTo(
+            existing.quantity + requestedQuantity,
+            3
+          );
+          if (trackStock && hasKnownStock && nextQuantity > stock) {
+            toast({
+              title: "Stock limitado",
+              description: `Solo hay ${stock} disponibles de ${product.name}`,
+              variant: "destructive",
+            });
+            return prev;
+          }
+
+          const nextBackendUnitPrice =
+            Number.isFinite(normalizedBackendUnitPrice) &&
+            existing.pricingMode === "AUTO"
+              ? normalizedBackendUnitPrice
+              : existing.backendUnitPrice;
+          const nextBackendSubtotal =
+            Number.isFinite(normalizedBackendSubtotal) &&
+            existing.pricingMode === "AUTO"
+              ? normalizedBackendSubtotal
+              : Number.isFinite(toSafeNumber(nextBackendUnitPrice, NaN)) &&
+                existing.pricingMode === "AUTO"
+              ? roundTo(toSafeNumber(nextBackendUnitPrice, 0) * nextQuantity, 2)
+              : existing.backendSubtotal;
+
+          return prev.map((item) =>
+            item.id === product.id
+              ? {
+                  ...item,
+                  costPrice: toSafeNumber(product.costPrice, item.costPrice),
+                  wholesalePrice: toSafeNumber(
+                    product.wholesalePrice,
+                    item.wholesalePrice
+                  ),
+                  retailPrice: toSafeNumber(
+                    product.retailPrice,
+                    item.retailPrice
+                  ),
+                  price: pickFirstFinite(
+                    [
+                      product.retailPrice,
+                      product.wholesalePrice,
+                      product.costPrice,
+                    ],
+                    item.price
+                  ),
+                  quantity: nextQuantity,
+                  visualPriceType:
+                    options?.backendPriceType ?? item.visualPriceType,
+                  backendPriceType:
+                    existing.pricingMode === "AUTO"
+                      ? options?.backendPriceType ?? item.backendPriceType
+                      : undefined,
+                  backendPricingSource:
+                    existing.pricingMode === "AUTO"
+                      ? options?.backendPricingSource ??
+                        item.backendPricingSource
+                      : undefined,
+                  backendUnitPrice:
+                    existing.pricingMode === "AUTO"
+                      ? nextBackendUnitPrice
+                      : undefined,
+                  backendSubtotal:
+                    existing.pricingMode === "AUTO"
+                      ? nextBackendSubtotal
+                      : undefined,
+                }
+              : item
+          );
+        }
+
+        if (trackStock && hasKnownStock && requestedQuantity > stock) {
           toast({
             title: "Stock limitado",
             description: `Solo hay ${stock} disponibles de ${product.name}`,
@@ -2038,277 +2170,243 @@ export function POSModule() {
           return prev;
         }
 
-        const nextBackendUnitPrice =
-          Number.isFinite(normalizedBackendUnitPrice) &&
-          existing.pricingMode === "AUTO"
-            ? normalizedBackendUnitPrice
-            : existing.backendUnitPrice;
-        const nextBackendSubtotal =
-          Number.isFinite(normalizedBackendSubtotal) &&
-          existing.pricingMode === "AUTO"
-            ? normalizedBackendSubtotal
-            : Number.isFinite(toSafeNumber(nextBackendUnitPrice, NaN)) &&
-              existing.pricingMode === "AUTO"
-            ? roundTo(toSafeNumber(nextBackendUnitPrice, 0) * nextQuantity, 2)
-            : existing.backendSubtotal;
+        const backendUnitPrice = Number.isFinite(normalizedBackendUnitPrice)
+          ? normalizedBackendUnitPrice
+          : undefined;
+        const backendSubtotal = Number.isFinite(normalizedBackendSubtotal)
+          ? normalizedBackendSubtotal
+          : undefined;
 
-        return prev.map((item) =>
-          item.id === product.id
-            ? {
-                ...item,
-                costPrice: toSafeNumber(product.costPrice, item.costPrice),
-                wholesalePrice: toSafeNumber(
-                  product.wholesalePrice,
-                  item.wholesalePrice
-                ),
-                retailPrice: toSafeNumber(product.retailPrice, item.retailPrice),
-                price: pickFirstFinite(
-                  [product.retailPrice, product.wholesalePrice, product.costPrice],
-                  item.price
-                ),
-                quantity: nextQuantity,
-                visualPriceType:
-                  options?.backendPriceType ?? item.visualPriceType,
-                backendPriceType:
-                  existing.pricingMode === "AUTO"
-                    ? options?.backendPriceType ?? item.backendPriceType
-                    : undefined,
-                backendPricingSource:
-                  existing.pricingMode === "AUTO"
-                    ? options?.backendPricingSource ?? item.backendPricingSource
-                    : undefined,
-                backendUnitPrice:
-                  existing.pricingMode === "AUTO"
-                    ? nextBackendUnitPrice
-                    : undefined,
-                backendSubtotal:
-                  existing.pricingMode === "AUTO"
-                    ? nextBackendSubtotal
-                    : undefined,
-              }
-            : item
-        );
-      }
+        return [
+          ...prev,
+          {
+            ...product,
+            quantity: requestedQuantity,
+            pricingMode: "AUTO",
+            requestedPriceType: undefined,
+            manualOverrideReason: "",
+            visualPriceType: options?.backendPriceType ?? "RETAIL",
+            backendPriceType: options?.backendPriceType,
+            backendPricingSource: options?.backendPricingSource,
+            backendUnitPrice,
+            backendSubtotal,
+          },
+        ];
+      });
+      setIsSaleCommitted(false);
+    },
+    [branchId, toast]
+  );
 
-      if (trackStock && hasKnownStock && requestedQuantity > stock) {
+  const updateQuantity = useCallback(
+    (id: string, quantity: number) => {
+      const inCart = cart.find((product) => product.id === id);
+      const normalizedQuantity = roundTo(quantity, 3);
+      const maxStock = pickFirstFinite([inCart?.stock], NaN);
+      const hasReliableStockLimit =
+        Number.isFinite(maxStock) && toSafeNumber(maxStock, 0) > 0;
+
+      if (inCart && hasReliableStockLimit && normalizedQuantity > maxStock) {
         toast({
-          title: "Stock limitado",
-          description: `Solo hay ${stock} disponibles de ${product.name}`,
+          title: "Stock insuficiente",
+          description: `No puedes agregar mas de ${formatThresholdQuantity(
+            maxStock
+          )} ${getMeasurementLabel(inCart)}`,
           variant: "destructive",
         });
-        return prev;
+        return;
       }
 
-      const backendUnitPrice = Number.isFinite(normalizedBackendUnitPrice)
-        ? normalizedBackendUnitPrice
-        : undefined;
-      const backendSubtotal = Number.isFinite(normalizedBackendSubtotal)
-        ? normalizedBackendSubtotal
-        : undefined;
+      if (normalizedQuantity <= 0) {
+        setCart((prev) => prev.filter((item) => item.id !== id));
+        return;
+      }
 
-      return [
-        ...prev,
-        {
-          ...product,
-          quantity: requestedQuantity,
-          pricingMode: "AUTO",
-          requestedPriceType: undefined,
-          manualOverrideReason: "",
-          visualPriceType: options?.backendPriceType ?? "RETAIL",
-          backendPriceType: options?.backendPriceType,
-          backendPricingSource: options?.backendPricingSource,
-          backendUnitPrice,
-          backendSubtotal,
-        },
-      ];
-    });
-    setIsSaleCommitted(false);
-  }, [branchId, toast]);
+      setCart((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                quantity: normalizedQuantity,
+              }
+            : item
+        )
+      );
+      setIsSaleCommitted(false);
+    },
+    [cart, toast]
+  );
 
-  const updateQuantity = useCallback((id: string, quantity: number) => {
-    const inCart = cart.find((product) => product.id === id);
-    const normalizedQuantity = roundTo(quantity, 3);
-    const maxStock = pickFirstFinite([inCart?.stock], NaN);
-    const hasReliableStockLimit =
-      Number.isFinite(maxStock) && toSafeNumber(maxStock, 0) > 0;
+  const commitManualQuantity = useCallback(
+    (item: CartItem, rawValue: string) => {
+      const normalizedValue = rawValue.replace(",", ".").trim();
+      if (!normalizedValue) return false;
 
-    if (inCart && hasReliableStockLimit && normalizedQuantity > maxStock) {
-      toast({
-        title: "Stock insuficiente",
-        description: `No puedes agregar mas de ${formatThresholdQuantity(
-          maxStock
-        )} ${getMeasurementLabel(inCart)}`,
-        variant: "destructive",
-      });
-      return;
-    }
+      const parsedQuantity = Number(normalizedValue);
+      if (!Number.isFinite(parsedQuantity)) {
+        toast({
+          variant: "destructive",
+          title: "Cantidad invalida",
+          description: "Ingresa una cantidad numerica valida.",
+        });
+        return false;
+      }
 
-    if (normalizedQuantity <= 0) {
-      setCart((prev) => prev.filter((item) => item.id !== id));
-      return;
-    }
+      let resolvedQuantity = parsedQuantity;
+      const inputHasDecimals = rawValue.includes(".") || rawValue.includes(",");
+      const shouldInterpretAsGrams =
+        item.measurementType === "kg" &&
+        !inputHasDecimals &&
+        Number.isInteger(parsedQuantity) &&
+        parsedQuantity >= 100;
 
-    setCart((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? {
+      if (shouldInterpretAsGrams) {
+        resolvedQuantity = parsedQuantity / 1000;
+      }
+
+      updateQuantity(item.id, resolvedQuantity);
+      return true;
+    },
+    [toast, updateQuantity]
+  );
+
+  const updatePricingPreference = useCallback(
+    (id: string, selection: "AUTO" | "RETAIL" | "WHOLESALE") => {
+      setCart((prev) =>
+        prev.map((item) => {
+          if (item.id !== id) return item;
+
+          if (selection === "AUTO") {
+            return {
               ...item,
-              quantity: normalizedQuantity,
-            }
-          : item
-      )
-    );
-    setIsSaleCommitted(false);
-  }, [cart, toast]);
+              pricingMode: "AUTO" as const,
+              requestedPriceType: undefined,
+              backendPriceType: undefined,
+              backendPricingSource: undefined,
+              backendUnitPrice: undefined,
+              backendSubtotal: undefined,
+            };
+          }
 
-  const commitManualQuantity = useCallback((item: CartItem, rawValue: string) => {
-    const normalizedValue = rawValue.replace(",", ".").trim();
-    if (!normalizedValue) return false;
-
-    const parsedQuantity = Number(normalizedValue);
-    if (!Number.isFinite(parsedQuantity)) {
-      toast({
-        variant: "destructive",
-        title: "Cantidad invalida",
-        description: "Ingresa una cantidad numerica valida.",
-      });
-      return false;
-    }
-
-    updateQuantity(item.id, parsedQuantity);
-    return true;
-  }, [toast, updateQuantity]);
-
-  const updatePricingPreference = useCallback((
-    id: string,
-    selection: "AUTO" | "RETAIL" | "WHOLESALE"
-  ) => {
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-
-        if (selection === "AUTO") {
           return {
             ...item,
-            pricingMode: "AUTO" as const,
-            requestedPriceType: undefined,
+            pricingMode: "MANUAL" as const,
+            requestedPriceType: selection,
+            visualPriceType: selection,
             backendPriceType: undefined,
             backendPricingSource: undefined,
             backendUnitPrice: undefined,
             backendSubtotal: undefined,
           };
-        }
-
-        return {
-          ...item,
-          pricingMode: "MANUAL" as const,
-          requestedPriceType: selection,
-          visualPriceType: selection,
-          backendPriceType: undefined,
-          backendPricingSource: undefined,
-          backendUnitPrice: undefined,
-          backendSubtotal: undefined,
-        };
-      })
-    );
-    setIsSaleCommitted(false);
-  }, []);
+        })
+      );
+      setIsSaleCommitted(false);
+    },
+    []
+  );
 
   const removeFromCart = useCallback((id: string) => {
     setCart((prev) => prev.filter((item) => item.id !== id));
     setIsSaleCommitted(false);
   }, []);
 
-  const handleScanProduct = useCallback(async (code?: unknown) => {
-    if (isSaleCommitted) return false;
-    const normalizedCode = typeof code === "string" ? code.trim() : "";
-    if (!normalizedCode) return false;
-    if (!branchId) {
-      toast({
-        variant: "destructive",
-        title: "Sucursal requerida",
-        description: "Selecciona una sucursal activa antes de escanear.",
-      });
-      return false;
-    }
-
-    try {
-      const cacheKey = `${branchId ?? "no-branch"}:${normalizedCode}`;
-      const cached = scanCacheRef.current.get(cacheKey);
-      const isCachedFresh =
-        cached && Date.now() - cached.cachedAt < POS_SCAN_CACHE_TTL_MS;
-      const resolved =
-        isCachedFresh && cached
-          ? cached.value
-          : await backendApi.products.resolveBarcode(normalizedCode, {
-              hydrateProductDetails: true,
-              branchId,
-            });
-      const scanned = resolved?.product
-        ? normalizeProductForPos(
-            resolved.product as Product & { id: string; name: string }
-          )
-        : null;
-
-      if (!scanned || !scanned.id) {
+  const handleScanProduct = useCallback(
+    async (code?: unknown) => {
+      if (isSaleCommitted) return false;
+      const normalizedCode = typeof code === "string" ? code.trim() : "";
+      if (!normalizedCode) return false;
+      if (!branchId) {
         toast({
           variant: "destructive",
-          title: "Producto no encontrado",
-          description: `No existe un producto para el codigo ${normalizedCode}.`,
+          title: "Sucursal requerida",
+          description: "Selecciona una sucursal activa antes de escanear.",
         });
         return false;
       }
 
-      scanCacheRef.current.set(cacheKey, {
-        cachedAt: Date.now(),
-        value: {
-          ...resolved,
-          product: scanned,
-        },
-      });
+      try {
+        const cacheKey = `${branchId ?? "no-branch"}:${normalizedCode}`;
+        const cached = scanCacheRef.current.get(cacheKey);
+        const isCachedFresh =
+          cached && Date.now() - cached.cachedAt < POS_SCAN_CACHE_TTL_MS;
+        const resolved =
+          isCachedFresh && cached
+            ? cached.value
+            : await backendApi.products.resolveBarcode(normalizedCode, {
+                hydrateProductDetails: true,
+                branchId,
+              });
+        const scanned = resolved?.product
+          ? normalizeProductForPos(
+              resolved.product as Product & { id: string; name: string }
+            )
+          : null;
 
-      addToCart(scanned as Product, {
-        quantity: Number.isFinite(resolved.quantity ?? NaN)
-          ? resolved.quantity
-          : undefined,
-        backendUnitPrice: Number.isFinite(resolved.unitPrice ?? NaN)
-          ? resolved.unitPrice
-          : undefined,
-        backendSubtotal: Number.isFinite(resolved.subtotal ?? NaN)
-          ? resolved.subtotal
-          : undefined,
-        backendPriceType: resolved.priceType,
-        backendPricingSource: resolved.pricingSource,
-      });
-      return true;
-    } catch (error: unknown) {
-      const message = getErrorMessage(error, "");
-      const normalizedMessage = message.toLowerCase();
-      const isInvalidBarcode =
-        normalizedMessage.includes("barcode invalido") ||
-        normalizedMessage.includes("invalid barcode") ||
-        normalizedMessage.includes("ean");
-      const isMissingPlu =
-        normalizedMessage.includes("plu") &&
-        (normalizedMessage.includes("inexistente") ||
-          normalizedMessage.includes("not found"));
+        if (!scanned || !scanned.id) {
+          toast({
+            variant: "destructive",
+            title: "Producto no encontrado",
+            description: `No existe un producto para el codigo ${normalizedCode}.`,
+          });
+          return false;
+        }
 
-      toast({
-        variant: "destructive",
-        title: "Error al escanear",
-        description: isInvalidBarcode
-          ? "El codigo escaneado no es valido."
-          : isMissingPlu
-          ? "El PLU del codigo interno no existe en el catalogo."
-          : getErrorMessage(error, "No se pudo procesar el codigo escaneado."),
-      });
-      return false;
-    }
-  }, [isSaleCommitted, branchId, addToCart, toast]);
+        scanCacheRef.current.set(cacheKey, {
+          cachedAt: Date.now(),
+          value: {
+            ...resolved,
+            product: scanned,
+          },
+        });
+
+        addToCart(scanned as Product, {
+          quantity: Number.isFinite(resolved.quantity ?? NaN)
+            ? resolved.quantity
+            : undefined,
+          backendUnitPrice: Number.isFinite(resolved.unitPrice ?? NaN)
+            ? resolved.unitPrice
+            : undefined,
+          backendSubtotal: Number.isFinite(resolved.subtotal ?? NaN)
+            ? resolved.subtotal
+            : undefined,
+          backendPriceType: resolved.priceType,
+          backendPricingSource: resolved.pricingSource,
+        });
+        return true;
+      } catch (error: unknown) {
+        const message = getErrorMessage(error, "");
+        const normalizedMessage = message.toLowerCase();
+        const isInvalidBarcode =
+          normalizedMessage.includes("barcode invalido") ||
+          normalizedMessage.includes("invalid barcode") ||
+          normalizedMessage.includes("ean");
+        const isMissingPlu =
+          normalizedMessage.includes("plu") &&
+          (normalizedMessage.includes("inexistente") ||
+            normalizedMessage.includes("not found"));
+
+        toast({
+          variant: "destructive",
+          title: "Error al escanear",
+          description: isInvalidBarcode
+            ? "El codigo escaneado no es valido."
+            : isMissingPlu
+            ? "El PLU del codigo interno no existe en el catalogo."
+            : getErrorMessage(
+                error,
+                "No se pudo procesar el codigo escaneado."
+              ),
+        });
+        return false;
+      }
+    },
+    [isSaleCommitted, branchId, addToCart, toast]
+  );
 
   const itemCount = cart.length;
   const previewBranchName =
-    branches.find((branch) => branch.id === branchId)?.name ?? "Sucursal actual";
+    branches.find((branch) => branch.id === branchId)?.name ??
+    "Sucursal actual";
   const previewCashierName =
     currentUser?.name ?? currentUser?.email ?? "Usuario actual";
   const {
@@ -2321,10 +2419,14 @@ export function POSModule() {
     previewItems,
     previewTotalUnits,
   } = useMemo(() => {
-    const nextTotal = cart.reduce((sum, item) => sum + getCartLineTotal(item), 0);
+    const nextTotal = cart.reduce(
+      (sum, item) => sum + getCartLineTotal(item),
+      0
+    );
     const cashPaymentPreview = parseWholeAmount(cashPaymentAmount);
     const transferPaymentPreview = parseWholeAmount(transferPaymentAmount);
-    const nextTotalInitialPayments = cashPaymentPreview + transferPaymentPreview;
+    const nextTotalInitialPayments =
+      cashPaymentPreview + transferPaymentPreview;
     const cashAppliedPreview = Math.min(cashPaymentPreview, nextTotal);
     const remainingAfterCash = Math.max(0, nextTotal - cashAppliedPreview);
     const transferAppliedPreview = Math.min(
@@ -2346,10 +2448,7 @@ export function POSModule() {
         changeAmount: nextChangeDuePreview,
       });
     }
-    if (
-      Number.isFinite(transferPaymentPreview) &&
-      transferPaymentPreview > 0
-    ) {
+    if (Number.isFinite(transferPaymentPreview) && transferPaymentPreview > 0) {
       nextPaymentPreviewRows.push({
         method: "TRANSFER",
         appliedAmount: transferAppliedPreview,
@@ -2387,9 +2486,8 @@ export function POSModule() {
     };
   }, [cart, cashPaymentAmount, transferPaymentAmount, transferReference]);
 
-  const normalizedPendingPaymentReason = normalizePendingPaymentReason(
-    pendingPaymentReason
-  );
+  const normalizedPendingPaymentReason =
+    normalizePendingPaymentReason(pendingPaymentReason);
   const isPendingReasonRequired =
     total > 0 && totalInitialPayments <= Number.EPSILON;
 
@@ -2579,36 +2677,46 @@ export function POSModule() {
       const outstandingAmount = Number(createdSale.outstandingAmount ?? 0);
       const backendTotal = Number(createdSale.totalAmount ?? total);
       const createdSalePayments = Array.isArray(
-        (createdSale as {
-          payments?: Array<{
-            amount?: unknown;
-            method?: unknown;
-            receivedAmount?: unknown;
-            changeAmount?: unknown;
-          }>;
-        }).payments
-      )
-        ? (createdSale as {
+        (
+          createdSale as {
             payments?: Array<{
               amount?: unknown;
               method?: unknown;
               receivedAmount?: unknown;
               changeAmount?: unknown;
             }>;
-          }).payments ?? []
+          }
+        ).payments
+      )
+        ? (
+            createdSale as {
+              payments?: Array<{
+                amount?: unknown;
+                method?: unknown;
+                receivedAmount?: unknown;
+                changeAmount?: unknown;
+              }>;
+            }
+          ).payments ?? []
         : [];
       const backendCashChange = createdSalePayments.reduce((sum, payment) => {
         const isCash = String(payment.method ?? "").toUpperCase() === "CASH";
         if (!isCash) return sum;
         return sum + Number(payment.changeAmount ?? 0);
       }, 0);
-      const backendTransferExcess = createdSalePayments.reduce((sum, payment) => {
-        const isTransfer = String(payment.method ?? "").toUpperCase() === "TRANSFER";
-        if (!isTransfer) return sum;
-        const appliedAmount = Number(payment.amount ?? 0);
-        const receivedAmount = Number(payment.receivedAmount ?? appliedAmount);
-        return sum + Math.max(0, receivedAmount - appliedAmount);
-      }, 0);
+      const backendTransferExcess = createdSalePayments.reduce(
+        (sum, payment) => {
+          const isTransfer =
+            String(payment.method ?? "").toUpperCase() === "TRANSFER";
+          if (!isTransfer) return sum;
+          const appliedAmount = Number(payment.amount ?? 0);
+          const receivedAmount = Number(
+            payment.receivedAmount ?? appliedAmount
+          );
+          return sum + Math.max(0, receivedAmount - appliedAmount);
+        },
+        0
+      );
       const effectiveCashChange =
         backendCashChange > 0 ? backendCashChange : changeDuePreview;
       const effectiveTransferExcess =
@@ -2623,9 +2731,9 @@ export function POSModule() {
                 paidAmount
               )}. Saldo pendiente $${formatMoney(outstandingAmount)}.`
             : effectiveCashChange > 0
-            ? `Total $${formatMoney(
-                backendTotal
-              )}. Vuelto $${formatMoney(effectiveCashChange)}.`
+            ? `Total $${formatMoney(backendTotal)}. Vuelto $${formatMoney(
+                effectiveCashChange
+              )}.`
             : effectiveTransferExcess > 0
             ? `Total $${formatMoney(
                 backendTotal
@@ -2649,10 +2757,7 @@ export function POSModule() {
       toast({
         variant: "destructive",
         title: "Error al registrar venta",
-        description: getErrorMessage(
-          error,
-          "No se pudo registrar la venta."
-        ),
+        description: getErrorMessage(error, "No se pudo registrar la venta."),
       });
     } finally {
       setIsProcessingPayment(false);
@@ -2674,15 +2779,18 @@ export function POSModule() {
     }
   };
 
-  const handleSelectSearchProduct = useCallback(async (product: Product) => {
-    if (isSaleCommitted) return false;
-    const preparedProduct = normalizeProductForPos({
-      ...product,
-      branchId: product.branchId ?? branchId ?? null,
-    });
-    addToCart(preparedProduct);
-    return true;
-  }, [isSaleCommitted, addToCart, branchId]);
+  const handleSelectSearchProduct = useCallback(
+    async (product: Product) => {
+      if (isSaleCommitted) return false;
+      const preparedProduct = normalizeProductForPos({
+        ...product,
+        branchId: product.branchId ?? branchId ?? null,
+      });
+      addToCart(preparedProduct);
+      return true;
+    },
+    [isSaleCommitted, addToCart, branchId]
+  );
 
   const searchQuery = "";
   const scanQuery = "";
@@ -2740,12 +2848,16 @@ export function POSModule() {
               transferExcessPreview={transferExcessPreview}
               cashPaymentAmount={cashPaymentAmount}
               transferPaymentAmount={transferPaymentAmount}
-              pendingPaymentReason={pendingPaymentReason}
-              isPendingReasonRequired={isPendingReasonRequired}
               onCashPaymentAmountChange={handleCashPaymentAmountChange}
               onTransferPaymentAmountChange={handleTransferPaymentAmountChange}
+              onCashPaymentAmountBlur={handleCashPaymentAmountBlur}
+              onTransferPaymentAmountBlur={handleTransferPaymentAmountBlur}
+              pendingPaymentReason={pendingPaymentReason}
+              isPendingReasonRequired={isPendingReasonRequired}
               onPendingPaymentReasonChange={(value) =>
-                setPendingPaymentReason(value.slice(0, POS_PENDING_REASON_MAX_LENGTH))
+                setPendingPaymentReason(
+                  value.slice(0, POS_PENDING_REASON_MAX_LENGTH)
+                )
               }
               onHandlePayment={handlePayment}
               onClearCart={() => clearCart()}
@@ -3090,6 +3202,16 @@ export function POSModule() {
                               )}
                               key={`${item.id}-${item.quantity}`}
                               className="h-8 w-24 text-center text-sm"
+                              placeholder={
+                                item.measurementType === "kg"
+                                  ? "kg o gramos"
+                                  : "Cantidad"
+                              }
+                              title={
+                                item.measurementType === "kg"
+                                  ? "Puedes ingresar kg (ej. 1.5) o gramos enteros (ej. 1500)."
+                                  : undefined
+                              }
                               disabled={isSaleCommitted}
                               onBlur={(event) => {
                                 const committed = commitManualQuantity(
@@ -3159,6 +3281,121 @@ export function POSModule() {
         </div>
 
         <div className="space-y-4">
+          <Card>
+            <CardHeader>
+              <CardTitle className="flex items-center justify-between">
+                <span>Pagar</span>
+                <Badge variant="secondary">{itemCount} items</Badge>
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span>Subtotal:</span>
+                  <span>${formatMoney(total)}</span>
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span>Pagos iniciales:</span>
+                  <span>${formatMoney(totalInitialPayments)}</span>
+                </div>
+                {changeDuePreview > 0 && (
+                  <div className="flex justify-between text-sm font-semibold text-emerald-700">
+                    <span>Vuelto a entregar:</span>
+                    <span>${formatMoney(changeDuePreview)}</span>
+                  </div>
+                )}
+                <Separator />
+                <div className="flex justify-between font-bold">
+                  <span>Total:</span>
+                  <span>${formatMoney(total)}</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <div className="rounded-md border p-3 space-y-2">
+                  <p className="text-xs font-semibold uppercase text-muted-foreground">
+                    Pagos
+                  </p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-1">
+                      <label className="text-md font-bold text-muted-foreground">
+                        Efectivo
+                      </label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={cashPaymentAmount}
+                        onChange={(event) =>
+                          handleCashPaymentAmountChange(event.target.value)
+                        }
+                        onBlur={handleCashPaymentAmountBlur}
+                        className="h-10"
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <label className="text-md font-bold text-muted-foreground">
+                        Transferencia
+                      </label>
+                      <Input
+                        type="text"
+                        inputMode="decimal"
+                        placeholder="0.00"
+                        value={transferPaymentAmount}
+                        onChange={(event) =>
+                          handleTransferPaymentAmountChange(event.target.value)
+                        }
+                        onBlur={handleTransferPaymentAmountBlur}
+                        className="h-10"
+                      />
+                    </div>
+                  </div>
+                </div>
+                {cart.length === 0 ? (
+                  <p className="text-center text-xs text-muted-foreground">
+                    Agrega productos para habilitar el cobro.
+                  </p>
+                ) : null}
+                <Button
+                  className="w-full"
+                  onClick={() => handlePayment()}
+                  disabled={isProcessingPayment || cart.length === 0}
+                >
+                  <Banknote className="mr-2 h-4 w-4" />
+                  {isSaleCommitted ? "Nueva venta" : "Registrar Venta"}
+                </Button>
+                <AlertDialog>
+                  <AlertDialogTrigger asChild>
+                    <Button
+                      className="w-full"
+                      variant="ghost"
+                      disabled={cart.length === 0}
+                    >
+                      Limpiar Carrito
+                    </Button>
+                  </AlertDialogTrigger>
+                  <AlertDialogContent>
+                    <AlertDialogHeader>
+                      <AlertDialogTitle>Limpiar el carrito?</AlertDialogTitle>
+                      <AlertDialogDescription>
+                        Se quitaran todos los productos seleccionados.
+                      </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                      <AlertDialogCancel>Cancelar</AlertDialogCancel>
+                      <AlertDialogAction
+                        onClick={() => {
+                          clearCart();
+                        }}
+                        className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                      >
+                        Limpiar
+                      </AlertDialogAction>
+                    </AlertDialogFooter>
+                  </AlertDialogContent>
+                </AlertDialog>
+              </div>
+            </CardContent>
+          </Card>
           <PosPaymentCard
             cartLength={cart.length}
             itemCount={itemCount}
@@ -3172,8 +3409,12 @@ export function POSModule() {
             isPendingReasonRequired={isPendingReasonRequired}
             onCashPaymentAmountChange={handleCashPaymentAmountChange}
             onTransferPaymentAmountChange={handleTransferPaymentAmountChange}
+            onCashPaymentAmountBlur={handleCashPaymentAmountBlur}
+            onTransferPaymentAmountBlur={handleTransferPaymentAmountBlur}
             onPendingPaymentReasonChange={(value) =>
-              setPendingPaymentReason(value.slice(0, POS_PENDING_REASON_MAX_LENGTH))
+              setPendingPaymentReason(
+                value.slice(0, POS_PENDING_REASON_MAX_LENGTH)
+              )
             }
             onHandlePayment={handlePayment}
             onClearCart={() => clearCart()}
