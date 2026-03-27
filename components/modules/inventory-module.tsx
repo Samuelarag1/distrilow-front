@@ -39,7 +39,10 @@ import { useProductActions } from "@/components/providers/product-provider";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import type {
+  MeasurementType,
   MovementType,
+  ReportsInventoryLowStockResponse,
+  ReportsInventorySummaryResponse,
   StockDetail,
   StockListItem,
   StockSharedProduct,
@@ -88,11 +91,6 @@ type Category = {
   isActive: boolean;
 };
 
-type LowStockRow = StockListItem & {
-  name?: string;
-  product?: Partial<Product> & { id?: string; name?: string };
-};
-
 type InventoryRow = StockListItem & {
   name?: string | null;
   product?: Partial<Product> & { id?: string; name?: string };
@@ -113,6 +111,104 @@ function toDisplayMeasurementUnit(value: unknown) {
   if (value === "ml") return "ml";
   if (value === "liter") return "lt";
   return "unidades";
+}
+
+function normalizeMeasurementType(value: unknown): MeasurementType | null {
+  if (
+    value === "unit" ||
+    value === "gram" ||
+    value === "kg" ||
+    value === "ml" ||
+    value === "liter"
+  ) {
+    return value;
+  }
+  return null;
+}
+
+function resolveMeasurementTypeFromItem(
+  item:
+    | InventoryRow
+    | StockDetail
+    | (Partial<Product> & { product?: Partial<Product> | null })
+    | null
+    | undefined
+) {
+  const direct = normalizeMeasurementType(
+    (item as { measurementType?: unknown } | null | undefined)?.measurementType
+  );
+  if (direct) return direct;
+
+  const nested = normalizeMeasurementType(
+    (
+      item as
+        | { product?: { measurementType?: unknown; isWeighable?: unknown } | null }
+        | null
+        | undefined
+    )?.product?.measurementType
+  );
+  if (nested) return nested;
+
+  const isWeighable =
+    Boolean(
+      (item as { isWeighable?: unknown } | null | undefined)?.isWeighable
+    ) ||
+    Boolean(
+      (
+        item as
+          | { product?: { isWeighable?: unknown } | null }
+          | null
+          | undefined
+      )?.product?.isWeighable
+    );
+
+  return isWeighable ? "kg" : "unit";
+}
+
+function formatInventoryQuantity(
+  value: unknown,
+  measurementType: unknown,
+  options?: { precise?: boolean }
+) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return "0";
+
+  const normalizedMeasurementType = normalizeMeasurementType(measurementType);
+  const precise = options?.precise ?? false;
+  const hasFraction = Math.abs(numericValue - Math.trunc(numericValue)) > 0.000001;
+
+  let maximumFractionDigits = 0;
+
+  if (
+    normalizedMeasurementType === "kg" ||
+    normalizedMeasurementType === "liter"
+  ) {
+    maximumFractionDigits = precise ? 4 : 3;
+  } else if (
+    normalizedMeasurementType === "gram" ||
+    normalizedMeasurementType === "ml"
+  ) {
+    maximumFractionDigits = hasFraction ? (precise ? 3 : 2) : 0;
+  } else if (normalizedMeasurementType === "unit") {
+    maximumFractionDigits = hasFraction ? (precise ? 3 : 2) : 0;
+  } else {
+    maximumFractionDigits = hasFraction ? (precise ? 3 : 2) : 0;
+  }
+
+  return numericValue.toLocaleString("es-AR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  });
+}
+
+function formatInventoryQuantityWithUnit(
+  value: unknown,
+  measurementType: unknown,
+  options?: { precise?: boolean }
+) {
+  return `${formatInventoryQuantity(value, measurementType, options)} ${toDisplayMeasurementUnit(
+    measurementType
+  )}`;
 }
 
 function resolveInventoryRowName(item: InventoryRow) {
@@ -157,6 +253,86 @@ function resolveInventoryRowImage(item: InventoryRow) {
 function resolveLinkedProducts(item: InventoryRow): StockSharedProduct[] {
   const linked = item.sharedStock?.linkedProducts;
   return Array.isArray(linked) ? linked : [];
+}
+
+function toTrimmedText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function toFiniteQuantity(value: unknown, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function buildInventoryRowFromProduct(
+  product: Partial<Product>,
+  fallbackBranchId: string | null
+): InventoryRow {
+  const productId = toTrimmedText(product.id);
+  const productName = toTrimmedText(product.name) || productId;
+  const branchId =
+    normalizeBranchContextId(
+      toTrimmedText(product.branchId) || fallbackBranchId || undefined
+    ) ?? "";
+  const stockQuantity = toFiniteQuantity((product as any).stock, 0);
+  const stockConsumptionQuantity = Math.max(
+    toFiniteQuantity((product as any).stockConsumptionQuantity, 1),
+    1
+  );
+  const measurementType =
+    normalizeMeasurementType((product as any).measurementType) ??
+    (Boolean((product as any).isWeighable) ? "kg" : "unit");
+  const stockBaseProductId =
+    toTrimmedText((product as any).stockBaseProductId) || productId;
+  const isSharedStock = Boolean(
+    productId && stockBaseProductId && stockBaseProductId !== productId
+  );
+  const baseQuantity = isSharedStock
+    ? stockQuantity * stockConsumptionQuantity
+    : stockQuantity;
+
+  return {
+    id: [branchId || "branch", productId || "product"].join(":"),
+    branchId,
+    productId,
+    stockProductId: stockBaseProductId || productId,
+    quantity: stockQuantity,
+    baseQuantity: Number.isFinite(baseQuantity) ? baseQuantity : null,
+    stockConsumptionQuantity,
+    stockBaseUnit:
+      normalizeMeasurementType((product as any).stockBaseUnit) ?? measurementType,
+    sharedStock: isSharedStock
+      ? {
+          stockProductId: stockBaseProductId || productId,
+          isShared: true,
+          linkedProductsCount: 0,
+          linkedProducts: [],
+        }
+      : null,
+    averageCost: toFiniteQuantity((product as any).costPrice, 0),
+    createdAt:
+      typeof product.createdAt === "string" ? product.createdAt : undefined,
+    updatedAt:
+      typeof product.updatedAt === "string" ? product.updatedAt : undefined,
+    name: productName || productId,
+    product: {
+      ...product,
+      id: productId || undefined,
+      name: productName || undefined,
+      branchId: branchId || undefined,
+      stock: stockQuantity,
+      measurementType,
+    },
+  };
+}
+
+function buildStockDetailFromInventoryRow(item: InventoryRow): StockDetail {
+  return {
+    ...item,
+    stockProductId:
+      toTrimmedText(item.stockProductId) || toTrimmedText(item.productId) || null,
+    baseQuantity: item.baseQuantity ?? toFiniteQuantity(item.quantity, 0),
+  };
 }
 
 function AdjustStockDialog({
@@ -439,12 +615,14 @@ function StockDetailDialog({
   branchId,
   productId,
   productName,
+  fallbackItem,
   open,
   onOpenChange,
 }: {
   branchId: string | null;
   productId: string | null;
   productName: string | null;
+  fallbackItem: InventoryRow | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -464,10 +642,28 @@ function StockDetailDialog({
     }
   );
 
-  const baseUnit = String(data?.stockBaseUnit ?? "unidad");
-  const linkedProducts = Array.isArray(data?.sharedStock?.linkedProducts)
-    ? data?.sharedStock?.linkedProducts ?? []
+  const fallbackDetail = useMemo(
+    () => (fallbackItem ? buildStockDetailFromInventoryRow(fallbackItem) : null),
+    [fallbackItem]
+  );
+  const detail = data ?? fallbackDetail;
+  const detailMeasurementType = resolveMeasurementTypeFromItem(detail ?? undefined);
+  const baseMeasurementType =
+    normalizeMeasurementType(detail?.stockBaseUnit) ?? detailMeasurementType;
+  const baseUnit = toDisplayMeasurementUnit(baseMeasurementType);
+  const linkedProducts = Array.isArray(detail?.sharedStock?.linkedProducts)
+    ? detail?.sharedStock?.linkedProducts ?? []
     : [];
+  const detailConsumptionQuantity = Number(
+    detail?.stockConsumptionQuantity ?? Number.NaN
+  );
+  const detailBaseQuantity = Number(detail?.baseQuantity ?? Number.NaN);
+  const detailRelativeStock =
+    Number.isFinite(detailBaseQuantity) &&
+    Number.isFinite(detailConsumptionQuantity) &&
+    detailConsumptionQuantity > 0
+      ? Math.max(0, detailBaseQuantity / detailConsumptionQuantity)
+      : null;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -483,7 +679,7 @@ function StockDetailDialog({
           <p className="text-sm text-muted-foreground">Cargando detalle...</p>
         )}
 
-        {!isLoading && error && (
+        {!isLoading && error && !detail && (
           <p className="text-sm text-destructive">
             {error instanceof Error
               ? error.message
@@ -491,41 +687,82 @@ function StockDetailDialog({
           </p>
         )}
 
-        {!isLoading && !error && data && (
+        {!isLoading && error && detail && (
+          <p className="text-xs text-muted-foreground">
+            No existe una fila de stock creada para este producto. Se muestra el
+            detalle calculado desde el catalogo actual.
+          </p>
+        )}
+
+        {!isLoading && detail && (
           <div className="space-y-4">
             <div className="grid gap-3 sm:grid-cols-2">
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">
                   Producto consultado
                 </p>
-                <p className="font-semibold">{data.productId || "-"}</p>
+                <p className="font-semibold">{detail.productId || "-"}</p>
               </div>
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Stock base real</p>
-                <p className="font-semibold">{data.stockProductId || "-"}</p>
+                <p className="font-semibold">{detail.stockProductId || "-"}</p>
               </div>
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">
                   Cantidad comercial
                 </p>
                 <p className="font-semibold">
-                  {Number(data.quantity ?? 0).toLocaleString("es-AR")}
+                  {formatInventoryQuantityWithUnit(
+                    detail.quantity ?? 0,
+                    detailMeasurementType,
+                    { precise: Boolean(detail.sharedStock?.isShared) }
+                  )}
                 </p>
               </div>
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground">Stock real base</p>
                 <p className="font-semibold">
-                  {Number(data.baseQuantity ?? 0).toLocaleString("es-AR")}{" "}
-                  {baseUnit}
+                  {formatInventoryQuantityWithUnit(
+                    detail.baseQuantity ?? 0,
+                    baseMeasurementType,
+                    { precise: true }
+                  )}
                 </p>
               </div>
             </div>
 
-            {data.sharedStock?.isShared && (
+            {detail.sharedStock?.isShared && detailRelativeStock !== null && (
+              <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                Calculo compartido:{" "}
+                <span className="font-semibold text-foreground">
+                  {formatInventoryQuantity(detailBaseQuantity, baseMeasurementType, {
+                    precise: true,
+                  })}{" "}
+                  {baseUnit}
+                </span>{" "}
+                /{" "}
+                <span className="font-semibold text-foreground">
+                  {formatInventoryQuantity(detailConsumptionQuantity, baseMeasurementType, {
+                    precise: true,
+                  })}{" "}
+                  {baseUnit}
+                </span>{" "}
+                por producto ={" "}
+                <span className="font-semibold text-foreground">
+                  {formatInventoryQuantity(detailRelativeStock, detailMeasurementType, {
+                    precise: true,
+                  })}{" "}
+                  {toDisplayMeasurementUnit(detailMeasurementType)}
+                </span>
+                .
+              </div>
+            )}
+
+            {detail.sharedStock?.isShared && (
               <div className="rounded-md border p-3">
                 <p className="text-xs text-muted-foreground mb-2">
                   Productos vinculados:{" "}
-                  {Number(data.sharedStock.linkedProductsCount ?? 0)}
+                  {Number(detail.sharedStock.linkedProductsCount ?? 0)}
                 </p>
                 <div className="space-y-2">
                   {linkedProducts.map((linked) => (
@@ -547,24 +784,27 @@ function StockDetailDialog({
                         )}
                         <div className="text-right text-muted-foreground">
                           <span>
-                            {Number(
-                              linked.stockConsumptionQuantity ?? 0
-                            ).toLocaleString("es-AR")}{" "}
-                            {linked.stockBaseUnit ?? "-"}
+                            {formatInventoryQuantity(
+                              linked.stockConsumptionQuantity ?? 0,
+                              linked.stockBaseUnit,
+                              {
+                                precise: true,
+                              }
+                            )}{" "}
+                            {toDisplayMeasurementUnit(linked.stockBaseUnit)}
                           </span>
-                          {Number(data.baseQuantity ?? Number.NaN) > 0 &&
+                          {Number(detail.baseQuantity ?? Number.NaN) > 0 &&
                             Number(
                               linked.stockConsumptionQuantity ?? Number.NaN
                             ) > 0 && (
                               <p className="text-[10px]">
                                 ~{" "}
-                                {(
-                                  Number(data.baseQuantity ?? 0) /
-                                  Number(linked.stockConsumptionQuantity ?? 1)
-                                ).toLocaleString("es-AR", {
-                                  minimumFractionDigits: 0,
-                                  maximumFractionDigits: 4,
-                                })}
+                                {formatInventoryQuantity(
+                                  Number(detail.baseQuantity ?? 0) /
+                                    Number(linked.stockConsumptionQuantity ?? 1),
+                                  detailMeasurementType,
+                                  { precise: true }
+                                )}
                               </p>
                             )}
                         </div>
@@ -594,56 +834,53 @@ export function InventoryModule() {
   const [stockDetailTarget, setStockDetailTarget] = useState<{
     productId: string;
     productName: string;
+    item: InventoryRow;
   } | null>(null);
   const pageSize = 20;
   const { toast } = useToast();
-  const stocksAbortControllerRef = useRef<AbortController | null>(null);
-  const stockSummaryFilters = useMemo(
-    () => ({
-      branchId: effectiveBranchId,
-      lowStockThreshold: LOW_STOCK_THRESHOLD,
-    }),
-    [effectiveBranchId]
-  );
+  const productsAbortControllerRef = useRef<AbortController | null>(null);
   const { data: categoriesData } = useSWR<Category[]>(
     "/categories",
     swrFetcher
   );
 
-  const stockListFilters = useMemo(
+  const inventoryQuery = useMemo(
     () => ({
-      page: currentPage,
-      limit: pageSize,
+      skip: Math.max(0, (currentPage - 1) * pageSize),
+      take: pageSize,
       search: debouncedSearch.trim() || undefined,
       categoryId: selectedCategory !== "all" ? selectedCategory : undefined,
-      stockStatus: "all",
     }),
     [currentPage, pageSize, debouncedSearch, selectedCategory]
   );
 
   const {
-    data: stocksPage,
-    mutate: mutateStocksList,
-    isLoading: isLoadingStocks,
-    error: stocksError,
+    data: inventoryPage,
+    mutate: mutateInventoryPage,
+    isLoading: isLoadingInventoryPage,
+    error: inventoryPageError,
   } = useSWR(
-    effectiveBranchId ? ["stocks", effectiveBranchId, stockListFilters] : null,
+    effectiveBranchId ? ["inventory-products", effectiveBranchId, inventoryQuery] : null,
     async () => {
-      stocksAbortControllerRef.current?.abort();
+      productsAbortControllerRef.current?.abort();
       const controller = new AbortController();
-      stocksAbortControllerRef.current = controller;
+      productsAbortControllerRef.current = controller;
 
       try {
-        return await backendApi.stocks.list(
-          stockListFilters,
+        return await backendApi.productsWithStock(
+          {
+            ...inventoryQuery,
+            name: inventoryQuery.search,
+            q: inventoryQuery.search,
+          },
           effectiveBranchId,
           {
             signal: controller.signal,
           }
         );
       } finally {
-        if (stocksAbortControllerRef.current === controller) {
-          stocksAbortControllerRef.current = null;
+        if (productsAbortControllerRef.current === controller) {
+          productsAbortControllerRef.current = null;
         }
       }
     },
@@ -653,72 +890,115 @@ export function InventoryModule() {
       shouldRetryOnError: false,
     }
   );
+  const { data: stockRows, mutate: mutateStockRows } = useSWR<InventoryRow[]>(
+    effectiveBranchId ? ["stocks-branch", effectiveBranchId] : null,
+    () =>
+      backendApi.stocks
+        .listByBranch(effectiveBranchId as string)
+        .then((rows) => rows as InventoryRow[]),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+      shouldRetryOnError: false,
+    }
+  );
 
   const inventory = useMemo(() => {
-    const source = (stocksPage?.items ?? []) as InventoryRow[];
-    if (source.length === 0) return [];
+    const sourceProducts = (inventoryPage?.items ?? []) as Product[];
+    if (sourceProducts.length === 0) return [];
 
-    const byProductId = new Map<string, InventoryRow>();
-    const uniqueRows: InventoryRow[] = [];
-
-    source.forEach((row) => {
+    const stockByProductId = new Map<string, InventoryRow>();
+    (stockRows ?? []).forEach((row) => {
       const productId = String(row.productId ?? "").trim();
-      if (!productId || byProductId.has(productId)) return;
-      byProductId.set(productId, row);
-      uniqueRows.push(row);
+      if (!productId || stockByProductId.has(productId)) return;
+      stockByProductId.set(productId, row);
     });
 
-    return uniqueRows;
-  }, [stocksPage?.items]);
-  const inventoryTotal = Number(stocksPage?.meta?.total ?? inventory.length);
-  const hasMore = Boolean(stocksPage?.meta?.hasMore);
-  const skip = Number(
-    stocksPage?.meta?.offset ?? Math.max(0, (currentPage - 1) * pageSize)
-  );
-  const take = Number(stocksPage?.meta?.limit ?? pageSize);
-  const isLoading = isLoadingStocks;
-  const isError =
-    stocksError instanceof DOMException && stocksError.name === "AbortError"
-      ? null
-      : stocksError;
+    return sourceProducts.map((product) => {
+      const fallbackRow = buildInventoryRowFromProduct(product, effectiveBranchId);
+      const stockRow = stockByProductId.get(fallbackRow.productId);
+      if (!stockRow) return fallbackRow;
 
-  const { data: inventorySummary, mutate: mutateInventorySummary } = useSWR(
-    effectiveBranchId ? ["/stocks/summary", stockSummaryFilters] : null,
+      const resolvedQuantity = toFiniteQuantity(
+        (product as any).stock,
+        toFiniteQuantity(stockRow.quantity, fallbackRow.quantity)
+      );
+      const resolvedName =
+        toTrimmedText(stockRow.name) ||
+        toTrimmedText(fallbackRow.name) ||
+        fallbackRow.productId;
+
+      return {
+        ...fallbackRow,
+        ...stockRow,
+        productId: stockRow.productId || fallbackRow.productId,
+        stockProductId:
+          toTrimmedText(stockRow.stockProductId) || fallbackRow.stockProductId,
+        branchId: toTrimmedText(stockRow.branchId) || fallbackRow.branchId,
+        quantity: resolvedQuantity,
+        baseQuantity: stockRow.baseQuantity ?? fallbackRow.baseQuantity,
+        stockConsumptionQuantity:
+          stockRow.stockConsumptionQuantity ?? fallbackRow.stockConsumptionQuantity,
+        stockBaseUnit: stockRow.stockBaseUnit ?? fallbackRow.stockBaseUnit,
+        averageCost: toFiniteQuantity(
+          stockRow.averageCost,
+          fallbackRow.averageCost
+        ),
+        name: resolvedName,
+        product: {
+          ...(fallbackRow.product ?? {}),
+          ...(stockRow.product ?? {}),
+          id: fallbackRow.productId || undefined,
+          name: resolvedName || undefined,
+          branchId:
+            toTrimmedText(stockRow.branchId) ||
+            toTrimmedText((fallbackRow.product as any)?.branchId) ||
+            undefined,
+          stock: resolvedQuantity,
+        },
+      };
+    });
+  }, [inventoryPage?.items, stockRows, effectiveBranchId]);
+  const inventoryTotal = Number(inventoryPage?.total ?? inventory.length);
+  const hasMore = Boolean(inventoryPage?.hasMore);
+  const skip = Number(
+    inventoryPage?.skip ?? Math.max(0, (currentPage - 1) * pageSize)
+  );
+  const take = Number(inventoryPage?.take ?? pageSize);
+  const isLoading = isLoadingInventoryPage;
+  const isError =
+    inventoryPageError instanceof DOMException &&
+    inventoryPageError.name === "AbortError"
+      ? null
+      : inventoryPageError;
+
+  const { data: inventorySummary, mutate: mutateInventorySummary } = useSWR<ReportsInventorySummaryResponse>(
+    effectiveBranchId
+      ? ["/reporting/inventory/summary", effectiveBranchId, LOW_STOCK_THRESHOLD]
+      : null,
     () =>
-      backendApi.stocks.summary(
+      backendApi.reporting.inventory.summary(
         { lowStockThreshold: LOW_STOCK_THRESHOLD },
         effectiveBranchId
       )
   );
-  const {
-    data: inventorySummaryCategories,
-    mutate: mutateInventorySummaryCategories,
-  } = useSWR(
+  const { data: lowStockResponse, mutate: mutateLowStockRows } = useSWR<ReportsInventoryLowStockResponse>(
     effectiveBranchId
-      ? ["/stocks/summary/categories", stockSummaryFilters]
+      ? ["/reporting/inventory/low-stock", effectiveBranchId, LOW_STOCK_THRESHOLD]
       : null,
     () =>
-      backendApi.stocks.summaryCategories(
-        { lowStockThreshold: LOW_STOCK_THRESHOLD },
-        effectiveBranchId
-      )
-  );
-  const { data: lowStockRows, mutate: mutateLowStockRows } = useSWR<
-    LowStockRow[]
-  >(
-    effectiveBranchId
-      ? ["stocks-low-list", effectiveBranchId, LOW_STOCK_THRESHOLD]
-      : null,
-    async () => {
-      const payload = await backendApi.stocks.list(
+      backendApi.reporting.inventory.lowStock(
         {
-          stockStatus: "low_stock",
+          page: 1,
+          limit: 100,
           lowStockThreshold: LOW_STOCK_THRESHOLD,
         },
         effectiveBranchId
-      );
-      return payload.items as LowStockRow[];
-    }
+      )
+  );
+  const lowStockRows = useMemo(
+    () => lowStockResponse?.items ?? [],
+    [lowStockResponse?.items]
   );
 
   const categoryNameById = useMemo(() => {
@@ -759,7 +1039,7 @@ export function InventoryModule() {
 
   useEffect(() => {
     return () => {
-      stocksAbortControllerRef.current?.abort();
+      productsAbortControllerRef.current?.abort();
     };
   }, []);
 
@@ -828,19 +1108,12 @@ export function InventoryModule() {
 
     const names = lowStockRows
       .map((row) => {
-        const directName = typeof row.name === "string" ? row.name.trim() : "";
+        const directName =
+          typeof row.productName === "string" ? row.productName.trim() : "";
         if (directName) return directName;
 
-        const nestedName =
-          typeof row.product?.name === "string" ? row.product.name.trim() : "";
-        if (nestedName) return nestedName;
-
         const productId =
-          typeof row.productId === "string"
-            ? row.productId
-            : typeof row.product?.id === "string"
-            ? row.product.id
-            : null;
+          typeof row.productId === "string" ? row.productId.trim() : null;
         if (!productId) return "";
         return inventoryNameById.get(productId) ?? "";
       })
@@ -848,13 +1121,16 @@ export function InventoryModule() {
 
     return Array.from(new Set(names)).slice(0, 3);
   }, [lowStockRows, inventoryNameById]);
-  const totalProductsKpi = inventorySummary?.products.total ?? inventoryTotal;
-  const lowStockCountKpi =
-    inventorySummary?.products.lowStock ?? lowStockRows?.length ?? 0;
-  const inventoryValueKpi =
-    inventorySummary?.inventoryValue.wholesale ?? totalValueFallback;
-  const categoriesTotalKpi =
-    inventorySummaryCategories?.total ?? categories.length;
+  const totalProductsKpi = Number(inventorySummary?.productsTotal ?? inventoryTotal);
+  const lowStockCountKpi = Number(
+    inventorySummary?.lowStockTotal ?? lowStockRows.length
+  );
+  const inventoryValueKpi = Number(
+    inventorySummary?.inventoryValueWholesale ?? totalValueFallback
+  );
+  const categoriesTotalKpi = Number(
+    inventorySummary?.byCategory?.length ?? categories.length
+  );
   const lowStockHiddenCount = Math.max(
     lowStockCountKpi - lowStockNamesPreview.length,
     0
@@ -907,7 +1183,7 @@ export function InventoryModule() {
     const stockQuantity = Number(item.quantity ?? 0);
     const minStock = Number((item.product as any)?.minStock ?? 0);
     const maxStock = Number((item.product as any)?.maxStock ?? 100);
-    const measurementType = (item.product as any)?.measurementType;
+    const measurementType = resolveMeasurementTypeFromItem(item);
     const unitLabel = toDisplayMeasurementUnit(measurementType);
     const status = getStockStatus(stockQuantity, minStock, maxStock);
     const progressValue = getProgressValue(stockQuantity, maxStock);
@@ -919,7 +1195,9 @@ export function InventoryModule() {
     );
     const isSharedStock = Boolean(item.sharedStock?.isShared);
     const consumptionQuantity = Number(item.stockConsumptionQuantity ?? 1);
-    const consumptionLabel = item.stockBaseUnit ?? "unidad";
+    const baseMeasurementType =
+      normalizeMeasurementType(item.stockBaseUnit) ?? measurementType;
+    const consumptionLabel = toDisplayMeasurementUnit(baseMeasurementType);
     const baseQuantity = Number(item.baseQuantity ?? Number.NaN);
     const hasLinkedBase =
       Boolean(item.stockProductId) &&
@@ -932,11 +1210,35 @@ export function InventoryModule() {
       consumptionQuantity > 0
         ? Math.max(0, baseQuantity / consumptionQuantity)
         : null;
+    const formattedStockQuantity = formatInventoryQuantity(
+      stockQuantity,
+      measurementType,
+      { precise: isSharedStock }
+    );
+    const formattedConsumptionQuantity = formatInventoryQuantity(
+      consumptionQuantity,
+      baseMeasurementType,
+      { precise: true }
+    );
+    const formattedBaseQuantity = Number.isFinite(baseQuantity)
+      ? formatInventoryQuantity(baseQuantity, baseMeasurementType, {
+          precise: true,
+        })
+      : null;
+    const formattedRelativeStock =
+      relativeStockFromBase !== null
+        ? formatInventoryQuantity(relativeStockFromBase, measurementType, {
+            precise: true,
+          })
+        : null;
+    const formattedMinStock = formatInventoryQuantity(minStock, measurementType);
+    const formattedMaxStock = formatInventoryQuantity(maxStock, measurementType);
     const adjustDialogItem = {
       id: item.productId,
       name: itemName,
       stock: stockQuantity,
       unit: unitLabel,
+      measurementType,
       branchId: item.branchId ?? effectiveBranchId ?? null,
     };
 
@@ -959,9 +1261,9 @@ export function InventoryModule() {
           toBranchId: input.toBranchId,
         });
         await Promise.all([
-          mutateStocksList(),
+          mutateInventoryPage(),
+          mutateStockRows(),
           mutateInventorySummary(),
-          mutateInventorySummaryCategories(),
           mutateLowStockRows(),
         ]);
 
@@ -1041,10 +1343,7 @@ export function InventoryModule() {
                     status
                   )}`}
                 >
-                  {stockQuantity.toLocaleString("es-AR", {
-                    minimumFractionDigits: 0,
-                    maximumFractionDigits: 2,
-                  })}
+                  {formattedStockQuantity}
                 </div>
                 <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter mt-1">
                   {unitLabel} disponibles
@@ -1102,13 +1401,14 @@ export function InventoryModule() {
                               </Badge>
                             )}
                             <span className="text-muted-foreground">
-                              {Number(
-                                linked.stockConsumptionQuantity ?? 0
-                              ).toLocaleString("es-AR", {
-                                minimumFractionDigits: 0,
-                                maximumFractionDigits: 4,
-                              })}{" "}
-                              {linked.stockBaseUnit ?? "-"}
+                              {formatInventoryQuantity(
+                                linked.stockConsumptionQuantity ?? 0,
+                                linked.stockBaseUnit,
+                                {
+                                  precise: true,
+                                }
+                              )}{" "}
+                              {toDisplayMeasurementUnit(linked.stockBaseUnit)}
                             </span>
                           </div>
                         </div>
@@ -1122,31 +1422,49 @@ export function InventoryModule() {
             <p className="mb-3 text-xs text-muted-foreground">
               Consume{" "}
               <span className="font-semibold text-foreground">
-                {consumptionQuantity.toLocaleString("es-AR", {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 2,
-                })}{" "}
+                {formattedConsumptionQuantity}{" "}
                 {consumptionLabel}
               </span>{" "}
               por unidad vendida
             </p>
+            {isSharedStock && !hasLinkedBase && formattedBaseQuantity && (
+              <p className="mb-3 text-xs text-muted-foreground">
+                Stock base compartido real:{" "}
+                <span className="font-semibold text-foreground">
+                  {formattedBaseQuantity} {consumptionLabel}
+                </span>
+                . Los productos vinculados descuentan de este mismo saldo.
+              </p>
+            )}
             {relativeStockFromBase !== null && (
               <p className="mb-3 text-xs text-muted-foreground">
                 Stock relativo estimado:{" "}
                 <span className="font-semibold text-foreground">
-                  {Number(relativeStockFromBase).toLocaleString("es-AR", {
-                    minimumFractionDigits: 0,
-                    maximumFractionDigits: 2,
-                  })}{" "}
+                  {formattedRelativeStock}{" "}
                   {unitLabel}
                 </span>{" "}
                 (base real:{" "}
-                {baseQuantity.toLocaleString("es-AR", {
-                  minimumFractionDigits: 0,
-                  maximumFractionDigits: 4,
-                })}{" "}
-                {consumptionLabel})
+                {formattedBaseQuantity} {consumptionLabel})
               </p>
+            )}
+            {isSharedStock &&
+              relativeStockFromBase !== null &&
+              formattedBaseQuantity && (
+                <p className="mb-3 text-xs text-muted-foreground">
+                  Calculo compartido:{" "}
+                  <span className="font-semibold text-foreground">
+                    {formattedBaseQuantity} {consumptionLabel}
+                  </span>{" "}
+                  /{" "}
+                  <span className="font-semibold text-foreground">
+                    {formattedConsumptionQuantity} {consumptionLabel}
+                  </span>{" "}
+                  por producto ={" "}
+                  <span className="font-semibold text-foreground">
+                    {formattedRelativeStock} {unitLabel}
+                  </span>
+                  .
+                </p>
             )}
 
             <div className="space-y-1.5 mt-4">
@@ -1158,9 +1476,9 @@ export function InventoryModule() {
               />
               <div className="flex justify-between text-[10px] text-muted-foreground font-black uppercase tracking-wider">
                 <span className={status === "low" ? "text-red-500" : ""}>
-                  Min: {minStock}
+                  Min: {formattedMinStock} {unitLabel}
                 </span>
-                <span>Capacidad: {maxStock}</span>
+                <span>Capacidad: {formattedMaxStock} {unitLabel}</span>
               </div>
             </div>
           </div>
@@ -1174,7 +1492,7 @@ export function InventoryModule() {
                 ${inventoryValue.toLocaleString()}
               </span>
               <span className="text-[10px] text-muted-foreground font-medium italic mt-0.5">
-                (Calc. a ${wholesaleUnitPrice.toLocaleString()}/u mayorista)
+                (Calc. a ${wholesaleUnitPrice.toLocaleString()}/{unitLabel} mayorista)
               </span>
             </div>
           </div>
@@ -1194,6 +1512,7 @@ export function InventoryModule() {
                 setStockDetailTarget({
                   productId: item.productId,
                   productName: itemName,
+                  item,
                 })
               }
             >
@@ -1469,6 +1788,7 @@ export function InventoryModule() {
         branchId={effectiveBranchId}
         productId={stockDetailTarget?.productId ?? null}
         productName={stockDetailTarget?.productName ?? null}
+        fallbackItem={stockDetailTarget?.item ?? null}
         open={Boolean(stockDetailTarget)}
         onOpenChange={(open) => {
           if (!open) setStockDetailTarget(null);

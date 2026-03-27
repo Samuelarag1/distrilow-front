@@ -154,6 +154,66 @@ function splitScannerPayload(rawValue: string): string[] {
   return [token];
 }
 
+function stripProductCodeLeadingZeros(value: string) {
+  const normalized = value.replace(/^0+(?=\d)/, "");
+  return normalized || "0";
+}
+
+function getScannedCodeDetails(rawCode: string) {
+  const normalizedCode = rawCode.trim();
+  if (!normalizedCode || !/^\d+$/.test(normalizedCode)) {
+    return {
+      rawCode: normalizedCode,
+      productCode: null,
+      pluCode: null,
+      isInternalCode: false,
+    };
+  }
+
+  if (normalizedCode.length === 13 && normalizedCode.startsWith("2")) {
+    const pluCode = normalizedCode.slice(1, 6);
+    return {
+      rawCode: normalizedCode,
+      productCode: stripProductCodeLeadingZeros(pluCode),
+      pluCode,
+      isInternalCode: true,
+    };
+  }
+
+  if (normalizedCode.length <= 5) {
+    return {
+      rawCode: normalizedCode,
+      productCode: stripProductCodeLeadingZeros(normalizedCode),
+      pluCode: normalizedCode.padStart(5, "0"),
+      isInternalCode: false,
+    };
+  }
+
+  return {
+    rawCode: normalizedCode,
+    productCode: null,
+    pluCode: null,
+    isInternalCode: false,
+  };
+}
+
+function getMissingProductScanMessage(rawCode: string) {
+  const details = getScannedCodeDetails(rawCode);
+  if (!details.rawCode) {
+    return "No se encontro un producto para el codigo escaneado.";
+  }
+
+  if (details.productCode && details.pluCode && details.isInternalCode) {
+    return `No se encontro un producto para el codigo ${details.rawCode}. Se interpreto como producto ${details.productCode} (PLU ${details.pluCode}).`;
+  }
+
+  if (details.productCode && details.pluCode) {
+    return `No se encontro un producto para el codigo ${details.rawCode}. Codigo interpretado: producto ${details.productCode} (PLU ${details.pluCode}).`;
+  }
+
+  return `No se encontro un producto para el codigo ${details.rawCode}.`;
+}
+
 function extractBurstScanDelta(
   currentInput: string,
   previousInput: string,
@@ -648,22 +708,67 @@ function getCartLineTotal(item: CartItem) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  const normalizeStockMessage = (message: string) => {
+  const normalizeBackendMessage = (message: string) => {
     const normalized = message.trim().toLowerCase();
-    const isStockError =
+    if (!normalized) return fallback;
+
+    if (
       normalized.includes("not enouth stock") ||
       normalized.includes("not enough stock") ||
-      normalized.includes("insufficient stock");
-
-    if (isStockError) {
+      normalized.includes("insufficient stock")
+    ) {
       return "No hay stock suficiente para completar la venta.";
+    }
+
+    if (
+      normalized.includes("failed to fetch") ||
+      normalized.includes("fetch failed") ||
+      normalized.includes("network error") ||
+      normalized.includes("network request failed")
+    ) {
+      return "No se pudo conectar con el servidor. Verifica la conexion e intenta nuevamente.";
+    }
+
+    if (
+      normalized.includes("unauthorized") ||
+      normalized.includes("forbidden") ||
+      (normalized.includes("session") && normalized.includes("expired")) ||
+      (normalized.includes("token") && normalized.includes("expired"))
+    ) {
+      return "Tu sesion vencio o no tienes permisos para realizar esta accion.";
+    }
+
+    if (
+      normalized.includes("missing branch") ||
+      (normalized.includes("branch") && normalized.includes("required"))
+    ) {
+      return "Debes seleccionar una sucursal activa para continuar.";
+    }
+
+    if (normalized.includes("cash session") && normalized.includes("not found")) {
+      return "No se encontro una caja abierta para esta sucursal.";
+    }
+
+    if (
+      normalized.includes("timeout") ||
+      normalized.includes("timed out")
+    ) {
+      return "La operacion demoro demasiado. Intenta nuevamente.";
+    }
+
+    if (
+      /not found|invalid|failed|required|missing|unauthorized|forbidden|expired|timeout/.test(
+        normalized
+      )
+    ) {
+      return fallback;
     }
 
     return message;
   };
 
   if (error instanceof Error && error.message.trim()) {
-    return normalizeStockMessage(error.message);
+    return normalizeBackendMessage(error.message);
   }
 
   if (
@@ -673,7 +778,7 @@ function getErrorMessage(error: unknown, fallback: string) {
     typeof error.message === "string" &&
     error.message.trim()
   ) {
-    return normalizeStockMessage(error.message);
+    return normalizeBackendMessage(error.message);
   }
 
   return fallback;
@@ -2342,7 +2447,7 @@ export function POSModule() {
           toast({
             variant: "destructive",
             title: "Producto no encontrado",
-            description: `No existe un producto para el codigo ${normalizedCode}.`,
+            description: getMissingProductScanMessage(normalizedCode),
           });
           return false;
         }
@@ -2376,6 +2481,11 @@ export function POSModule() {
           normalizedMessage.includes("barcode invalido") ||
           normalizedMessage.includes("invalid barcode") ||
           normalizedMessage.includes("ean");
+        const isMissingProduct =
+          normalizedMessage.includes("product not found") ||
+          normalizedMessage.includes("producto no encontrado") ||
+          normalizedMessage.includes("no se encontro el producto") ||
+          normalizedMessage.includes("no existe un producto");
         const isMissingPlu =
           normalizedMessage.includes("plu") &&
           (normalizedMessage.includes("inexistente") ||
@@ -2385,9 +2495,9 @@ export function POSModule() {
           variant: "destructive",
           title: "Error al escanear",
           description: isInvalidBarcode
-            ? "El codigo escaneado no es valido."
-            : isMissingPlu
-            ? "El PLU del codigo interno no existe en el catalogo."
+            ? `El codigo ${normalizedCode} no es valido.`
+            : isMissingPlu || isMissingProduct
+            ? getMissingProductScanMessage(normalizedCode)
             : getErrorMessage(
                 error,
                 "No se pudo procesar el codigo escaneado."
