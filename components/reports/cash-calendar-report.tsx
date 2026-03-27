@@ -387,11 +387,6 @@ export function CashCalendarReport() {
     return cashIncomeTotal + transferIncomeTotal + manualIncomeTotal;
   }, [cashIncomeTotal, dailyPayload, manualIncomeTotal, transferIncomeTotal]);
 
-  const dailyNetCashResult = useMemo(
-    () => dailyGrossIncomeTotal - withdrawalsTotal - cashPurchasesTotal,
-    [cashPurchasesTotal, dailyGrossIncomeTotal, withdrawalsTotal]
-  );
-
   const nextShiftAmount = useMemo(() => {
     if (!dailyPayload) return 0;
     if (

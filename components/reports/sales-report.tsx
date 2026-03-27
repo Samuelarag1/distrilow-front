@@ -49,10 +49,17 @@ const PIE_COLORS = [
 const DETAIL_PAGE_SIZE = 10;
 const TOP_PRODUCTS_FETCH_LIMIT = 300;
 const PRODUCT_LOOKUP_PAGE_SIZE = 100;
+const PRODUCT_PRICING_BATCH_SIZE = 20;
 
 type DateRange = {
   from?: Date;
   to?: Date;
+};
+
+type ProductPricingSnapshot = {
+  costPrice: number;
+  retailPrice: number;
+  wholesalePrice: number;
 };
 
 function toYmd(value: Date) {
@@ -110,6 +117,66 @@ function formatQuantity(value: number, maximumFractionDigits = 3) {
     minimumFractionDigits: 0,
     maximumFractionDigits,
   });
+}
+
+function formatPercent(value: number) {
+  return `${Number(value ?? 0).toFixed(2)}%`;
+}
+
+function calculateMarginPctFromConfiguredPrice(
+  sellPrice: number,
+  costPrice: number
+) {
+  if (!Number.isFinite(sellPrice) || sellPrice <= 0) return 0;
+  if (!Number.isFinite(costPrice) || costPrice < 0) return 0;
+
+  return ((sellPrice - costPrice) / sellPrice) * 100;
+}
+
+function getTopProductMarginBreakdown(
+  item: ReportsTopProductItem,
+  pricing?: ProductPricingSnapshot | null
+) {
+  if (!pricing) {
+    return {
+      totalPct: Number(item.marginPct ?? 0),
+      retailPct: 0,
+      wholesalePct: 0,
+      hasConfiguredPricing: false,
+    };
+  }
+
+  const unitsRetail = Number(item.unitsRetail ?? 0);
+  const unitsWholesale = Number(item.unitsWholesale ?? 0);
+  const unitsTotal = Number(item.unitsTotal ?? 0);
+
+  const retailPct = calculateMarginPctFromConfiguredPrice(
+    Number(pricing.retailPrice ?? 0),
+    Number(pricing.costPrice ?? 0)
+  );
+  const wholesalePct = calculateMarginPctFromConfiguredPrice(
+    Number(pricing.wholesalePrice ?? 0),
+    Number(pricing.costPrice ?? 0)
+  );
+
+  const estimatedRetailRevenue = unitsRetail * Number(pricing.retailPrice ?? 0);
+  const estimatedWholesaleRevenue =
+    unitsWholesale * Number(pricing.wholesalePrice ?? 0);
+  const estimatedTotalRevenue =
+    estimatedRetailRevenue + estimatedWholesaleRevenue;
+  const estimatedTotalCost = unitsTotal * Number(pricing.costPrice ?? 0);
+  const totalPct =
+    estimatedTotalRevenue > 0
+      ? ((estimatedTotalRevenue - estimatedTotalCost) / estimatedTotalRevenue) *
+        100
+      : 0;
+
+  return {
+    totalPct,
+    retailPct,
+    wholesalePct,
+    hasConfiguredPricing: true,
+  };
 }
 
 export function SalesReport({ dateRange }: { dateRange: DateRange }) {
@@ -325,7 +392,9 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             },
             branchId
           );
-          const rows = Array.isArray(productsPage.items) ? productsPage.items : [];
+          const rows = Array.isArray(productsPage.items)
+            ? productsPage.items
+            : [];
 
           for (const product of rows) {
             const productId = String(product.id ?? "").trim();
@@ -521,6 +590,58 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     () => detailTopProducts?.items ?? [],
     [detailTopProducts?.items]
   );
+  const visibleTopProductIds = useMemo(
+    () => [
+      ...new Set(
+        [...topProductsItems, ...detailProductsItems]
+          .map((item) => String(item.productId ?? "").trim())
+          .filter(Boolean)
+      ),
+    ],
+    [detailProductsItems, topProductsItems]
+  );
+  const { data: productPricingById } = useSWR(
+    branchId && visibleTopProductIds.length > 0
+      ? [
+          "reporting-sales-top-products-pricing",
+          branchId,
+          visibleTopProductIds.join("|"),
+        ]
+      : null,
+    async () => {
+      const pricingEntries: Record<string, ProductPricingSnapshot> = {};
+
+      for (
+        let index = 0;
+        index < visibleTopProductIds.length;
+        index += PRODUCT_PRICING_BATCH_SIZE
+      ) {
+        const chunk = visibleTopProductIds.slice(
+          index,
+          index + PRODUCT_PRICING_BATCH_SIZE
+        );
+        const results = await Promise.allSettled(
+          chunk.map((productId) => backendApi.products.getById(productId))
+        );
+
+        results.forEach((result, chunkIndex) => {
+          if (result.status !== "fulfilled") return;
+          const productId = chunk[chunkIndex];
+          pricingEntries[productId] = {
+            costPrice: Number(result.value.costPrice ?? 0),
+            retailPrice: Number(result.value.retailPrice ?? 0),
+            wholesalePrice: Number(result.value.wholesalePrice ?? 0),
+          };
+        });
+      }
+
+      return pricingEntries;
+    },
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
   const detailTotalItems = useMemo(() => {
     const totalFromMeta = Number(
       detailTopProducts?.meta?.total ?? detailTopProducts?.total ?? Number.NaN
@@ -529,7 +650,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       return totalFromMeta;
     }
     return detailProductsItems.length;
-  }, [detailProductsItems.length, detailTopProducts?.meta?.total, detailTopProducts?.total]);
+  }, [
+    detailProductsItems.length,
+    detailTopProducts?.meta?.total,
+    detailTopProducts?.total,
+  ]);
   const detailTotalPages = Math.max(
     1,
     Math.ceil(detailTotalItems / DETAIL_PAGE_SIZE)
@@ -549,7 +674,13 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           : detailPageSafe < detailTotalPages,
       isCapped: false,
     }),
-    [detailPageSafe, detailTopProducts?.hasMore, detailTopProducts?.meta?.hasMore, detailTotalItems, detailTotalPages]
+    [
+      detailPageSafe,
+      detailTopProducts?.hasMore,
+      detailTopProducts?.meta?.hasMore,
+      detailTotalItems,
+      detailTotalPages,
+    ]
   );
 
   const salesByPriceTypePie = useMemo(() => {
@@ -605,22 +736,35 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
   const tableRows = useMemo(
     () =>
-      topProductsItems.map((item, index) => ({
-        posicion: index + 1,
-        producto: item.productName,
-        categoria: item.categoryName ?? "Sin categoria",
-        unidadesTotal: Number(item.unitsTotal ?? 0).toLocaleString("es-AR"),
-        ingresosTotal: formatMoney(Number(item.revenueTotal ?? 0)),
-        unidadesMinorista: Number(item.unitsRetail ?? 0).toLocaleString(
-          "es-AR"
-        ),
-        ingresosMinorista: formatMoney(Number(item.revenueRetail ?? 0)),
-        unidadesMayorista: Number(item.unitsWholesale ?? 0).toLocaleString(
-          "es-AR"
-        ),
-        ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
-      })),
-    [topProductsItems]
+      topProductsItems.map((item, index) => {
+        const marginBreakdown = getTopProductMarginBreakdown(
+          item,
+          productPricingById?.[item.productId]
+        );
+
+        return {
+          posicion: index + 1,
+          producto: item.productName,
+          categoria: item.categoryName ?? "Sin categoria",
+          unidadesTotal: Number(item.unitsTotal ?? 0).toLocaleString("es-AR"),
+          ingresosTotal: formatMoney(Number(item.revenueTotal ?? 0)),
+          unidadesMinorista: Number(item.unitsRetail ?? 0).toLocaleString(
+            "es-AR"
+          ),
+          ingresosMinorista: formatMoney(Number(item.revenueRetail ?? 0)),
+          unidadesMayorista: Number(item.unitsWholesale ?? 0).toLocaleString(
+            "es-AR"
+          ),
+          ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
+          margenPct: formatPercent(marginBreakdown.totalPct),
+          margenPctMinMay: marginBreakdown.hasConfiguredPricing
+            ? `${formatPercent(marginBreakdown.retailPct)} / ${formatPercent(
+                marginBreakdown.wholesalePct
+              )}`
+            : "No disponible",
+        };
+      }),
+    [productPricingById, topProductsItems]
   );
 
   const exportColumns = [
@@ -633,6 +777,8 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     { key: "ingresosMinorista", label: "Ingresos Minorista" },
     { key: "unidadesMayorista", label: "Unid. Mayorista" },
     { key: "ingresosMayorista", label: "Ingresos Mayorista" },
+    { key: "margenPct", label: "Margen % Global" },
+    { key: "margenPctMinMay", label: "Margen % Min/May" },
   ];
 
   const handleExport = (formatType: "csv" | "pdf") => {
@@ -727,7 +873,8 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             )}
             {soldQuantityBreakdown?.isCapped && (
               <p className="text-xs text-muted-foreground">
-                Desglose calculado sobre hasta {TOP_PRODUCTS_FETCH_LIMIT} productos.
+                Desglose calculado sobre hasta {TOP_PRODUCTS_FETCH_LIMIT}{" "}
+                productos.
               </p>
             )}
             {soldQuantityBreakdownError && (
@@ -752,7 +899,9 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             </div>
             <p className="text-xs text-muted-foreground">
               {profitabilitySummary
-                ? `${profitabilitySummary.marginPct.toFixed(2)}% sobre ingresos totales`
+                ? `${profitabilitySummary.marginPct.toFixed(
+                    2
+                  )}% sobre ingresos totales`
                 : "Se oculta cuando el detalle por producto no es confiable."}
             </p>
           </CardContent>
@@ -765,7 +914,9 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{formatMoney(cashSalesTotal)}</div>
+            <div className="text-2xl font-bold">
+              {formatMoney(cashSalesTotal)}
+            </div>
           </CardContent>
         </Card>
 
@@ -977,42 +1128,63 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                 </p>
               ) : (
                 <div className="space-y-2">
-                  {detailProductsItems.map((item: ReportsTopProductItem) => (
-                    <div
-                      key={item.productId}
-                      className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-5"
-                    >
-                      <div className="sm:col-span-2">
-                        <p className="font-semibold">{item.productName}</p>
-                        <p className="text-muted-foreground">
-                          {item.categoryName ?? "Sin categoria"}
-                        </p>
+                  {detailProductsItems.map((item: ReportsTopProductItem) => {
+                    const marginBreakdown = getTopProductMarginBreakdown(
+                      item,
+                      productPricingById?.[item.productId]
+                    );
+
+                    return (
+                      <div
+                        key={item.productId}
+                        className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-5"
+                      >
+                        <div className="sm:col-span-2">
+                          <p className="font-semibold">{item.productName}</p>
+                          <p className="text-muted-foreground">
+                            {item.categoryName ?? "Sin categoria"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Cantidad</p>
+                          <p className="font-medium">
+                            {Number(item.unitsTotal ?? 0).toLocaleString(
+                              "es-AR"
+                            )}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">
+                            Minorista / Mayorista
+                          </p>
+                          <p className="font-medium">
+                            {formatMoney(Number(item.revenueRetail ?? 0))} /{" "}
+                            {formatMoney(Number(item.revenueWholesale ?? 0))}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">
+                            Margen segun Ventas
+                          </p>
+                          <p className="font-medium">
+                            {formatPercent(marginBreakdown.totalPct)}
+                          </p>
+                          {/* <p className="text-muted-foreground mt-1">
+                            Margen % Min / May
+                          </p>
+                          <p className="font-medium">
+                            {marginBreakdown.hasConfiguredPricing
+                              ? `${formatPercent(
+                                  marginBreakdown.retailPct
+                                )} / ${formatPercent(
+                                  marginBreakdown.wholesalePct
+                                )}`
+                              : "No disponible"}
+                          </p> */}
+                        </div>
                       </div>
-                      <div>
-                        <p className="text-muted-foreground">Cantidad</p>
-                        <p className="font-medium">
-                          {Number(item.unitsTotal ?? 0).toLocaleString("es-AR")}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">
-                          Minorista / Mayorista
-                        </p>
-                        <p className="font-medium">
-                          {formatMoney(Number(item.revenueRetail ?? 0))} /{" "}
-                          {formatMoney(Number(item.revenueWholesale ?? 0))}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">
-                          Ingresos totales
-                        </p>
-                        <p className="font-medium">
-                          {formatMoney(Number(item.revenueTotal ?? 0))}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground justify-end">
                     {detailMeta.isCapped && (
                       <span className="mr-auto">
