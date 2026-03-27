@@ -3,6 +3,7 @@ import { useCallback, useState } from "react";
 import { Product } from "@/lib/products";
 import { useToast } from "@/hooks/use-toast";
 import { backendApi } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { normalizeProductPayload } from "../utils/normalizePayload";
 import { mapProductStockLinkingBackendError } from "./useProductStockLinking";
 
@@ -105,23 +106,18 @@ export function useProductSave(opts: {
         opts.onCloseDialog();
         opts.onClearEditing();
       } catch (err: any) {
-        const rawMessage =
-          err?.response?.data?.details ||
-          err?.response?.data?.message ||
-          err?.details ||
-          err?.message ||
-          "Ocurrio un error inesperado.";
         const mappedMessage = mapProductStockLinkingBackendError(err);
         const message =
           typeof mappedMessage === "string" && mappedMessage.trim().length > 0
             ? mappedMessage
-            : Array.isArray(rawMessage)
-            ? rawMessage.join(" ")
-            : String(rawMessage);
+            : getUserFacingErrorMessage(
+                err,
+                "No pudimos guardar el producto. Revisa los datos e intenta nuevamente."
+              );
 
         toast({
           variant: "destructive",
-          title: "Error al guardar",
+          title: "No pudimos guardar el producto",
           description: message,
         });
       } finally {

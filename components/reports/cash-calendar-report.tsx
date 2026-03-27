@@ -830,16 +830,17 @@ export function CashCalendarReport() {
                         );
                         const sessionIncomeTotal =
                           cashIncome + transferIncome + manualIncome;
-                        const projectedOperational =
-                          Number(session.expectedCash ?? 0) + withdrawalsOut;
+                        const projectedOperational = Number(
+                          session.expectedCash ?? 0
+                        );
                         const countedOperational =
                           session.status === "CLOSED"
-                            ? Number(session.countedCash ?? 0) + withdrawalsOut
+                            ? Number(session.countedCash ?? 0)
                             : null;
                         const differenceOperational =
-                          countedOperational === null
+                          session.status === "CLOSED"
                             ? Number(session.difference ?? 0)
-                            : countedOperational - projectedOperational;
+                            : 0;
 
                         return (
                           <div

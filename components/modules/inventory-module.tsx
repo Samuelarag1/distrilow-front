@@ -51,6 +51,7 @@ import { resolveProductImageUrl } from "@/lib/media-utils";
 import { backendApi } from "@/lib/backend-api";
 import { InventoryLotsSection } from "@/components/modules/inventory-lots-section";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
   Popover,
   PopoverContent,
@@ -1275,7 +1276,10 @@ export function InventoryModule() {
         toast({
           variant: "destructive",
           title: "No se pudo registrar el movimiento",
-          description: error?.message ?? "Intenta nuevamente.",
+          description: getUserFacingErrorMessage(
+            error,
+            "Revisa los datos del movimiento e intenta nuevamente."
+          ),
         });
         throw error;
       }

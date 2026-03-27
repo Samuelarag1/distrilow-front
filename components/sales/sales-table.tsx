@@ -33,6 +33,7 @@ import {
 import { SalesDetailModal } from "./sales-detail-modal";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useToast } from "@/hooks/use-toast";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import type { PaymentMethod } from "@/lib/api-types";
 import {
   getSalePaymentTypeBadgeClassName,
@@ -180,7 +181,7 @@ export function SalesTable() {
       });
       toast({
         title: "Pago registrado",
-        description: "El pago se registro correctamente en la venta.",
+        description: "El pago quedo aplicado correctamente a la venta.",
       });
       setIsPayDialogOpen(false);
       setSaleToPay(null);
@@ -188,7 +189,10 @@ export function SalesTable() {
       toast({
         variant: "destructive",
         title: "No se pudo registrar el pago",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa el monto y vuelve a intentarlo."
+        ),
       });
     } finally {
       setIsSubmittingPayment(false);
@@ -202,14 +206,17 @@ export function SalesTable() {
       await cancelSale(cancelTarget.id);
       toast({
         title: "Venta cancelada",
-        description: "La venta fue cancelada de forma logica.",
+        description: "La venta fue anulada correctamente.",
       });
       setCancelTarget(null);
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "No se pudo cancelar",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       setIsCancelling(false);

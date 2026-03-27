@@ -23,6 +23,7 @@ import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { EXPENSE_CATEGORY_OPTIONS } from "@/lib/expense-categories";
 
 interface AddExpenseDialogProps {
@@ -82,15 +83,18 @@ export function AddExpenseDialog({
 
       toast({
         title: "Gasto registrado",
-        description: "El egreso se guardo correctamente.",
+        description: "El gasto quedo guardado correctamente.",
       });
       setFormData({ amount: "", category: "", description: "" });
       onOpenChange(false);
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error al registrar gasto",
-        description: error?.message ?? "No se pudo registrar el gasto.",
+        title: "No pudimos registrar el gasto",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa los datos ingresados e intenta nuevamente."
+        ),
       });
     } finally {
       setIsLoading(false);

@@ -55,6 +55,7 @@ import {
 } from "@/hooks/usePosProductSearch";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { backendApi, type ResolvedBarcodeProduct } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { emitProductsSync } from "@/lib/products-live-sync";
 import type { PaymentMethod, PriceType, PricingMode } from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
@@ -708,80 +709,7 @@ function getCartLineTotal(item: CartItem) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  const normalizeBackendMessage = (message: string) => {
-    const normalized = message.trim().toLowerCase();
-    if (!normalized) return fallback;
-
-    if (
-      normalized.includes("not enouth stock") ||
-      normalized.includes("not enough stock") ||
-      normalized.includes("insufficient stock")
-    ) {
-      return "No hay stock suficiente para completar la venta.";
-    }
-
-    if (
-      normalized.includes("failed to fetch") ||
-      normalized.includes("fetch failed") ||
-      normalized.includes("network error") ||
-      normalized.includes("network request failed")
-    ) {
-      return "No se pudo conectar con el servidor. Verifica la conexion e intenta nuevamente.";
-    }
-
-    if (
-      normalized.includes("unauthorized") ||
-      normalized.includes("forbidden") ||
-      (normalized.includes("session") && normalized.includes("expired")) ||
-      (normalized.includes("token") && normalized.includes("expired"))
-    ) {
-      return "Tu sesion vencio o no tienes permisos para realizar esta accion.";
-    }
-
-    if (
-      normalized.includes("missing branch") ||
-      (normalized.includes("branch") && normalized.includes("required"))
-    ) {
-      return "Debes seleccionar una sucursal activa para continuar.";
-    }
-
-    if (normalized.includes("cash session") && normalized.includes("not found")) {
-      return "No se encontro una caja abierta para esta sucursal.";
-    }
-
-    if (
-      normalized.includes("timeout") ||
-      normalized.includes("timed out")
-    ) {
-      return "La operacion demoro demasiado. Intenta nuevamente.";
-    }
-
-    if (
-      /not found|invalid|failed|required|missing|unauthorized|forbidden|expired|timeout/.test(
-        normalized
-      )
-    ) {
-      return fallback;
-    }
-
-    return message;
-  };
-
-  if (error instanceof Error && error.message.trim()) {
-    return normalizeBackendMessage(error.message);
-  }
-
-  if (
-    error &&
-    typeof error === "object" &&
-    "message" in error &&
-    typeof error.message === "string" &&
-    error.message.trim()
-  ) {
-    return normalizeBackendMessage(error.message);
-  }
-
-  return fallback;
+  return getUserFacingErrorMessage(error, fallback);
 }
 
 function normalizePendingPaymentReason(value: string) {

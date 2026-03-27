@@ -8,16 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Badge } from "@/components/ui/badge";
 import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
-import {
   Select,
   SelectContent,
   SelectItem,
@@ -29,6 +19,7 @@ import { useUser } from "@/components/providers/user-provider";
 import { useBranches } from "@/components/providers/branch-provider";
 import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
   EXPENSE_CATEGORY_OPTIONS,
   getExpenseCategoryLabel,
@@ -42,7 +33,6 @@ import type {
 
 const SESSION_POLL_INTERVAL_MS = 8_000;
 const SESSION_HISTORY_DAYS = 60;
-const AUTO_WITHDRAWAL_REASON = "Extraccion de turno para cierre";
 const PURCHASE_WITH_CASH = "PURCHASE_WITH_CASH" as const;
 type CashMovementMode = CashMovementType | typeof PURCHASE_WITH_CASH;
 const EXPENSE_CONTEXT_OPTIONS: Array<{
@@ -100,9 +90,8 @@ export function CashModule() {
   >("");
   const [purchaseExpenseContext, setPurchaseExpenseContext] =
     useState<ExpenseContext>("GENERAL");
-  const [amountToLeave, setAmountToLeave] = useState("");
+  const [countedCashInput, setCountedCashInput] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
-  const [isCloseConfirmOpen, setIsCloseConfirmOpen] = useState(false);
 
   const currentSessionValidatorsRef = useRef<{
     etag: string | null;
@@ -124,7 +113,7 @@ export function CashModule() {
         };
         setCashSession(null);
         if (options?.syncAmountToLeave) {
-          setAmountToLeave("");
+          setCountedCashInput("");
         }
         return;
       }
@@ -156,7 +145,7 @@ export function CashModule() {
         if (options?.syncAmountToLeave) {
           const nextExpected = response.session?.expectedCash;
           if (nextExpected === undefined || nextExpected === null) {
-            setAmountToLeave("");
+            setCountedCashInput("");
           }
         }
       } catch (error: any) {
@@ -164,9 +153,11 @@ export function CashModule() {
           setCashSession(null);
           toast({
             variant: "destructive",
-            title: "Error de caja",
-            description:
-              error?.message || "No se pudo obtener el estado actual de caja.",
+            title: "No pudimos actualizar el estado de caja",
+            description: getUserFacingErrorMessage(
+              error,
+              "Intenta nuevamente en unos segundos."
+            ),
           });
         }
       } finally {
@@ -278,7 +269,7 @@ export function CashModule() {
 
       toast({
         title: "Caja abierta",
-        description: "Sesion abierta correctamente.",
+        description: "La caja ya esta lista para registrar movimientos.",
       });
     } catch (error: any) {
       const message = String(error?.message ?? "");
@@ -287,12 +278,15 @@ export function CashModule() {
       }
       toast({
         variant: "destructive",
-        title: "Error al abrir caja",
+        title: "No pudimos abrir la caja",
         description: message
           .toLowerCase()
           .includes("already an open cash session")
-          ? "Ya existe una sesion de caja abierta para esta sucursal."
-          : error?.message || "No se pudo abrir caja.",
+          ? "Ya hay una caja abierta en esta sucursal."
+          : getUserFacingErrorMessage(
+              error,
+              "Revisa el monto inicial e intenta nuevamente."
+            ),
       });
     } finally {
       setIsSaving(false);
@@ -398,7 +392,7 @@ export function CashModule() {
 
         toast({
           title: "Compra con caja registrada",
-          description: "Se desconto de caja y se impacto correctamente en gastos.",
+          description: "Descontamos el importe de caja y lo registramos tambien en gastos.",
         });
       } catch (error: any) {
         if (createdExpenseId) {
@@ -412,13 +406,18 @@ export function CashModule() {
 
         toast({
           variant: "destructive",
-          title: "Error al registrar compra con caja",
+          title: "No pudimos registrar la compra con caja",
           description: expenseRolledBack
-            ? error?.message ||
-              "No se pudo registrar la salida de caja. El gasto fue revertido."
+            ? getUserFacingErrorMessage(
+                error,
+                "No pudimos registrar la salida de caja. El gasto fue revertido automaticamente."
+              )
             : createdExpenseId
             ? "La operacion quedo incompleta. Revisa si el gasto o la salida de caja necesitan correccion manual."
-            : error?.message || "No se pudo registrar la compra con caja.",
+            : getUserFacingErrorMessage(
+                error,
+                "Revisa los datos e intenta nuevamente."
+              ),
         });
       } finally {
         setIsSaving(false);
@@ -447,12 +446,19 @@ export function CashModule() {
           movementType === "OUT"
             ? "Retiro de caja registrado"
             : "Movimiento registrado",
+        description:
+          movementType === "OUT"
+            ? "La salida de dinero quedo registrada correctamente."
+            : "El ingreso a caja quedo registrado correctamente.",
       });
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error en movimiento",
-        description: error?.message || "No se pudo registrar movimiento.",
+        title: "No pudimos registrar el movimiento",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa los datos del movimiento e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSaving(false);
@@ -460,31 +466,21 @@ export function CashModule() {
   };
 
   const expectedCash = Number(cashSession?.expectedCash ?? 0);
-  const amountToLeaveNumber = Number(amountToLeave);
-  const hasValidAmountToLeave =
-    Number.isFinite(amountToLeaveNumber) && amountToLeaveNumber >= 0;
-  const suggestedWithdrawal = hasValidAmountToLeave
-    ? Number((expectedCash - amountToLeaveNumber).toFixed(2))
-    : expectedCash;
+  const countedCashNumber = Number(countedCashInput);
+  const hasValidCountedCash =
+    Number.isFinite(countedCashNumber) && countedCashNumber >= 0;
+  const closeDifferencePreview = hasValidCountedCash
+    ? Number((countedCashNumber - expectedCash).toFixed(2))
+    : 0;
 
   const validateCloseCashInput = () => {
     if (!cashSession) return false;
 
-    if (!hasValidAmountToLeave) {
+    if (!hasValidCountedCash) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
-        description: "Ingresa un monto a dejar numerico valido.",
-      });
-      return;
-    }
-
-    if (suggestedWithdrawal < 0) {
-      toast({
-        variant: "destructive",
-        title: "Monto no permitido",
-        description:
-          "El monto a dejar no puede ser mayor al efectivo esperado del turno.",
+        description: "Ingresa el efectivo contado con un valor numerico valido.",
       });
       return false;
     }
@@ -498,24 +494,16 @@ export function CashModule() {
     try {
       setIsSaving(true);
 
-      if (suggestedWithdrawal > 0) {
-        await backendApi.cash.addMovement(cashSession.id, {
-          type: "OUT",
-          reason: AUTO_WITHDRAWAL_REASON,
-          amount: suggestedWithdrawal,
-        });
-      }
-
       const closedSession = await backendApi.cash.closeSession(cashSession.id, {
-        countedCash: amountToLeaveNumber,
+        countedCash: countedCashNumber,
         notes: closeNotes.trim() || undefined,
       });
 
       const expectedAfterClose = Number(
-        closedSession.expectedCash ?? amountToLeaveNumber
+        closedSession.expectedCash ?? countedCashNumber
       );
       const difference = Number(
-        closedSession.difference ?? amountToLeaveNumber - expectedAfterClose
+        closedSession.difference ?? countedCashNumber - expectedAfterClose
       );
 
       logEvent(
@@ -525,11 +513,9 @@ export function CashModule() {
         closedSession.id,
         {
           branchId: closedSession.branchId ?? branchId ?? null,
-          countedCash: amountToLeaveNumber,
+          countedCash: countedCashNumber,
           expectedCash: expectedAfterClose,
           difference,
-          withdrawalOut: suggestedWithdrawal > 0 ? suggestedWithdrawal : 0,
-          amountForNextShift: amountToLeaveNumber,
           notes: closeNotes.trim() || null,
         }
       );
@@ -542,23 +528,25 @@ export function CashModule() {
 
       toast({
         title: "Caja cerrada",
-        description: "Turno cerrado correctamente.",
+        description: "El turno se cerro correctamente y la caja quedo actualizada.",
       });
-      setIsCloseConfirmOpen(false);
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error al cerrar caja",
-        description: error?.message || "No se pudo cerrar caja.",
+        title: "No pudimos cerrar la caja",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa el monto contado e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSaving(false);
     }
   };
 
-  const handleCloseCash = () => {
+  const handleCloseCash = async () => {
     if (!validateCloseCashInput()) return;
-    setIsCloseConfirmOpen(true);
+    await confirmCloseCash();
   };
 
   const withdrawalMovements = useMemo(
@@ -583,15 +571,6 @@ export function CashModule() {
     [withdrawalMovements]
   );
 
-  const displayedCountedCash =
-    cashSession?.countedCash ??
-    (hasValidAmountToLeave ? Number(amountToLeaveNumber) : null);
-  const displayedDifference =
-    cashSession?.difference ??
-    (hasValidAmountToLeave
-      ? Number((amountToLeaveNumber - expectedCash).toFixed(2))
-      : null);
-
   if (!canManageCash) {
     return (
       <Card>
@@ -614,7 +593,7 @@ export function CashModule() {
           Gestion de Caja por Turno
         </h1>
         <p className="text-sm text-muted-foreground">
-          Apertura, movimientos, compras con caja y cierre con extraccion de turno.
+          Apertura, movimientos, compras con caja y cierre con arqueo real.
         </p>
       </div>
 
@@ -825,17 +804,42 @@ export function CashModule() {
               <div className="space-y-2 rounded-md border p-4">
                 <h3 className="text-sm font-semibold">Cerrar turno</h3>
 
+                <Label htmlFor="counted-cash">Efectivo contado al cierre</Label>
                 <Input
-                  id="amount-to-leave"
+                  id="counted-cash"
                   type="number"
                   step="0.01"
                   min="0"
                   placeholder="0.00"
-                  value={amountToLeave}
-                  onChange={(event) => setAmountToLeave(event.target.value)}
+                  value={countedCashInput}
+                  onChange={(event) => setCountedCashInput(event.target.value)}
                 />
 
-                <Button className="w-full" onClick={handleCloseCash}>
+                <p className="text-xs text-muted-foreground">
+                  Puedes cerrar con menos o mas efectivo que el esperado. La
+                  diferencia se registrara solo como arqueo, sin crear retiros
+                  automaticos.
+                </p>
+
+                {hasValidCountedCash && (
+                  <p className="text-xs text-muted-foreground">
+                    {closeDifferencePreview > 0
+                      ? `Estas cerrando con ${formatMoney(
+                          closeDifferencePreview
+                        )} por encima de lo esperado. Se registrara como diferencia positiva.`
+                      : closeDifferencePreview < 0
+                      ? `Estas cerrando con ${formatMoney(
+                          Math.abs(closeDifferencePreview)
+                        )} por debajo de lo esperado. Se registrara como diferencia negativa.`
+                      : "El cierre coincide exactamente con el efectivo esperado."}
+                  </p>
+                )}
+
+                <Button
+                  className="w-full"
+                  onClick={() => void handleCloseCash()}
+                  disabled={isSaving}
+                >
                   {isSaving && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   )}
@@ -883,38 +887,6 @@ export function CashModule() {
         </CardContent>
       </Card>
 
-      <AlertDialog
-        open={isCloseConfirmOpen}
-        onOpenChange={(open) => {
-          if (isSaving) return;
-          setIsCloseConfirmOpen(open);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Confirmar cierre de caja</AlertDialogTitle>
-            <AlertDialogDescription>
-              Te llevas <strong>{formatMoney(suggestedWithdrawal)}</strong> en
-              efectivo de la caja y te quedan{" "}
-              <strong>{formatMoney(amountToLeaveNumber)}</strong> para el
-              proximo turno. Estas seguro de confirmar?
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isSaving}>Volver</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                event.preventDefault();
-                void confirmCloseCash();
-              }}
-              disabled={isSaving}
-            >
-              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Confirmar cierre
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

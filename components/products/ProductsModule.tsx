@@ -16,6 +16,7 @@ import { DeleteProductDialog } from "./components/DeleteProductDialog";
 import { useApiSessionSync } from "./hooks/useApiSessionAsync";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import { backendApi } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -330,8 +331,11 @@ export function ProductsModule() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error al eliminar",
-        description: error?.message || "Ocurrio un error inesperado.",
+        title: "No pudimos eliminar el producto",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       setIsDeleteDialogOpen(false);
@@ -354,7 +358,10 @@ export function ProductsModule() {
       toast({
         variant: "destructive",
         title: "No se pudo actualizar",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     }
   };
@@ -563,7 +570,10 @@ export function ProductsModule() {
       toast({
         variant: "destructive",
         title: "No se pudo imprimir",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente y revisa si el navegador bloqueo la ventana de impresion."
+        ),
       });
     } finally {
       setIsPrinting(false);

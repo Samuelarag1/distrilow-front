@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useBranches, Branch } from "@/components/providers/branch-provider";
 import { useToast } from "@/hooks/use-toast";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
   Dialog,
   DialogContent,
@@ -96,8 +97,11 @@ export function BranchesModule() {
       } catch (error: any) {
         toast({
           variant: "destructive",
-          title: "Error al eliminar",
-          description: error?.message || "No se pudo eliminar la sucursal.",
+          title: "No pudimos eliminar la sucursal",
+          description: getUserFacingErrorMessage(
+            error,
+            "Verifica que la sucursal no tenga informacion asociada e intenta nuevamente."
+          ),
         });
       } finally {
         setIsDeleteDialogOpen(false);
@@ -126,8 +130,11 @@ export function BranchesModule() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error al guardar",
-        description: error?.message || "No se pudo guardar la sucursal.",
+        title: "No pudimos guardar la sucursal",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa la informacion cargada e intenta nuevamente."
+        ),
       });
     }
   };

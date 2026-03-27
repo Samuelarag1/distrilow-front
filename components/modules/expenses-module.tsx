@@ -65,6 +65,7 @@ import { BrandSpinner } from "@/components/common/brand-spinner";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 
 const PAGE_SIZE = 15;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -212,8 +213,11 @@ export function ExpensesModule() {
       if (requestId !== listRequestIdRef.current) return;
       toast({
         variant: "destructive",
-        title: "Error al cargar gastos",
-        description: error?.message ?? "Intenta nuevamente.",
+        title: "No pudimos cargar los gastos",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       if (requestId !== listRequestIdRef.current) return;
@@ -248,8 +252,11 @@ export function ExpensesModule() {
       setAnalytics(null);
       toast({
         variant: "destructive",
-        title: "Error en analytics",
-        description: error?.message ?? "No se pudieron cargar las metricas.",
+        title: "No pudimos actualizar el resumen",
+        description: getUserFacingErrorMessage(
+          error,
+          "No se pudieron cargar las metricas del periodo."
+        ),
       });
     } finally {
       if (requestId !== analyticsRequestIdRef.current) return;
@@ -434,7 +441,7 @@ export function ExpensesModule() {
       });
       toast({
         title: "Gasto registrado",
-        description: "El gasto se guardo correctamente.",
+        description: "El gasto quedo guardado correctamente.",
       });
       setNewExpense({
         amount: "",
@@ -447,8 +454,11 @@ export function ExpensesModule() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "No se pudo guardar",
-        description: error?.message ?? "Intenta nuevamente.",
+        title: "No pudimos guardar el gasto",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa los datos ingresados e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSubmittingExpense(false);
@@ -462,15 +472,18 @@ export function ExpensesModule() {
       await backendApi.expenses.remove(deleteTarget.id);
       toast({
         title: "Gasto eliminado",
-        description: "El registro fue eliminado correctamente.",
+        description: "El registro se elimino correctamente.",
       });
       setDeleteTarget(null);
       await refreshAll("mutation");
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "No se pudo eliminar",
-        description: error?.message ?? "Intenta nuevamente.",
+        title: "No pudimos eliminar el gasto",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       setIsDeleting(false);
