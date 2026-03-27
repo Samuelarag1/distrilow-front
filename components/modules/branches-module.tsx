@@ -321,6 +321,7 @@ function BranchDialog({
   branch,
   onSave,
 }: BranchDialogProps) {
+  const isEditing = Boolean(branch);
   const [formData, setFormData] = useState<Omit<Branch, "id" | "createdAt">>(
     BRANCH_FORM_INITIAL_STATE
   );
@@ -358,11 +359,16 @@ function BranchDialog({
           </DialogTitle>
           <DialogDescription>
             {branch
-              ? "Modifica los datos de la sucursal"
+              ? "Modifica los datos permitidos de la sucursal"
               : "Agrega una nueva sucursal al sistema"}
           </DialogDescription>
         </DialogHeader>
         <form onSubmit={handleSubmit} className="space-y-4 pt-4">
+          {isEditing && (
+            <div className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-900">
+              Codigo, estado, telefono y email no se pueden editar desde esta API.
+            </div>
+          )}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="name">Nombre de la Sucursal</Label>
@@ -381,6 +387,7 @@ function BranchDialog({
               <Input
                 id="code"
                 value={formData.code}
+                disabled={isEditing}
                 onChange={(e) =>
                   setFormData({ ...formData, code: e.target.value })
                 }
@@ -405,11 +412,11 @@ function BranchDialog({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="branchType">Tipo de Sucursal</Label>
-              <Select
-                value={formData.branchType}
-                onValueChange={(value) =>
-                  setFormData({
-                    ...formData,
+                <Select
+                  value={formData.branchType}
+                  onValueChange={(value) =>
+                    setFormData({
+                      ...formData,
                     branchType: value as Branch["branchType"],
                   })
                 }
@@ -445,6 +452,7 @@ function BranchDialog({
                 <Switch
                   id="isActive"
                   checked={formData.isActive}
+                  disabled={isEditing}
                   className="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-slate-300"
                   onCheckedChange={(checked) =>
                     setFormData({ ...formData, isActive: checked })
@@ -460,6 +468,7 @@ function BranchDialog({
               <Input
                 id="phone"
                 value={formData.phone}
+                disabled={isEditing}
                 onChange={(e) =>
                   setFormData({ ...formData, phone: e.target.value })
                 }
@@ -472,6 +481,7 @@ function BranchDialog({
                 id="email"
                 type="email"
                 value={formData.email}
+                disabled={isEditing}
                 onChange={(e) =>
                   setFormData({ ...formData, email: e.target.value })
                 }

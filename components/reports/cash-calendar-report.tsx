@@ -364,21 +364,30 @@ export function CashCalendarReport() {
     [reportedOutflowTotal, cashPurchasesTotal]
   );
 
-  const dailyIncomeResult = useMemo(() => {
+  const cashIncomeTotal = useMemo(() => {
     if (!dailyPayload) return 0;
-    return (
-      Number(dailyPayload.summary.income.cashFromPayments ?? 0) +
-      Number(dailyPayload.summary.income.movementIn ?? 0)
-    );
+    return Number(dailyPayload.summary.income.cashFromPayments ?? 0);
   }, [dailyPayload]);
 
-  const dailyNetResult = useMemo(() => {
+  const transferIncomeTotal = useMemo(
+    () => Number(dailyPayload?.summary.income.transferFromPayments ?? 0),
+    [dailyPayload]
+  );
+
+  const manualIncomeTotal = useMemo(
+    () => Number(dailyPayload?.summary.income.movementIn ?? 0),
+    [dailyPayload]
+  );
+
+  const dailyGrossIncomeTotal = useMemo(() => {
     if (!dailyPayload) return 0;
-    return (
-      dailyIncomeResult +
-      Number(dailyPayload.summary.income.transferFromPayments ?? 0)
-    );
-  }, [dailyPayload, dailyIncomeResult]);
+    return cashIncomeTotal + transferIncomeTotal + manualIncomeTotal;
+  }, [cashIncomeTotal, dailyPayload, manualIncomeTotal, transferIncomeTotal]);
+
+  const dailyNetCashResult = useMemo(
+    () => dailyGrossIncomeTotal - withdrawalsTotal - cashPurchasesTotal,
+    [cashPurchasesTotal, dailyGrossIncomeTotal, withdrawalsTotal]
+  );
 
   const nextShiftAmount = useMemo(() => {
     if (!dailyPayload) return 0;
@@ -1092,10 +1101,7 @@ export function CashCalendarReport() {
                       <p className="text-[10px] font-bold text-muted-foreground uppercase flex items-center justify-between">
                         Total Ingresos
                         <span className="text-emerald-600">
-                          {formatMoney(
-                            dailyPayload.summary.income.cashFromPayments +
-                              dailyPayload.summary.income.movementIn
-                          )}
+                          {formatMoney(dailyGrossIncomeTotal)}
                         </span>
                       </p>
                       <div className="h-1.5 w-full bg-muted rounded-full overflow-hidden">
@@ -1122,17 +1128,15 @@ export function CashCalendarReport() {
                           Ventas (Transferencias)
                         </span>
                         <span className="font-semibold text-foreground">
-                          {formatMoney(
-                            dailyPayload.summary.income.transferFromPayments
-                          )}
+                          {formatMoney(transferIncomeTotal)}
                         </span>
                       </div>
                       <div className="flex justify-between items-center text-sm">
                         <span className="text-muted-foreground font-medium">
-                          Ingresos
+                          Movimientos de ingreso
                         </span>
                         <span className="text-emerald-600 font-bold">
-                          +{formatMoney(dailyPayload.summary.income.movementIn)}
+                          +{formatMoney(manualIncomeTotal)}
                         </span>
                       </div>
                       <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
@@ -1154,39 +1158,69 @@ export function CashCalendarReport() {
                     </div>
 
                     <div className="rounded-xl bg-background border p-4 shadow-inner">
-                      <div className="flex items-end justify-between">
-                        <div>
-                          <p className="text-[10px] font-bold text-muted-foreground uppercase">
-                            Resultado diario de ingresos (efectivo)
-                          </p>
-                          <p
-                            className={`text-2xl font-black ${
-                              dailyIncomeResult >= 0
-                                ? "text-emerald-600"
-                                : "text-red-600"
-                            }`}
-                          >
-                            {formatMoney(dailyIncomeResult)}
-                          </p>
-                          <p className="text-[10px] font-bold text-muted-foreground uppercase">
-                            Resultado diario de ingresos (Transferencias)
-                          </p>
-                          <p
-                            className={`text-2xl font-black ${
-                              dailyIncomeResult >= 0
-                                ? "text-emerald-600"
-                                : "text-red-600"
-                            }`}
-                          >
-                            {formatMoney(
-                              dailyPayload.summary.income.transferFromPayments
-                            )}
-                          </p>
-                          <p className="text-[10px] text-muted-foreground">
-                            Resultado total: {formatMoney(dailyNetResult)}
-                          </p>
+                      <div className="space-y-4">
+                        <div className="flex items-start justify-between gap-4">
+                          <div className="space-y-1">
+                            <p className="text-[10px] font-bold text-muted-foreground uppercase">
+                              Resultado total de ingresos
+                            </p>
+                            <p
+                              className={`text-4xl font-black tracking-tight ${
+                                dailyGrossIncomeTotal >= 0
+                                  ? "text-emerald-600"
+                                  : "text-red-600"
+                              }`}
+                            >
+                              {formatMoney(dailyGrossIncomeTotal)}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Suma de efectivo, transferencias y movimientos de ingreso.
+                            </p>
+                          </div>
+                          <Info className="h-5 w-5 text-muted-foreground/30" />
                         </div>
-                        <Info className="h-5 w-5 text-muted-foreground/30" />
+
+                        <div className="grid gap-3 sm:grid-cols-3">
+                          <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/60 p-3">
+                            <p className="text-[10px] font-bold uppercase text-emerald-700">
+                              Efectivo
+                            </p>
+                            <p className="text-lg font-bold text-emerald-700">
+                              {formatMoney(cashIncomeTotal)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-sky-200/70 bg-sky-50/70 p-3">
+                            <p className="text-[10px] font-bold uppercase text-sky-700">
+                              Transferencias
+                            </p>
+                            <p className="text-lg font-bold text-sky-700">
+                              {formatMoney(transferIncomeTotal)}
+                            </p>
+                          </div>
+                          <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
+                            <p className="text-[10px] font-bold uppercase text-slate-700">
+                              Ingresos manuales
+                            </p>
+                            <p className="text-lg font-bold text-slate-700">
+                              {formatMoney(manualIncomeTotal)}
+                            </p>
+                          </div>
+                        </div>
+
+                        <div className="flex items-center justify-between border-t pt-3 text-sm">
+                          <span className="text-muted-foreground">
+                            Neto despues de retiros y compras con caja
+                          </span>
+                          <span
+                            className={`font-bold ${
+                              dailyNetCashResult >= 0
+                                ? "text-foreground"
+                                : "text-red-600"
+                            }`}
+                          >
+                            {formatMoney(dailyNetCashResult)}
+                          </span>
+                        </div>
                       </div>
                     </div>
                   </div>

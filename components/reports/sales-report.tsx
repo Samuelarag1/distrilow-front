@@ -441,7 +441,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     const seed = {
       revenueTotal: 0,
       unitsTotal: 0,
-      marginTotal: 0,
       revenueRetail: 0,
       revenueWholesale: 0,
     };
@@ -449,7 +448,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     return topProductsItems.reduce((acc, item) => {
       acc.revenueTotal += Number(item.revenueTotal ?? 0);
       acc.unitsTotal += Number(item.unitsTotal ?? 0);
-      acc.marginTotal += Number(item.marginTotal ?? 0);
       acc.revenueRetail += Number(item.revenueRetail ?? 0);
       acc.revenueWholesale += Number(item.revenueWholesale ?? 0);
       return acc;
@@ -473,27 +471,27 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       unitsTotal: Number(
         priceTypesSummaryTotals.unitsTotal ?? totals.unitsTotal
       ),
-      marginTotal: Number(
-        priceTypesSummaryTotals.profitTotal ?? totals.marginTotal
-      ),
     };
   }, [priceTypesSummaryTotals, totals]);
 
-  const totalMarginPct = useMemo(() => {
-    if (
-      priceTypesSummaryTotals &&
-      Number.isFinite(priceTypesSummaryTotals.marginPercent)
-    ) {
-      return Number(priceTypesSummaryTotals.marginPercent);
-    }
-    return effectiveTotals.revenueTotal > 0
-      ? (effectiveTotals.marginTotal / effectiveTotals.revenueTotal) * 100
+  const profitabilitySummary = useMemo(() => {
+    if (!priceTypesSummaryTotals) return null;
+
+    const marginTotal = Number(priceTypesSummaryTotals.profitTotal ?? 0);
+    const revenueTotal = Number(
+      priceTypesSummaryTotals.revenueTotal ?? effectiveTotals.revenueTotal
+    );
+    const marginPct = Number.isFinite(priceTypesSummaryTotals.marginPercent)
+      ? Number(priceTypesSummaryTotals.marginPercent)
+      : revenueTotal > 0
+      ? (marginTotal / revenueTotal) * 100
       : 0;
-  }, [
-    effectiveTotals.marginTotal,
-    effectiveTotals.revenueTotal,
-    priceTypesSummaryTotals,
-  ]);
+
+    return {
+      marginTotal,
+      marginPct,
+    };
+  }, [effectiveTotals.revenueTotal, priceTypesSummaryTotals]);
 
   const displayedSoldUnits = Number(
     soldQuantityBreakdown?.unitsTotal ?? effectiveTotals.unitsTotal
@@ -621,7 +619,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
           "es-AR"
         ),
         ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
-        margen: formatMoney(Number(item.marginTotal ?? 0)),
       })),
     [topProductsItems]
   );
@@ -636,7 +633,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     { key: "ingresosMinorista", label: "Ingresos Minorista" },
     { key: "unidadesMayorista", label: "Unid. Mayorista" },
     { key: "ingresosMayorista", label: "Ingresos Mayorista" },
-    { key: "margen", label: "Margen" },
   ];
 
   const handleExport = (formatType: "csv" | "pdf") => {
@@ -745,15 +741,19 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
         <Card>
           <CardHeader className="pb-2">
             <CardTitle className="text-sm font-medium">
-              Margen acumulado
+              Rentabilidad estimada
             </CardTitle>
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">
-              {formatMoney(effectiveTotals.marginTotal)}
+              {profitabilitySummary
+                ? formatMoney(profitabilitySummary.marginTotal)
+                : "No disponible"}
             </div>
             <p className="text-xs text-muted-foreground">
-              {totalMarginPct.toFixed(2)}% sobre ingresos totales
+              {profitabilitySummary
+                ? `${profitabilitySummary.marginPct.toFixed(2)}% sobre ingresos totales`
+                : "Se oculta cuando el detalle por producto no es confiable."}
             </p>
           </CardContent>
         </Card>
@@ -1004,10 +1004,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                         </p>
                       </div>
                       <div>
-                        <p className="text-muted-foreground">Margen</p>
+                        <p className="text-muted-foreground">
+                          Ingresos totales
+                        </p>
                         <p className="font-medium">
-                          {formatMoney(Number(item.marginTotal ?? 0))} (
-                          {Number(item.marginPct ?? 0).toFixed(2)}%)
+                          {formatMoney(Number(item.revenueTotal ?? 0))}
                         </p>
                       </div>
                     </div>
