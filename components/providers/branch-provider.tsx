@@ -143,9 +143,13 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     const existing = branches.find((b) => b.id === id);
     const updated = normalizeBranch(
       await backendApi.branches.update(id, {
+        code: branchData.code,
         name: branchData.name,
         address: branchData.address,
         branchType: branchData.branchType,
+        isActive: branchData.isActive,
+        phone: branchData.phone,
+        email: branchData.email,
       })
     );
 

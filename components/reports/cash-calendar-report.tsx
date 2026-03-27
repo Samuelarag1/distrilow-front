@@ -318,11 +318,14 @@ export function CashCalendarReport() {
             new Date(b.closedAt ?? 0).getTime() -
             new Date(a.closedAt ?? 0).getTime()
         )[0] ?? null
-      );
+    );
   }, [dailyPayload]);
 
   const cashPurchaseEntries = useMemo(
-    () => (dailyPayload?.entries ?? []).filter((entry) => isCashPurchaseEntry(entry)),
+    () =>
+      (dailyPayload?.entries ?? []).filter((entry) =>
+        isCashPurchaseEntry(entry)
+      ),
     [dailyPayload?.entries]
   );
 
@@ -452,8 +455,7 @@ export function CashCalendarReport() {
     );
     const totalIncome =
       totalCashIncome + totalTransferIncome + totalManualIncome;
-    const totalNetDay =
-      totalIncome - totalWithdrawals - totalCashPurchases;
+    const totalNetDay = totalIncome - totalWithdrawals - totalCashPurchases;
 
     const rows: Array<Record<string, unknown>> = [
       {
@@ -1114,9 +1116,7 @@ export function CashCalendarReport() {
 
                     <div className="grid gap-3">
                       <div className="flex justify-between items-center text-sm">
-                        <span className="text-muted-foreground">
-                          Ventas (Efectivo)
-                        </span>
+                        <span className="text-muted-foreground">Efectivo</span>
                         <span className="font-semibold text-foreground">
                           {formatMoney(
                             dailyPayload.summary.income.cashFromPayments
@@ -1125,7 +1125,7 @@ export function CashCalendarReport() {
                       </div>
                       <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
                         <span className="text-muted-foreground">
-                          Ventas (Transferencias)
+                          Transferencias
                         </span>
                         <span className="font-semibold text-foreground">
                           {formatMoney(transferIncomeTotal)}
@@ -1144,7 +1144,7 @@ export function CashCalendarReport() {
                           Retiros de caja
                         </span>
                         <span className="text-red-600 font-bold">
-                          -{formatMoney(withdrawalsTotal)}
+                          {formatMoney(withdrawalsTotal)}
                         </span>
                       </div>
                       <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
@@ -1152,75 +1152,36 @@ export function CashCalendarReport() {
                           Compras con caja
                         </span>
                         <span className="font-bold text-amber-600">
-                          -{formatMoney(cashPurchasesTotal)}
+                          {formatMoney(cashPurchasesTotal)}
                         </span>
                       </div>
                     </div>
 
-                    <div className="rounded-xl bg-background border p-4 shadow-inner">
-                      <div className="space-y-4">
+                    <div className="rounded-xl border bg-background px-4 py-5">
+                      <div className="space-y-2">
                         <div className="flex items-start justify-between gap-4">
-                          <div className="space-y-1">
-                            <p className="text-[10px] font-bold text-muted-foreground uppercase">
+                          <div>
+                            <p className="text-[10px] font-bold uppercase text-muted-foreground">
                               Resultado total de ingresos
                             </p>
                             <p
-                              className={`text-4xl font-black tracking-tight ${
+                              className={`text-3xl font-bold tracking-tight ${
                                 dailyGrossIncomeTotal >= 0
-                                  ? "text-emerald-600"
+                                  ? "text-foreground"
                                   : "text-red-600"
                               }`}
                             >
                               {formatMoney(dailyGrossIncomeTotal)}
                             </p>
-                            <p className="text-xs text-muted-foreground">
-                              Suma de efectivo, transferencias y movimientos de ingreso.
-                            </p>
                           </div>
-                          <Info className="h-5 w-5 text-muted-foreground/30" />
+                          <Info className="mt-1 h-4 w-4 text-muted-foreground/40" />
                         </div>
 
-                        <div className="grid gap-3 sm:grid-cols-3">
-                          <div className="rounded-lg border border-emerald-200/60 bg-emerald-50/60 p-3">
-                            <p className="text-[10px] font-bold uppercase text-emerald-700">
-                              Efectivo
-                            </p>
-                            <p className="text-lg font-bold text-emerald-700">
-                              {formatMoney(cashIncomeTotal)}
-                            </p>
-                          </div>
-                          <div className="rounded-lg border border-sky-200/70 bg-sky-50/70 p-3">
-                            <p className="text-[10px] font-bold uppercase text-sky-700">
-                              Transferencias
-                            </p>
-                            <p className="text-lg font-bold text-sky-700">
-                              {formatMoney(transferIncomeTotal)}
-                            </p>
-                          </div>
-                          <div className="rounded-lg border border-slate-200 bg-slate-50/80 p-3">
-                            <p className="text-[10px] font-bold uppercase text-slate-700">
-                              Ingresos manuales
-                            </p>
-                            <p className="text-lg font-bold text-slate-700">
-                              {formatMoney(manualIncomeTotal)}
-                            </p>
-                          </div>
-                        </div>
-
-                        <div className="flex items-center justify-between border-t pt-3 text-sm">
-                          <span className="text-muted-foreground">
-                            Neto despues de retiros y compras con caja
-                          </span>
-                          <span
-                            className={`font-bold ${
-                              dailyNetCashResult >= 0
-                                ? "text-foreground"
-                                : "text-red-600"
-                            }`}
-                          >
-                            {formatMoney(dailyNetCashResult)}
-                          </span>
-                        </div>
+                        <p className="text-xs text-muted-foreground">
+                          Efectivo {formatMoney(cashIncomeTotal)} ·
+                          Transferencias {formatMoney(transferIncomeTotal)}
+                          {/* Ingresos {formatMoney(manualIncomeTotal)} */}
+                        </p>
                       </div>
                     </div>
                   </div>

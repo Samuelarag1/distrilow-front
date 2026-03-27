@@ -180,6 +180,10 @@ export interface UpdateBranchRequest {
   allowsTransfers?: boolean;
   managesOwnStock?: boolean;
   allowNegativeStock?: boolean;
+  isActive?: boolean;
+  phone?: string;
+  email?: string;
+  code?: string;
 }
 
 export interface BootstrapBranchResponse {
