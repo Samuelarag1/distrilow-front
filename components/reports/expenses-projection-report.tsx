@@ -6,7 +6,6 @@ import {
   Bar,
   BarChart,
   Cell,
-  Legend,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -19,23 +18,38 @@ import useSWR from "swr";
 
 import { useUser } from "@/components/providers/user-provider";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { backendApi } from "@/lib/backend-api";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
-import type { ExpenseCategory, ExpenseContext } from "@/lib/api-types";
+import type {
+  ExpenseCategory,
+  ExpenseContext,
+  SnapshotPeriod,
+} from "@/lib/api-types";
 import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
 
-const CATEGORY_COLORS = ["#0ea5e9", "#22c55e", "#f59e0b", "#ef4444", "#6366f1", "#14b8a6", "#84cc16", "#e11d48"];
-
-const EXPENSE_CONTEXT_OPTIONS: Array<{ value: "ALL" | ExpenseContext; label: string }> = [
-  { value: "ALL", label: "Todos los contextos" },
-  { value: "GENERAL", label: "General" },
-  { value: "RETAIL", label: "Retail" },
-  { value: "WHOLESALE", label: "Wholesale" },
+const CATEGORY_COLORS = [
+  "#0ea5e9",
+  "#22c55e",
+  "#f59e0b",
+  "#ef4444",
+  "#6366f1",
+  "#14b8a6",
+  "#84cc16",
+  "#e11d48",
 ];
 
-const EXPENSE_CATEGORY_OPTIONS: Array<{ value: "ALL" | ExpenseCategory; label: string }> = [
+const EXPENSE_CATEGORY_OPTIONS: Array<{
+  value: "ALL" | ExpenseCategory;
+  label: string;
+}> = [
   { value: "ALL", label: "Todas las categorias" },
   { value: "RENT", label: "Alquiler" },
   { value: "SERVICES", label: "Servicios" },
@@ -55,6 +69,13 @@ const EXPENSE_CATEGORY_OPTIONS: Array<{ value: "ALL" | ExpenseCategory; label: s
   { value: "OTHER", label: "Otros" },
 ];
 
+const PERIOD_OPTIONS: Array<{ value: SnapshotPeriod; label: string }> = [
+  { value: "monthly", label: "Mensual" },
+  { value: "quarterly", label: "Trimestral" },
+  { value: "semiannual", label: "Semestral" },
+  { value: "annual", label: "Anual" },
+];
+
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
     style: "currency",
@@ -63,45 +84,63 @@ function formatMoney(value: number) {
   });
 }
 
+function formatPeriodLabel(value: string) {
+  if (/^\d{4}-\d{2}$/.test(value)) {
+    const [year, month] = value.split("-");
+    return `${month}/${year}`;
+  }
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const [, month, day] = value.split("-");
+    return `${day}/${month}`;
+  }
+  return value;
+}
+
+function getTrend(current: number, previous: number) {
+  if (previous === 0) return current > 0 ? 100 : 0;
+  return ((current - previous) / previous) * 100;
+}
+
 export function ExpensesProjectionReport() {
   const { branchId } = useUser();
   const lastSyncAtRef = useRef(0);
 
-  const [from, setFrom] = useState(() => format(startOfMonth(addMonths(new Date(), -5)), "yyyy-MM-dd"));
+  const [from, setFrom] = useState(() =>
+    format(startOfMonth(addMonths(new Date(), -5)), "yyyy-MM-dd"),
+  );
   const [to, setTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
-  const [horizonMonths, setHorizonMonths] = useState<3 | 6>(3);
+  const [period, setPeriod] = useState<SnapshotPeriod>("monthly");
   const [context, setContext] = useState<"ALL" | ExpenseContext>("ALL");
   const [category, setCategory] = useState<"ALL" | ExpenseCategory>("ALL");
 
   const { data, isLoading, error, mutate } = useSWR(
     branchId
       ? [
-          "reporting-expenses-projection",
+          "reporting-expenses-history",
           branchId,
+          period,
           from,
           to,
-          horizonMonths,
           context,
           category,
         ]
       : null,
     () =>
-      backendApi.reporting.expenses.projection(
+      backendApi.reporting.expenses.history(
         {
-          branchId,
+          period,
           from,
           to,
-          horizonMonths,
           context: context === "ALL" ? undefined : context,
           category: category === "ALL" ? undefined : category,
         },
-        branchId
+        branchId ?? "",
       ),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
       dedupingInterval: 2_500,
-    }
+    },
   );
 
   useEffect(() => {
@@ -116,85 +155,65 @@ export function ExpensesProjectionReport() {
     });
   }, [branchId, mutate]);
 
-  const monthlyProjectionData = useMemo(() => {
-    const source = new Map<string, { month: string; historical: number; projected: number }>();
+  const evolutionData = useMemo(
+    () =>
+      (data?.evolution ?? []).map((row) => ({
+        period: row.period,
+        label: formatPeriodLabel(row.period),
+        total: Number(row.total ?? 0),
+      })),
+    [data?.evolution],
+  );
 
-    (data?.historical ?? []).forEach((row) => {
-      const month = row.month;
-      source.set(month, {
-        month,
-        historical: Number(row.total ?? 0),
-        projected: source.get(month)?.projected ?? 0,
-      });
-    });
-
-    (data?.projected ?? []).forEach((row) => {
-      const month = row.month;
-      source.set(month, {
-        month,
-        historical: source.get(month)?.historical ?? 0,
-        projected: Number(row.total ?? 0),
-      });
-    });
-
-    return Array.from(source.values()).sort((a, b) => a.month.localeCompare(b.month));
-  }, [data?.historical, data?.projected]);
-
-  const categoryData = useMemo(() => {
-    const projected = data?.byCategoryProjected ?? [];
-    if (projected.length > 0) {
-      return projected.map((row) => ({
+  const categoryData = useMemo(
+    () =>
+      (data?.byCategory ?? []).map((row) => ({
         name: row.category,
         total: Number(row.total ?? 0),
-        pct: Number(row.pct ?? 0),
-      }));
-    }
-
-    return (data?.byCategoryHistorical ?? []).map((row) => ({
-      name: row.category,
-      total: Number(row.total ?? 0),
-      pct: Number(row.pct ?? 0),
-    }));
-  }, [data?.byCategoryHistorical, data?.byCategoryProjected]);
+        sharePercent: Number(row.sharePercent ?? 0),
+      })),
+    [data?.byCategory],
+  );
 
   const totals = useMemo(() => {
-    const historicalTotal = (data?.historical ?? []).reduce(
-      (sum, row) => sum + Number(row.total ?? 0),
-      0
+    const total = Number(data?.total ?? 0);
+    const current = Number(evolutionData[evolutionData.length - 1]?.total ?? 0);
+    const previous = Number(
+      evolutionData[evolutionData.length - 2]?.total ?? 0,
     );
-    const projectedTotal = (data?.projected ?? []).reduce(
-      (sum, row) => sum + Number(row.total ?? 0),
-      0
-    );
+    const average =
+      evolutionData.length > 0
+        ? evolutionData.reduce((sum, row) => sum + row.total, 0) /
+          evolutionData.length
+        : 0;
 
     return {
-      historicalTotal,
-      projectedTotal,
-      trendPct: Number(data?.trendPct ?? 0),
+      total,
+      current,
+      average,
+      trendPct: getTrend(current, previous),
     };
-  }, [data?.historical, data?.projected, data?.trendPct]);
+  }, [data?.total, evolutionData]);
 
   const exportRows = useMemo(
     () =>
-      monthlyProjectionData.map((row) => ({
-        mes: row.month,
-        historico: formatMoney(row.historical),
-        proyectado: formatMoney(row.projected),
+      evolutionData.map((row) => ({
+        periodo: row.period,
+        total: formatMoney(row.total),
       })),
-    [monthlyProjectionData]
+    [evolutionData],
   );
 
   const exportColumns = [
-    { key: "mes", label: "Mes" },
-    { key: "historico", label: "Historico" },
-    { key: "proyectado", label: "Proyectado" },
+    { key: "periodo", label: "Periodo" },
+    { key: "total", label: "Total" },
   ];
 
   const handleExport = (formatType: "csv" | "pdf") => {
     const payload = {
-      filename: "reporte-gastos-proyeccion",
-      title: "Reporte de Gastos - Proyeccion",
-      subtitle: `Periodo ${from} a ${to} | Horizonte ${horizonMonths} meses`,
+      filename: "reporte-gastos-historico",
+      title: "Reporte de Gastos",
+      subtitle: `Historico real del ${from} al ${to}`,
       columns: exportColumns,
       rows: exportRows,
     };
@@ -211,7 +230,7 @@ export function ExpensesProjectionReport() {
     return (
       <Card>
         <CardContent className="py-6 text-sm text-muted-foreground">
-          Selecciona una sucursal activa para ver la proyeccion de gastos.
+          Selecciona una sucursal activa para ver el historial de gastos.
         </CardContent>
       </Card>
     );
@@ -244,48 +263,36 @@ export function ExpensesProjectionReport() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Filtros de proyeccion</CardTitle>
+          <CardTitle>Filtros de gastos</CardTitle>
           <CardDescription>
-            Endpoint: /reporting/expenses/projection
+            Evolucion real del gasto usando historial consolidado.
           </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
-            <Input type="date" value={from} onChange={(event) => setFrom(event.target.value)} />
-            <Input type="date" value={to} onChange={(event) => setTo(event.target.value)} />
-
             <select
-              value={String(horizonMonths)}
-              onChange={(event) => setHorizonMonths(Number(event.target.value) as 3 | 6)}
+              value={period}
+              onChange={(event) =>
+                setPeriod(event.target.value as SnapshotPeriod)
+              }
               className="rounded-md border border-input bg-background px-3 py-2 text-sm"
             >
-              <option value="3">Horizonte 3 meses</option>
-              <option value="6">Horizonte 6 meses</option>
-            </select>
-
-            <select
-              value={context}
-              onChange={(event) => setContext(event.target.value as "ALL" | ExpenseContext)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              {EXPENSE_CONTEXT_OPTIONS.map((option) => (
+              {PERIOD_OPTIONS.map((option) => (
                 <option key={option.value} value={option.value}>
                   {option.label}
                 </option>
               ))}
             </select>
-
-            <select
-              value={category}
-              onChange={(event) => setCategory(event.target.value as "ALL" | ExpenseCategory)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              {EXPENSE_CATEGORY_OPTIONS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+            <Input
+              type="date"
+              value={from}
+              onChange={(event) => setFrom(event.target.value)}
+            />
+            <Input
+              type="date"
+              value={to}
+              onChange={(event) => setTo(event.target.value)}
+            />
           </div>
         </CardContent>
       </Card>
@@ -293,52 +300,30 @@ export function ExpensesProjectionReport() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Trend</CardTitle>
+            <CardTitle className="text-sm font-medium">
+              Total acumulado
+            </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className={`text-2xl font-bold ${totals.trendPct < 0 ? "text-red-600" : "text-emerald-600"}`}>
-              {totals.trendPct.toFixed(2)}%
+            <div className="text-2xl font-bold">
+              {formatMoney(totals.total)}
             </div>
-            <p className="text-xs text-muted-foreground">Variacion estimada mensual</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Historico total</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatMoney(totals.historicalTotal)}</div>
             <p className="text-xs text-muted-foreground">Rango seleccionado</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Proyeccion total</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{formatMoney(totals.projectedTotal)}</div>
-            <p className="text-xs text-muted-foreground">Siguientes {horizonMonths} meses</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-sm font-medium">Categorias</CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{categoryData.length}</div>
-            <p className="text-xs text-muted-foreground">Con participacion en el periodo</p>
           </CardContent>
         </Card>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Cargando proyeccion de gastos...</p>}
+      {isLoading && (
+        <p className="text-sm text-muted-foreground">
+          Cargando historial real de gastos...
+        </p>
+      )}
 
       {!isLoading && error && (
         <p className="text-sm text-destructive">
-          {error instanceof Error ? error.message : "No se pudo cargar la proyeccion de gastos."}
+          {error instanceof Error
+            ? error.message
+            : "No se pudo cargar el historial de gastos."}
         </p>
       )}
 
@@ -347,18 +332,29 @@ export function ExpensesProjectionReport() {
           <div className="grid gap-4 lg:grid-cols-7">
             <Card className="lg:col-span-4">
               <CardHeader>
-                <CardTitle>Evolucion historica vs proyectada</CardTitle>
+                <CardTitle>Evolucion real de gastos</CardTitle>
               </CardHeader>
               <CardContent>
                 <div className="h-[280px] sm:h-[360px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={monthlyProjectionData}>
-                      <XAxis dataKey="month" tickLine={false} axisLine={false} fontSize={12} />
+                    <BarChart data={evolutionData}>
+                      <XAxis
+                        dataKey="label"
+                        tickLine={false}
+                        axisLine={false}
+                        fontSize={12}
+                      />
                       <YAxis tickLine={false} axisLine={false} fontSize={12} />
-                      <Tooltip formatter={(value: number) => formatMoney(Number(value ?? 0))} />
-                      <Legend />
-                      <Bar dataKey="historical" fill="#0ea5e9" name="Historico" radius={[3, 3, 0, 0]} />
-                      <Bar dataKey="projected" fill="#f59e0b" name="Proyectado" radius={[3, 3, 0, 0]} />
+                      <Tooltip
+                        formatter={(value: number) =>
+                          formatMoney(Number(value ?? 0))
+                        }
+                      />
+                      <Bar
+                        dataKey="total"
+                        fill="#0ea5e9"
+                        radius={[3, 3, 0, 0]}
+                      />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -367,8 +363,10 @@ export function ExpensesProjectionReport() {
 
             <Card className="lg:col-span-3">
               <CardHeader>
-                <CardTitle>Participacion por categoria</CardTitle>
-                <CardDescription>Proyectada (o historica si no hay proyeccion)</CardDescription>
+                <CardTitle>Distribucion por categoria</CardTitle>
+                <CardDescription>
+                  Desglose real del rango consultado
+                </CardDescription>
               </CardHeader>
               <CardContent>
                 <div className="h-[280px] sm:h-[360px]">
@@ -383,10 +381,19 @@ export function ExpensesProjectionReport() {
                         nameKey="name"
                       >
                         {categoryData.map((entry, index) => (
-                          <Cell key={`${entry.name}-${index}`} fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} />
+                          <Cell
+                            key={`${entry.name}-${index}`}
+                            fill={
+                              CATEGORY_COLORS[index % CATEGORY_COLORS.length]
+                            }
+                          />
                         ))}
                       </Pie>
-                      <Tooltip formatter={(value: number) => formatMoney(Number(value ?? 0))} />
+                      <Tooltip
+                        formatter={(value: number) =>
+                          formatMoney(Number(value ?? 0))
+                        }
+                      />
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
@@ -400,11 +407,16 @@ export function ExpensesProjectionReport() {
             </CardHeader>
             <CardContent>
               {categoryData.length === 0 ? (
-                <p className="text-sm text-muted-foreground">No hay categorias para el rango seleccionado.</p>
+                <p className="text-sm text-muted-foreground">
+                  No hay categorias para el rango seleccionado.
+                </p>
               ) : (
                 <div className="space-y-2">
                   {categoryData.map((row) => (
-                    <div key={String(row.name)} className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-3">
+                    <div
+                      key={String(row.name)}
+                      className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-3"
+                    >
                       <div>
                         <p className="text-muted-foreground">Categoria</p>
                         <p className="font-medium">{String(row.name)}</p>
@@ -415,7 +427,9 @@ export function ExpensesProjectionReport() {
                       </div>
                       <div>
                         <p className="text-muted-foreground">Participacion</p>
-                        <p className="font-medium">{row.pct.toFixed(2)}%</p>
+                        <p className="font-medium">
+                          {row.sharePercent.toFixed(2)}%
+                        </p>
                       </div>
                     </div>
                   ))}

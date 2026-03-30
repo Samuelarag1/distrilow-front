@@ -631,46 +631,7 @@ export function StockReport() {
         </Button>
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Filtros de inventario</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-            <Input
-              placeholder="Buscar por producto..."
-              value={searchQuery}
-              onChange={(event) => setSearchQuery(event.target.value)}
-            />
-
-            <select
-              value={selectedCategory}
-              onChange={(event) => setSelectedCategory(event.target.value)}
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="all">Todas las categorias</option>
-              {categories.map((category) => (
-                <option key={category.value} value={category.value}>
-                  {category.label}
-                </option>
-              ))}
-            </select>
-
-            <select
-              value={priceMode}
-              onChange={(event) =>
-                setPriceMode(event.target.value as InventoryValueMode)
-              }
-              className="rounded-md border border-input bg-background px-3 py-2 text-sm"
-            >
-              <option value="cost">Valorizacion por costo</option>
-              <option value="retail">Valorizacion minorista</option>
-              <option value="wholesale">Valorizacion mayorista</option>
-            </select>
-          </div>
-        </CardContent>
-      </Card>
-
+      
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card>
           <CardHeader className="pb-2">
@@ -725,10 +686,7 @@ export function StockReport() {
 
       <Card>
         <CardHeader>
-          <CardTitle>Perdidas por ajustes de stock</CardTitle>
-          <CardDescription>
-            Motivo de descuento (`reason`) y costo estimado de merma/vencidos.
-          </CardDescription>
+          <CardTitle>Perdidas por ajustes de stock</CardTitle> 
         </CardHeader>
         <CardContent className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">

@@ -7,6 +7,7 @@ import { StockReport } from "./stock-report";
 import { ClientsReport } from "./clients-report";
 import { CashCalendarReport } from "./cash-calendar-report";
 import { ExpensesProjectionReport } from "./expenses-projection-report";
+import { StockMovementsReport } from "./stock-movements-report";
 import { ReportsModule } from "@/components/modules/reports-module";
 
 export function ReportsView() {
@@ -34,15 +35,18 @@ export function ReportsView() {
           <TabsTrigger className="shrink-0" value="stock">
             Inventario
           </TabsTrigger>
+          <TabsTrigger className="shrink-0" value="stockMovements">
+            Movimientos de Stock
+          </TabsTrigger>
           <TabsTrigger className="shrink-0" value="expenses">
             Gastos
           </TabsTrigger>
           {/* <TabsTrigger className="shrink-0" value="clients">
             Clientes
           </TabsTrigger> */}
-          <TabsTrigger className="shrink-0" value="audit">
+          {/* <TabsTrigger className="shrink-0" value="audit">
             Auditoria
-          </TabsTrigger>
+          </TabsTrigger> */}
         </TabsList>
 
         <TabsContent value="cashCalendar" className="space-y-4">
@@ -54,15 +58,18 @@ export function ReportsView() {
         <TabsContent value="stock" className="space-y-4">
           <StockReport />
         </TabsContent>
+        <TabsContent value="stockMovements" className="space-y-4">
+          <StockMovementsReport />
+        </TabsContent>
         <TabsContent value="expenses" className="space-y-4">
           <ExpensesProjectionReport />
         </TabsContent>
         {/* <TabsContent value="clients" className="space-y-4">
           <ClientsReport dateRange={dateRange} />
         </TabsContent> */}
-        <TabsContent value="audit" className="space-y-4">
+        {/* <TabsContent value="audit" className="space-y-4">
           <ReportsModule />
-        </TabsContent>
+        </TabsContent> */}
       </Tabs>
     </div>
   );
