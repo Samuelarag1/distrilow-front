@@ -993,7 +993,7 @@ export function CashCalendarReport() {
                               </div>
                               <div className="rounded-md border bg-background p-2">
                                 <p className="text-[10px] font-semibold uppercase text-muted-foreground">
-                                  Total ingresos
+                                  Ventas Totales
                                 </p>
                                 <p className="font-bold text-foreground">
                                   {formatMoney(sessionIncomeTotal, 0)}

@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import useSWR from "swr";
 import {
   Card,
   CardContent,
@@ -23,13 +24,16 @@ import {
   Bar,
   BarChart,
 } from "recharts";
-import { useTransactions } from "@/components/providers/transactions-provider";
+import { useUser } from "@/components/providers/user-provider";
 import {
-  aggregateSalesTrend,
   formatSalesTrendLabel,
   getSalesAnalysisConfig,
   type SalesAnalysisPeriod,
 } from "@/lib/reports/sales-trends";
+import {
+  fetchReportingSalesSeries,
+  getPointDate,
+} from "@/lib/reports/reporting-sales-history";
 
 interface SalesChartProps {
   period: SalesAnalysisPeriod;
@@ -44,30 +48,46 @@ const chartConfig = {
     label: "Pedidos",
     color: "hsl(var(--chart-2))",
   },
-  clientes: {
-    label: "Clientes",
-    color: "hsl(var(--chart-3))",
-  },
 };
 
 export function SalesChart({ period }: SalesChartProps) {
-  const { sales, isLoading } = useTransactions();
+  const { branchId } = useUser();
   const config = useMemo(() => getSalesAnalysisConfig(period), [period]);
   const { current, groupBy } = config;
-  const trend = useMemo(
-    () => aggregateSalesTrend(sales, current, groupBy),
-    [sales, current, groupBy]
+  const { data, isLoading } = useSWR(
+    branchId
+      ? [
+          "reporting-sales-chart",
+          branchId,
+          period,
+          current.from.toISOString(),
+          current.to.toISOString(),
+          groupBy,
+        ]
+      : null,
+    () => fetchReportingSalesSeries(current, groupBy, ["revenue", "count"]),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
   );
 
   const chartData = useMemo(() => {
-    return trend.points.map((point) => ({
-      name: formatSalesTrendLabel(point.start, groupBy),
-      ventas: point.revenue,
-      pedidos: point.count,
-      clientes: point.customers,
-    }));
-  }, [trend.points, groupBy]);
-  const hasSales = trend.totals.count > 0;
+    const revenuePoints = data?.revenue.points ?? [];
+    const countByPeriod = new Map(
+      (data?.count.points ?? []).map((point) => [point.period, point.value])
+    );
+
+    return revenuePoints.map((point) => {
+      const pointDate = getPointDate(point.period, groupBy);
+      return {
+        name: formatSalesTrendLabel(pointDate, groupBy),
+        ventas: point.value,
+        pedidos: Number(countByPeriod.get(point.period) ?? 0),
+      };
+    });
+  }, [data, groupBy]);
+  const hasSales = Number(data?.count.total ?? 0) > 0;
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
@@ -105,7 +125,7 @@ export function SalesChart({ period }: SalesChartProps) {
 
       <Card>
         <CardHeader>
-          <CardTitle>{config.evolutionTitle} - Pedidos y Clientes</CardTitle>
+          <CardTitle>{config.evolutionTitle} - Pedidos</CardTitle>
           <CardDescription>{config.volumeDescription}</CardDescription>
         </CardHeader>
         <CardContent>
@@ -118,11 +138,13 @@ export function SalesChart({ period }: SalesChartProps) {
                   <YAxis className="text-xs" tick={{ fontSize: 12 }} />
                   <ChartTooltip content={<ChartTooltipContent />} />
                   <Bar dataKey="pedidos" fill="var(--color-pedidos)" radius={[2, 2, 0, 0]} />
-                  <Bar dataKey="clientes" fill="var(--color-clientes)" radius={[2, 2, 0, 0]} />
                 </BarChart>
               </ResponsiveContainer>
             </ChartContainer>
           </div>
+          <p className="mt-3 text-xs text-muted-foreground">
+            Clientes unicos todavia no esta disponible en reporting agregado.
+          </p>
         </CardContent>
       </Card>
     </div>

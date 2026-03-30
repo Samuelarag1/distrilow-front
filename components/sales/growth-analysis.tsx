@@ -1,18 +1,21 @@
 "use client";
 
 import { useMemo } from "react";
+import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { TrendingUp, TrendingDown, Target, Award, Calendar, Users } from "lucide-react";
-import { useTransactions } from "@/components/providers/transactions-provider";
+import { useUser } from "@/components/providers/user-provider";
 import {
-  aggregateSalesTrend,
-  filterSalesByRange,
   formatSalesTrendLabel,
   getSalesAnalysisConfig,
   type SalesAnalysisPeriod,
 } from "@/lib/reports/sales-trends";
+import {
+  fetchReportingSalesSeries,
+  getPointDate,
+} from "@/lib/reports/reporting-sales-history";
 
 interface GrowthAnalysisProps {
   period: SalesAnalysisPeriod;
@@ -24,55 +27,51 @@ function growth(current: number, previous: number) {
 }
 
 export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
-  const { sales, isLoading } = useTransactions();
+  const { branchId } = useUser();
   const config = useMemo(() => getSalesAnalysisConfig(period), [period]);
   const { current, previous, groupBy } = config;
-  const currentTrend = useMemo(
-    () => aggregateSalesTrend(sales, current, groupBy),
-    [sales, current, groupBy]
+  const { data, isLoading } = useSWR(
+    branchId
+      ? [
+          "reporting-growth-analysis",
+          branchId,
+          period,
+          current.from.toISOString(),
+          current.to.toISOString(),
+          previous.from.toISOString(),
+          previous.to.toISOString(),
+          groupBy,
+        ]
+      : null,
+    async () => {
+      const [currentSeries, previousSeries] = await Promise.all([
+        fetchReportingSalesSeries(current, groupBy, ["revenue", "count", "avgTicket"]),
+        fetchReportingSalesSeries(previous, groupBy, ["revenue", "count", "avgTicket"]),
+      ]);
+      return { currentSeries, previousSeries };
+    },
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
   );
-  const previousTrend = useMemo(
-    () => aggregateSalesTrend(sales, previous, groupBy),
-    [sales, previous, groupBy]
-  );
-  const currentSales = useMemo(
-    () => filterSalesByRange(sales, current),
-    [sales, current]
-  );
-
-  const customersGrowth = useMemo(() => {
-    return growth(currentTrend.totals.customers, previousTrend.totals.customers);
-  }, [currentTrend.totals.customers, previousTrend.totals.customers]);
-
-  const retention = useMemo(() => {
-    const counts = new Map<string, number>();
-
-    currentSales.forEach((sale) => {
-      const key = sale.customerName || "Consumidor Final";
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    });
-
-    const total = counts.size;
-    const recurring = Array.from(counts.values()).filter((value) => value > 1).length;
-    if (total === 0) return 0;
-    return (recurring / total) * 100;
-  }, [currentSales]);
 
   const bestPoint = useMemo(() => {
-    const nonZeroPoints = currentTrend.points.filter((point) => point.revenue > 0);
+    const points = data?.currentSeries.revenue.points ?? [];
+    const nonZeroPoints = points.filter((point) => point.value > 0);
     if (nonZeroPoints.length === 0) return null;
 
     return nonZeroPoints.reduce((acc, point) =>
-      point.revenue > acc.revenue ? point : acc
+      point.value > acc.value ? point : acc
     );
-  }, [currentTrend.points]);
+  }, [data]);
 
-  const currentRevenue = currentTrend.totals.revenue;
-  const previousRevenue = previousTrend.totals.revenue;
-  const currentCount = currentTrend.totals.count;
-  const previousCount = previousTrend.totals.count;
-  const currentAvgTicket = currentTrend.totals.avgTicket;
-  const previousAvgTicket = previousTrend.totals.avgTicket;
+  const currentRevenue = Number(data?.currentSeries.revenue.total ?? 0);
+  const previousRevenue = Number(data?.previousSeries.revenue.total ?? 0);
+  const currentCount = Number(data?.currentSeries.count.total ?? 0);
+  const previousCount = Number(data?.previousSeries.count.total ?? 0);
+  const currentAvgTicket = Number(data?.currentSeries.avgTicket.total ?? 0);
+  const previousAvgTicket = Number(data?.previousSeries.avgTicket.total ?? 0);
 
   const salesGrowth = growth(currentRevenue, previousRevenue);
   const ordersGrowth = growth(currentCount, previousCount);
@@ -142,21 +141,10 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Crecimiento en Clientes</span>
-                  <div className="flex items-center gap-1">
-                    {customersGrowth >= 0 ? (
-                      <TrendingUp className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <TrendingDown className="h-4 w-4 text-red-500" />
-                    )}
-                    <Badge variant={customersGrowth >= 0 ? "default" : "destructive"}>
-                      {customersGrowth >= 0 ? "+" : ""}
-                      {customersGrowth.toFixed(1)}%
-                    </Badge>
-                  </div>
+                  <Badge variant="outline">No disponible</Badge>
                 </div>
-                <Progress value={Math.min(100, Math.abs(customersGrowth))} className="h-2" />
                 <p className="text-xs text-muted-foreground">
-                  vs {config.comparisonLabel} anterior
+                  Reporting agregado aun no expone clientes unicos por periodo.
                 </p>
               </div>
 
@@ -224,11 +212,15 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
                 <p className="text-sm text-muted-foreground">{config.bestPointLabel}</p>
                 <p className="font-bold">
                   {bestPoint
-                    ? formatSalesTrendLabel(bestPoint.start, groupBy, "long")
+                    ? formatSalesTrendLabel(
+                        getPointDate(bestPoint.period, groupBy),
+                        groupBy,
+                        "long"
+                      )
                     : "Sin ventas"}
                 </p>
                 <p className="text-lg font-bold text-yellow-600">
-                  ${Number(bestPoint?.revenue ?? 0).toLocaleString()}
+                  ${Number(bestPoint?.value ?? 0).toLocaleString()}
                 </p>
               </div>
             </div>
@@ -255,9 +247,11 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
             <div className="text-center space-y-3">
               <Users className="h-8 w-8 mx-auto text-purple-500" />
               <div>
-                <p className="text-sm text-muted-foreground">Retencion de Clientes</p>
-                <p className="font-bold">{retention.toFixed(1)}%</p>
-                <p className="text-xs text-muted-foreground mt-1">Clientes recurrentes</p>
+                <p className="text-sm text-muted-foreground">Clientes</p>
+                <p className="font-bold">No disponible</p>
+                <p className="text-xs text-muted-foreground mt-1">
+                  Falta customers en reporting/sales/history
+                </p>
               </div>
             </div>
           </CardContent>

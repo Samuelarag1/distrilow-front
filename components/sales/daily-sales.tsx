@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DollarSign, Landmark, ShoppingCart, Target, Wallet } from "lucide-react";
 import {
@@ -18,6 +19,10 @@ import {
 } from "recharts";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
+import {
+  fetchReportingSalesSeries,
+  getPointDate,
+} from "@/lib/reports/reporting-sales-history";
 
 const chartConfig = {
   ventas: {
@@ -34,13 +39,6 @@ function isSameCalendarDay(a: Date, b: Date) {
   );
 }
 
-function toDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
-
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
     maximumFractionDigits: 0,
@@ -50,43 +48,46 @@ function formatMoney(value: number) {
 export function DailySales() {
   const { sales, isLoading } = useTransactions();
   const { branchId } = useUser();
+  const dailyRange = useMemo(() => {
+    const to = new Date();
+    to.setHours(23, 59, 59, 999);
 
-  const dailyTrend = (() => {
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
+    const from = new Date(to);
+    from.setDate(to.getDate() - 13);
+    from.setHours(0, 0, 0, 0);
 
-    const start = new Date(today);
-    start.setDate(today.getDate() - 13);
-    start.setHours(0, 0, 0, 0);
+    return { from, to };
+  }, []);
+  const { data: dailyReporting, isLoading: isDailyTrendLoading } = useSWR(
+    branchId
+      ? [
+          "daily-sales-reporting",
+          branchId,
+          dailyRange.from.toISOString(),
+          dailyRange.to.toISOString(),
+        ]
+      : null,
+    () => fetchReportingSalesSeries(dailyRange, "day", ["revenue"]),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
 
-    const totalsByDate = new Map<string, number>();
-
-    sales.forEach((sale) => {
-      if (branchId && sale.branchId && sale.branchId !== branchId) return;
-      if (sale.lifecycleStatus === "CANCELLED") return;
-
-      const saleDate = new Date(sale.date);
-      if (Number.isNaN(saleDate.getTime())) return;
-      if (saleDate < start || saleDate > today) return;
-
-      const key = toDateKey(saleDate);
-      const current = totalsByDate.get(key) ?? 0;
-      totalsByDate.set(key, current + Number(sale.totalAmount ?? sale.amount ?? 0));
-    });
-
-    return Array.from({ length: 14 }).map((_, index) => {
-      const date = new Date(start);
-      date.setDate(start.getDate() + index);
-      const key = toDateKey(date);
-      return {
-        name: date.toLocaleDateString("es-AR", {
-          day: "2-digit",
-          month: "2-digit",
-        }),
-        ventas: Number(totalsByDate.get(key) ?? 0),
-      };
-    });
-  })();
+  const dailyTrend = useMemo(
+    () =>
+      (dailyReporting?.revenue.points ?? []).map((point) => {
+        const date = getPointDate(point.period, "day");
+        return {
+          name: date.toLocaleDateString("es-AR", {
+            day: "2-digit",
+            month: "2-digit",
+          }),
+          ventas: Number(point.value ?? 0),
+        };
+      }),
+    [dailyReporting]
+  );
 
   const todaySales = useMemo(() => {
     const today = new Date();
@@ -122,6 +123,11 @@ export function DailySales() {
           <CardTitle>Evolucion diaria (ultimos 14 dias)</CardTitle>
         </CardHeader>
         <CardContent>
+          {isDailyTrendLoading && (
+            <div className="mb-3 text-sm text-muted-foreground">
+              Cargando evolucion diaria...
+            </div>
+          )}
           <div className="w-full h-[280px]">
             <ChartContainer config={chartConfig} className="w-full h-full">
               <ResponsiveContainer width="100%" height="100%">

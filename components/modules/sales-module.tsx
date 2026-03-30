@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import useSWR from "swr";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -26,6 +27,8 @@ import { SalesTable } from "@/components/sales/sales-table";
 import { GrowthAnalysis } from "@/components/sales/growth-analysis";
 import { useToast } from "@/hooks/use-toast";
 import { useTransactions } from "@/components/providers/transactions-provider";
+import { useUser } from "@/components/providers/user-provider";
+import { fetchReportingSalesSeries } from "@/lib/reports/reporting-sales-history";
 
 function sameDay(a: Date, b: Date) {
   return (
@@ -45,6 +48,54 @@ export function SalesModule() {
   const [selectedYear, setSelectedYear] = useState(String(new Date().getFullYear()));
   const { toast } = useToast();
   const { sales, isLoading } = useTransactions();
+  const { branchId } = useUser();
+  const monthlyConfig = useMemo(() => {
+    const now = new Date();
+    const currentFrom = new Date(now.getFullYear(), now.getMonth(), 1);
+    const previousAnchor = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    return {
+      current: {
+        from: currentFrom,
+        to: now,
+      },
+      previous: {
+        from: new Date(previousAnchor.getFullYear(), previousAnchor.getMonth(), 1),
+        to: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999),
+      },
+    };
+  }, []);
+  const { data: monthlyReporting } = useSWR(
+    branchId
+      ? [
+          "sales-module-monthly-reporting",
+          branchId,
+          monthlyConfig.current.from.toISOString(),
+          monthlyConfig.current.to.toISOString(),
+          monthlyConfig.previous.from.toISOString(),
+          monthlyConfig.previous.to.toISOString(),
+        ]
+      : null,
+    async () => {
+      const [currentSeries, previousSeries] = await Promise.all([
+        fetchReportingSalesSeries(monthlyConfig.current, "day", [
+          "revenue",
+          "count",
+          "avgTicket",
+        ]),
+        fetchReportingSalesSeries(monthlyConfig.previous, "day", [
+          "revenue",
+          "count",
+          "avgTicket",
+        ]),
+      ]);
+
+      return { currentSeries, previousSeries };
+    },
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
 
   const metrics = useMemo(() => {
     const activeSales = sales.filter((sale) => sale.lifecycleStatus !== "CANCELLED");
@@ -85,6 +136,24 @@ export function SalesModule() {
       yesterdaySales.length > 0 ? yesterdayRevenue / yesterdaySales.length : 0;
     const prevMonthAvgOrder =
       prevMonthSales.length > 0 ? prevMonthRevenue / prevMonthSales.length : 0;
+    const reportingMonthRevenue = Number(
+      monthlyReporting?.currentSeries.revenue.total ?? monthRevenue
+    );
+    const reportingPrevMonthRevenue = Number(
+      monthlyReporting?.previousSeries.revenue.total ?? prevMonthRevenue
+    );
+    const reportingMonthOrders = Number(
+      monthlyReporting?.currentSeries.count.total ?? monthSales.length
+    );
+    const reportingPrevMonthOrders = Number(
+      monthlyReporting?.previousSeries.count.total ?? prevMonthSales.length
+    );
+    const reportingMonthAvgOrder = Number(
+      monthlyReporting?.currentSeries.avgTicket.total ?? monthAvgOrder
+    );
+    const reportingPrevMonthAvgOrder = Number(
+      monthlyReporting?.previousSeries.avgTicket.total ?? prevMonthAvgOrder
+    );
 
     return {
       today: {
@@ -101,20 +170,20 @@ export function SalesModule() {
         avgOrderGrowth: pct(todayAvgOrder, yesterdayAvgOrder),
       },
       monthly: {
-        sales: monthRevenue,
-        orders: monthSales.length,
+        sales: reportingMonthRevenue,
+        orders: reportingMonthOrders,
         customers: monthCustomers,
-        avgOrder: monthAvgOrder,
-        growth: pct(monthRevenue, prevMonthRevenue),
-        ordersGrowth: pct(monthSales.length, prevMonthSales.length),
+        avgOrder: reportingMonthAvgOrder,
+        growth: pct(reportingMonthRevenue, reportingPrevMonthRevenue),
+        ordersGrowth: pct(reportingMonthOrders, reportingPrevMonthOrders),
         customersGrowth: pct(
           monthCustomers,
           new Set(prevMonthSales.map((sale) => sale.customerName)).size
         ),
-        avgOrderGrowth: pct(monthAvgOrder, prevMonthAvgOrder),
+        avgOrderGrowth: pct(reportingMonthAvgOrder, reportingPrevMonthAvgOrder),
       },
     };
-  }, [sales]);
+  }, [sales, monthlyReporting]);
 
   const handleExport = (format: string) => {
     toast({

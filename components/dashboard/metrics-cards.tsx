@@ -104,15 +104,13 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
 
   const hasLiveTransactions = sales.length > 0 || expenses.length > 0;
 
-  const totalRevenue = hasLiveTransactions
-    ? currentRevenueFromTransactions
-    : Number(metrics.totalRevenue ?? 0);
+  const totalRevenue = Number(metrics?.totalRevenue ?? 0);
   const totalExpenses = hasLiveTransactions
     ? currentExpensesFromTransactions
     : Number(metrics.operationalExpenses ?? 0);
-  const netProfit = hasLiveTransactions
-    ? currentNetProfitFromTransactions
-    : Number(metrics.netProfit ?? totalRevenue - totalExpenses);
+
+  const netProfit = (metrics.netProfit ?? 0);
+
   const revenueGrowthPct = hasLiveTransactions
     ? computePercentageChange(
         currentRevenueFromTransactions,
@@ -183,7 +181,7 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
       bg: "bg-red-500/10",
     },
     {
-      title: "Ganancia Bruta",
+      title: "Ganancia Neta",
       value: currencyFormatter.format(netProfit),
       icon: PiggyBank,
       color: "text-green-500",
@@ -221,7 +219,6 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
     <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
       {displayMetrics.map((metric) => {
         const Icon = metric.icon;
-        const TrendIcon = metric.trend === "up" ? TrendingUp : TrendingDown;
 
         return (
           <Card
