@@ -21,6 +21,15 @@ export type ReportingSalesMetricSeries = {
   total: number;
 };
 
+type CachedHistoryResponse = {
+  expiresAt: number;
+  data?: AnalyticsSalesResponse;
+  promise?: Promise<AnalyticsSalesResponse>;
+};
+
+const HISTORY_CACHE_TTL_MS = 30_000;
+const historyResponseCache = new Map<string, CachedHistoryResponse>();
+
 function toYmd(date: Date) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -129,12 +138,7 @@ export async function fetchReportingSalesSeries(
   const uniqueMetrics = Array.from(new Set(metrics));
   const responses = await Promise.all(
     uniqueMetrics.map((metric) =>
-      backendApi.reporting.sales.history({
-        from: toYmd(range.from),
-        to: toYmd(range.to),
-        groupBy,
-        metric,
-      })
+      fetchHistoryMetricCached(range, groupBy, metric)
     )
   );
 
@@ -154,4 +158,51 @@ export async function fetchReportingSalesSeries(
 
 export function getPointDate(period: string, groupBy: AnalyticsGroupBy) {
   return parsePeriodDate(period, groupBy);
+}
+
+async function fetchHistoryMetricCached(
+  range: DateRange,
+  groupBy: AnalyticsGroupBy,
+  metric: AnalyticsMetric
+) {
+  const cacheKey = JSON.stringify({
+    from: toYmd(range.from),
+    to: toYmd(range.to),
+    groupBy,
+    metric,
+  });
+  const now = Date.now();
+  const cached = historyResponseCache.get(cacheKey);
+
+  if (cached?.data && cached.expiresAt > now) {
+    return cached.data;
+  }
+
+  if (cached?.promise) {
+    return cached.promise;
+  }
+
+  const promise = backendApi.reporting.sales.history({
+    from: toYmd(range.from),
+    to: toYmd(range.to),
+    groupBy,
+    metric,
+  });
+
+  historyResponseCache.set(cacheKey, {
+    expiresAt: now + HISTORY_CACHE_TTL_MS,
+    promise,
+  });
+
+  try {
+    const data = await promise;
+    historyResponseCache.set(cacheKey, {
+      expiresAt: Date.now() + HISTORY_CACHE_TTL_MS,
+      data,
+    });
+    return data;
+  } catch (error) {
+    historyResponseCache.delete(cacheKey);
+    throw error;
+  }
 }
