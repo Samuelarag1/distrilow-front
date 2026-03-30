@@ -26,13 +26,12 @@ import {
 } from "recharts";
 import { useUser } from "@/components/providers/user-provider";
 import {
-  formatSalesTrendLabel,
   getSalesAnalysisConfig,
   type SalesAnalysisPeriod,
 } from "@/lib/reports/sales-trends";
 import {
+  formatReportingPeriodLabel,
   fetchReportingSalesSeries,
-  getPointDate,
 } from "@/lib/reports/reporting-sales-history";
 
 interface SalesChartProps {
@@ -79,9 +78,8 @@ export function SalesChart({ period }: SalesChartProps) {
     );
 
     return revenuePoints.map((point) => {
-      const pointDate = getPointDate(point.period, groupBy);
       return {
-        name: formatSalesTrendLabel(pointDate, groupBy),
+        name: formatReportingPeriodLabel(point.period, groupBy),
         ventas: point.value,
         pedidos: Number(countByPeriod.get(point.period) ?? 0),
       };

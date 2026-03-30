@@ -8,13 +8,12 @@ import { Progress } from "@/components/ui/progress";
 import { TrendingUp, TrendingDown, Target, Award, Calendar, Users } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
 import {
-  formatSalesTrendLabel,
   getSalesAnalysisConfig,
   type SalesAnalysisPeriod,
 } from "@/lib/reports/sales-trends";
 import {
+  formatReportingPeriodLabel,
   fetchReportingSalesSeries,
-  getPointDate,
 } from "@/lib/reports/reporting-sales-history";
 
 interface GrowthAnalysisProps {
@@ -212,11 +211,7 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
                 <p className="text-sm text-muted-foreground">{config.bestPointLabel}</p>
                 <p className="font-bold">
                   {bestPoint
-                    ? formatSalesTrendLabel(
-                        getPointDate(bestPoint.period, groupBy),
-                        groupBy,
-                        "long"
-                      )
+                    ? formatReportingPeriodLabel(bestPoint.period, groupBy, "long")
                     : "Sin ventas"}
                 </p>
                 <p className="text-lg font-bold text-yellow-600">

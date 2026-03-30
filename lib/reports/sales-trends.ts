@@ -1,5 +1,6 @@
 export type SalesAnalysisPeriod = "monthly" | "quarterly" | "yearly";
 export type SalesTrendGroupBy = "day" | "month" | "quarter" | "year";
+const REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
 
 type SaleLike = {
   amount?: number | null;
@@ -310,6 +311,7 @@ export function formatSalesTrendLabel(
     return new Intl.DateTimeFormat("es-AR", {
       day: "2-digit",
       month: "2-digit",
+      timeZone: REPORTING_TIME_ZONE,
       ...(style === "long" ? { year: "numeric" } : {}),
     }).format(date);
   }
@@ -317,6 +319,7 @@ export function formatSalesTrendLabel(
   if (groupBy === "month") {
     return new Intl.DateTimeFormat("es-AR", {
       month: style === "long" ? "long" : "short",
+      timeZone: REPORTING_TIME_ZONE,
       ...(style === "long" ? { year: "numeric" } : {}),
     }).format(date);
   }

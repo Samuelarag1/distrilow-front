@@ -20,8 +20,8 @@ import {
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import {
+  formatReportingPeriodLabel,
   fetchReportingSalesSeries,
-  getPointDate,
 } from "@/lib/reports/reporting-sales-history";
 
 const chartConfig = {
@@ -77,12 +77,8 @@ export function DailySales() {
   const dailyTrend = useMemo(
     () =>
       (dailyReporting?.revenue.points ?? []).map((point) => {
-        const date = getPointDate(point.period, "day");
         return {
-          name: date.toLocaleDateString("es-AR", {
-            day: "2-digit",
-            month: "2-digit",
-          }),
+          name: formatReportingPeriodLabel(point.period, "day"),
           ventas: Number(point.value ?? 0),
         };
       }),

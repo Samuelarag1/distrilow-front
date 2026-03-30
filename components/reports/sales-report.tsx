@@ -23,7 +23,6 @@ import {
   YAxis,
 } from "recharts";
 import { format } from "date-fns";
-import { es } from "date-fns/locale";
 import { Download } from "lucide-react";
 import useSWR from "swr";
 
@@ -31,6 +30,7 @@ import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
+import { formatReportingPeriodLabel } from "@/lib/reports/reporting-sales-history";
 import type {
   MeasurementType,
   ReportsSalesPricingSourcesSummaryItem,
@@ -570,7 +570,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const salesTrendData = useMemo(
     () =>
       (overviewData?.salesTrend.points ?? []).map((point) => ({
-        name: format(new Date(point.period), "dd/MM", { locale: es }),
+        name: formatReportingPeriodLabel(point.period, "day"),
         total: Number(point.value ?? 0),
       })),
     [overviewData?.salesTrend.points]

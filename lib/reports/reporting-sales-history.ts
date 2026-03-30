@@ -29,12 +29,16 @@ type CachedHistoryResponse = {
 
 const HISTORY_CACHE_TTL_MS = 30_000;
 const historyResponseCache = new Map<string, CachedHistoryResponse>();
+const REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
+const reportingYmdFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: REPORTING_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 function toYmd(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return reportingYmdFormatter.format(date);
 }
 
 function parseYmd(value: string) {
@@ -158,6 +162,43 @@ export async function fetchReportingSalesSeries(
 
 export function getPointDate(period: string, groupBy: AnalyticsGroupBy) {
   return parsePeriodDate(period, groupBy);
+}
+
+export function getReportingTimeZone() {
+  return REPORTING_TIME_ZONE;
+}
+
+export function formatReportingPeriodLabel(
+  period: string,
+  groupBy: AnalyticsGroupBy,
+  style: "short" | "long" = "short"
+) {
+  if (groupBy === "day") {
+    const [year, month, day] = period.split("-");
+    if (!year || !month || !day) return period;
+    return style === "long"
+      ? `${day}/${month}/${year}`
+      : `${day}/${month}`;
+  }
+
+  if (groupBy === "month") {
+    const normalized = /^\d{4}-\d{2}$/.test(period) ? `${period}-01` : period;
+    const date = parseYmd(normalized);
+    return new Intl.DateTimeFormat("es-AR", {
+      month: style === "long" ? "long" : "short",
+      timeZone: REPORTING_TIME_ZONE,
+      ...(style === "long" ? { year: "numeric" } : {}),
+    }).format(date);
+  }
+
+  if (groupBy === "quarter") {
+    const [year, quarterRaw] = period.split("-Q");
+    return style === "long"
+      ? `Trimestre ${quarterRaw} ${year}`
+      : `Q${quarterRaw}`;
+  }
+
+  return period;
 }
 
 async function fetchHistoryMetricCached(
