@@ -20,6 +20,11 @@ export function normalizeProductPayload(productData: Partial<Product>) {
     Number.isFinite(stockConsumptionRaw) && stockConsumptionRaw > 0
       ? stockConsumptionRaw
       : undefined;
+  const wholesaleMinQuantityRaw = Number((productData as any).wholesaleMinQuantity);
+  const wholesaleMinQuantity =
+    Number.isFinite(wholesaleMinQuantityRaw) && wholesaleMinQuantityRaw > 0
+      ? wholesaleMinQuantityRaw
+      : undefined;
   const stockBaseUnit = (productData as any).stockBaseUnit ?? undefined;
 
   return {
@@ -32,6 +37,7 @@ export function normalizeProductPayload(productData: Partial<Product>) {
         ? undefined
         : Boolean((productData as any).isWeighable),
     description,
+    wholesaleMinQuantity,
     costPrice:
       productData.costPrice !== undefined ? Number(productData.costPrice) : undefined,
     wholesalePrice:

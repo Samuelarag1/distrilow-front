@@ -65,6 +65,7 @@ type ProductDialogFormState = {
   isWeighable: boolean;
   name: string;
   description: string;
+  wholesaleMinQuantity: OptionalNumericInput;
   costPrice: OptionalNumericInput;
   wholesalePrice: OptionalNumericInput;
   retailPrice: OptionalNumericInput;
@@ -127,6 +128,7 @@ export function ProductDialog({
     isWeighable: false,
     name: "",
     description: "",
+    wholesaleMinQuantity: "",
     costPrice: 0,
     wholesalePrice: 0,
     retailPrice: 0,
@@ -171,6 +173,11 @@ export function ProductDialog({
         isWeighable: Boolean((product as any).isWeighable ?? false),
         name: product.name ?? "",
         description: product.description ?? "",
+        wholesaleMinQuantity:
+          (product as any).wholesaleMinQuantity === null ||
+          (product as any).wholesaleMinQuantity === undefined
+            ? ""
+            : Number((product as any).wholesaleMinQuantity),
         costPrice: Number((product as any).costPrice ?? 0),
         wholesalePrice: Number(product.wholesalePrice ?? 0),
         retailPrice: Number((product as any).retailPrice ?? 0),
@@ -213,6 +220,7 @@ export function ProductDialog({
         isWeighable: false,
         name: "",
         description: "",
+        wholesaleMinQuantity: "",
         costPrice: 0,
         wholesalePrice: 0,
         retailPrice: 0,
@@ -278,6 +286,10 @@ export function ProductDialog({
     const costPrice = Number(formData.costPrice);
     const wholesalePrice = Number(formData.wholesalePrice);
     const retailPrice = Number(formData.retailPrice);
+    const wholesaleMinQuantity =
+      formData.wholesaleMinQuantity === ""
+        ? undefined
+        : Number(formData.wholesaleMinQuantity);
     const normalizedPluCode = formData.pluCode.trim();
 
     if (
@@ -288,6 +300,12 @@ export function ProductDialog({
       return;
     }
     if (costPrice < 0 || wholesalePrice < 0 || retailPrice < 0) return;
+    if (
+      wholesaleMinQuantity !== undefined &&
+      (!Number.isFinite(wholesaleMinQuantity) || wholesaleMinQuantity <= 0)
+    ) {
+      return;
+    }
 
     let stockPayload;
     try {
@@ -312,6 +330,7 @@ export function ProductDialog({
       isWeighable: formData.isWeighable,
       name: formData.name.trim(),
       description: formData.description?.trim() || undefined,
+      wholesaleMinQuantity,
       costPrice,
       wholesalePrice,
       retailPrice,
@@ -443,6 +462,25 @@ export function ProductDialog({
                     disabled={disableForm}
                   />
                 </div>
+              </div>
+              <div className="space-y-2">
+                <Label>Cantidad minima mayorista</Label>
+                <Input
+                  type="number"
+                  step="0.001"
+                  min="0.001"
+                  placeholder="Ej. 6"
+                  value={formData.wholesaleMinQuantity}
+                  onChange={(e) =>
+                    setFormData((p) => ({
+                      ...p,
+                      wholesaleMinQuantity: parseOptionalNumberInput(
+                        e.target.value
+                      ),
+                    }))
+                  }
+                  disabled={disableForm}
+                />
               </div>
               <div className="space-y-2">
                 <Label>Precio Minorista *</Label>
