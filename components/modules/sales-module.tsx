@@ -29,6 +29,10 @@ import { useToast } from "@/hooks/use-toast";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { fetchReportingSalesSeries } from "@/lib/reports/reporting-sales-history";
+import {
+  getPreviousRollingMonthRange,
+  getRollingMonthRange,
+} from "@/lib/reports/rolling-month";
 
 function sameDay(a: Date, b: Date) {
   return (
@@ -51,17 +55,9 @@ export function SalesModule() {
   const { branchId } = useUser();
   const monthlyConfig = useMemo(() => {
     const now = new Date();
-    const currentFrom = new Date(now.getFullYear(), now.getMonth(), 1);
-    const previousAnchor = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     return {
-      current: {
-        from: currentFrom,
-        to: now,
-      },
-      previous: {
-        from: new Date(previousAnchor.getFullYear(), previousAnchor.getMonth(), 1),
-        to: new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59, 999),
-      },
+      current: getRollingMonthRange(now),
+      previous: getPreviousRollingMonthRange(now),
     };
   }, []);
   const { data: monthlyReporting } = useSWR(
@@ -102,22 +98,20 @@ export function SalesModule() {
     const now = new Date();
     const yesterday = new Date(now);
     yesterday.setDate(now.getDate() - 1);
-
-    const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-    const prevMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const prevMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
+    const currentMonthlyRange = getRollingMonthRange(now);
+    const previousMonthlyRange = getPreviousRollingMonthRange(now);
 
     const todaySales = activeSales.filter((sale) => sameDay(new Date(sale.date), now));
     const yesterdaySales = activeSales.filter((sale) => sameDay(new Date(sale.date), yesterday));
 
     const monthSales = activeSales.filter((sale) => {
       const date = new Date(sale.date);
-      return date >= monthStart && date <= now;
+      return date >= currentMonthlyRange.from && date <= currentMonthlyRange.to;
     });
 
     const prevMonthSales = activeSales.filter((sale) => {
       const date = new Date(sale.date);
-      return date >= prevMonthStart && date <= prevMonthEnd;
+      return date >= previousMonthlyRange.from && date <= previousMonthlyRange.to;
     });
 
     const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.totalAmount, 0);
@@ -326,7 +320,7 @@ export function SalesModule() {
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
                       <span className="text-green-500">{metrics.monthly.growth.toFixed(1)}%</span>
-                      <span className="text-muted-foreground ml-1">vs mes anterior</span>
+                      <span className="text-muted-foreground ml-1">vs periodo anterior</span>
                     </div>
                   </div>
                   <div className="h-8 w-8 rounded-full bg-green-100 flex items-center justify-center">
@@ -345,7 +339,7 @@ export function SalesModule() {
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-blue-500" />
                       <span className="text-blue-500">{metrics.monthly.ordersGrowth.toFixed(1)}%</span>
-                      <span className="text-muted-foreground ml-1">vs mes anterior</span>
+                      <span className="text-muted-foreground ml-1">vs periodo anterior</span>
                     </div>
                   </div>
                   <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
@@ -364,7 +358,7 @@ export function SalesModule() {
                     <div className="flex items-center text-xs mt-1">
                       <TrendingUp className="mr-1 h-3 w-3 text-purple-500" />
                       <span className="text-purple-500">{metrics.monthly.customersGrowth.toFixed(1)}%</span>
-                      <span className="text-muted-foreground ml-1">vs mes anterior</span>
+                      <span className="text-muted-foreground ml-1">vs periodo anterior</span>
                     </div>
                   </div>
                   <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center">
@@ -389,7 +383,7 @@ export function SalesModule() {
                       <span className={metrics.monthly.avgOrderGrowth >= 0 ? "text-green-500" : "text-orange-500"}>
                         {metrics.monthly.avgOrderGrowth.toFixed(1)}%
                       </span>
-                      <span className="text-muted-foreground ml-1">vs mes anterior</span>
+                      <span className="text-muted-foreground ml-1">vs periodo anterior</span>
                     </div>
                   </div>
                   <div className="h-8 w-8 rounded-full bg-orange-100 flex items-center justify-center">

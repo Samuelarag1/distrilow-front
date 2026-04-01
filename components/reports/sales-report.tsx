@@ -31,6 +31,7 @@ import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
 import { formatReportingPeriodLabel } from "@/lib/reports/reporting-sales-history";
+import { getRollingMonthRange } from "@/lib/reports/rolling-month";
 import type {
   MeasurementType,
   ReportsSalesPricingSourcesSummaryItem,
@@ -187,12 +188,9 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const detailSearchAbortControllerRef = useRef<AbortController | null>(null);
 
   const range = useMemo(() => {
-    const today = new Date();
-    const defaultFrom = new Date(today);
-    defaultFrom.setDate(today.getDate() - 30);
-
-    const from = dateRange?.from ?? defaultFrom;
-    const to = dateRange?.to ?? today;
+    const defaultRange = getRollingMonthRange();
+    const from = dateRange?.from ?? defaultRange.from;
+    const to = dateRange?.to ?? defaultRange.to;
 
     return {
       from,

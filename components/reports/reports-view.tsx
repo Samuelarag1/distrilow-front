@@ -1,20 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SalesReport } from "./sales-report";
 import { StockReport } from "./stock-report";
-import { ClientsReport } from "./clients-report";
 import { CashCalendarReport } from "./cash-calendar-report";
 import { ExpensesProjectionReport } from "./expenses-projection-report";
 import { StockMovementsReport } from "./stock-movements-report";
-import { ReportsModule } from "@/components/modules/reports-module";
+import { getRollingMonthRange } from "@/lib/reports/rolling-month";
 
 export function ReportsView() {
-  const [dateRange] = useState<DateRange | undefined>({
-    from: new Date(new Date().setDate(new Date().getDate() - 30)),
-    to: new Date(),
-  });
+  const dateRange = useMemo<DateRange>(() => getRollingMonthRange(), []);
 
   return (
     <div className="flex-1 space-y-4 p-4 pt-4 sm:p-6 sm:pt-6 lg:p-8">

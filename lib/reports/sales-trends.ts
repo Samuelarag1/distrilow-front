@@ -1,3 +1,10 @@
+import {
+  getPreviousRollingMonthRange,
+  getPreviousRollingQuarterRange,
+  getRollingMonthRange,
+  getRollingQuarterRange,
+} from "@/lib/reports/rolling-month";
+
 export type SalesAnalysisPeriod = "monthly" | "quarterly" | "yearly";
 export type SalesTrendGroupBy = "day" | "month" | "quarter" | "year";
 const REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
@@ -63,18 +70,9 @@ function startOfMonth(value: Date) {
   return new Date(value.getFullYear(), value.getMonth(), 1, 0, 0, 0, 0);
 }
 
-function endOfMonth(value: Date) {
-  return new Date(value.getFullYear(), value.getMonth() + 1, 0, 23, 59, 59, 999);
-}
-
 function startOfQuarter(value: Date) {
   const quarterStartMonth = Math.floor(value.getMonth() / 3) * 3;
   return new Date(value.getFullYear(), quarterStartMonth, 1, 0, 0, 0, 0);
-}
-
-function endOfQuarter(value: Date) {
-  const quarterStartMonth = Math.floor(value.getMonth() / 3) * 3;
-  return new Date(value.getFullYear(), quarterStartMonth + 3, 0, 23, 59, 59, 999);
 }
 
 function startOfYear(value: Date) {
@@ -169,37 +167,27 @@ export function getSalesAnalysisConfig(period: SalesAnalysisPeriod) {
   const now = new Date();
 
   if (period === "monthly") {
-    const currentFrom = startOfMonth(now);
-    const previousAnchor = new Date(now.getFullYear(), now.getMonth() - 1, 1);
     return {
-      current: { from: currentFrom, to: now },
-      previous: {
-        from: startOfMonth(previousAnchor),
-        to: endOfMonth(previousAnchor),
-      },
+      current: getRollingMonthRange(now),
+      previous: getPreviousRollingMonthRange(now),
       groupBy: "day" as const,
-      comparisonLabel: "mes",
-      evolutionTitle: "Evolucion del Mes",
-      revenueDescription: "Tendencia de ingresos por dia del mes actual",
-      volumeDescription: "Volumen de operaciones por dia del mes actual",
+      comparisonLabel: "periodo",
+      evolutionTitle: "Evolucion del Ultimo Mes",
+      revenueDescription: "Tendencia de ingresos por dia del periodo movil del ultimo mes",
+      volumeDescription: "Volumen de operaciones por dia del periodo movil del ultimo mes",
       bestPointLabel: "Mejor dia",
     };
   }
 
   if (period === "quarterly") {
-    const currentFrom = startOfQuarter(now);
-    const previousAnchor = new Date(now.getFullYear(), now.getMonth() - 3, 1);
     return {
-      current: { from: currentFrom, to: now },
-      previous: {
-        from: startOfQuarter(previousAnchor),
-        to: endOfQuarter(previousAnchor),
-      },
+      current: getRollingQuarterRange(now),
+      previous: getPreviousRollingQuarterRange(now),
       groupBy: "month" as const,
-      comparisonLabel: "trimestre",
-      evolutionTitle: "Evolucion del Trimestre",
-      revenueDescription: "Tendencia de ingresos por mes del trimestre actual",
-      volumeDescription: "Volumen de operaciones por mes del trimestre actual",
+      comparisonLabel: "periodo",
+      evolutionTitle: "Evolucion del Ultimo Trimestre",
+      revenueDescription: "Tendencia de ingresos por mes del periodo movil de los ultimos tres meses",
+      volumeDescription: "Volumen de operaciones por mes del periodo movil de los ultimos tres meses",
       bestPointLabel: "Mejor mes",
     };
   }
