@@ -1,6 +1,8 @@
 import { ApiError, apiClientFetch, getApiSession } from "@/lib/api-client";
+import { emitCashSync } from "@/lib/cash-live-sync";
 import { emitExpensesSync } from "@/lib/expenses-live-sync";
 import { emitProductsSync } from "@/lib/products-live-sync";
+import { emitSalesSync } from "@/lib/sales-live-sync";
 import type {
   AnalyticsSalesQuery,
   AnalyticsSalesResponse,
@@ -2324,6 +2326,11 @@ export const backendApi = {
         payload
       );
       invalidateStockCache(payload.branchId);
+      emitSalesSync(
+        (sale as { branchId?: string | null }).branchId ??
+          payload.branchId ??
+          getApiSession().branchId
+      );
       return sale;
     },
     list: async (
@@ -2355,8 +2362,14 @@ export const backendApi = {
       );
     },
     getById: (id: string) => apiClientFetch.get<SaleDetail>(`/sales/${id}`),
-    addPayment: (id: string, body: SalePaymentInput) =>
-      apiClientFetch.post<SalePayment>(`/sales/${id}/payments`, body),
+    addPayment: async (id: string, body: SalePaymentInput) => {
+      const payment = await apiClientFetch.post<SalePayment>(
+        `/sales/${id}/payments`,
+        body
+      );
+      emitSalesSync(getApiSession().branchId);
+      return payment;
+    },
     paymentsList: async (query: SalePaymentsListQuery = {}) => {
       const normalizedQuery = query as SalePaymentsListQuery & {
         page?: number;
@@ -2378,8 +2391,13 @@ export const backendApi = {
         Math.max(1, fallbackLimit)
       );
     },
-    cancel: (id: string) =>
-      apiClientFetch.delete<SaleDetail | SaleSummary | true>(`/sales/${id}`),
+    cancel: async (id: string) => {
+      const result = await apiClientFetch.delete<SaleDetail | SaleSummary | true>(
+        `/sales/${id}`
+      );
+      emitSalesSync(getApiSession().branchId);
+      return result;
+    },
   },
   reporting: {
     global: {
@@ -2412,7 +2430,8 @@ export const backendApi = {
           period?: SnapshotPeriod;
           scope?: "active" | "all";
           lowStockThreshold?: number;
-        } = {}
+        } = {},
+        branchIdOverride?: string | null
       ) =>
         apiClientFetch.get<SnapshotMetricsResponse>(
           `/reporting/dashboard/summary${buildQuery({
@@ -2420,7 +2439,15 @@ export const backendApi = {
             scope: query.scope ?? "active",
             lowStockThreshold: query.lowStockThreshold,
           })}`,
-          { branchScoped: true }
+          {
+            branchScoped: true,
+            disableCache: true,
+            headers: branchIdOverride
+              ? {
+                  "x-branch-id": branchIdOverride,
+                }
+              : undefined,
+          }
         ),
     },
     sales: {
@@ -2788,18 +2815,33 @@ export const backendApi = {
     },
   },
   cash: {
-    openSession: (body: OpenCashSessionRequest) =>
-      apiClientFetch.post<CashSession>("/cash/sessions/open", body),
-    addMovement: (sessionId: string, body: CreateCashMovementRequest) =>
-      apiClientFetch.post<CashSession>(
+    openSession: async (body: OpenCashSessionRequest) => {
+      const session = await apiClientFetch.post<CashSession>(
+        "/cash/sessions/open",
+        body
+      );
+      emitCashSync(session.branchId ?? getApiSession().branchId);
+      return session;
+    },
+    addMovement: async (
+      sessionId: string,
+      body: CreateCashMovementRequest
+    ) => {
+      const session = await apiClientFetch.post<CashSession>(
         `/cash/sessions/${sessionId}/movements`,
         body
-      ),
-    closeSession: (sessionId: string, body: CloseCashSessionRequest) =>
-      apiClientFetch.post<CashSession>(
+      );
+      emitCashSync(session.branchId ?? getApiSession().branchId);
+      return session;
+    },
+    closeSession: async (sessionId: string, body: CloseCashSessionRequest) => {
+      const session = await apiClientFetch.post<CashSession>(
         `/cash/sessions/${sessionId}/close`,
         body
-      ),
+      );
+      emitCashSync(session.branchId ?? getApiSession().branchId);
+      return session;
+    },
     getCurrentSessionSnapshot: async (
       query: CashSessionSnapshotRequest = {}
     ): Promise<CashSessionSnapshotResponse> => {

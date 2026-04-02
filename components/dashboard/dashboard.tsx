@@ -1,14 +1,18 @@
 "use client";
 
+import { useCallback, useEffect, useRef } from "react";
 import { MetricsCards } from "./metrics-cards";
 import { SalesChart } from "./sales-chart";
 import { RecentActivity } from "./recent-activity";
 import { QuickActions } from "./quick-actions";
 import { useBranch } from "../providers/business-provider";
 import { useUser } from "../providers/user-provider";
+import { subscribeCashSync } from "@/lib/cash-live-sync";
 import type { DashboardMetrics } from "@/lib/data-service";
 import useSWR from "swr";
 import { backendApi } from "@/lib/backend-api";
+import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
+import { subscribeSalesSync } from "@/lib/sales-live-sync";
 import {
   formatSnapshotRangeLabel,
   normalizeSnapshotMetrics,
@@ -23,18 +27,20 @@ interface DashboardProps {
 export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
   const { activeBranchId, availableBranches, businessType } = useBranch();
   const { branchId } = useUser();
+  const lastValidatedBranchIdRef = useRef<string | null>(null);
+  const lastRefreshAtRef = useRef(0);
 
   const activeBranch = availableBranches.find((b) => b.id === activeBranchId);
   const fallbackData =
     businessType === "wholesale" ? wholesaleData : retailData;
 
-  const { data: branchMetrics } = useSWR<DashboardMetrics>(
+  const { data: branchMetrics, mutate: mutateBranchMetrics } = useSWR<DashboardMetrics>(
     branchId ? ["reporting-dashboard-summary", branchId] : null,
     async () => {
       const snapshot = await backendApi.reporting.dashboard.summary({
         period: "monthly",
         scope: "active",
-      });
+      }, branchId);
       return normalizeSnapshotMetrics(snapshot);
     },
     {
@@ -47,6 +53,56 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
       dedupingInterval: 60_000,
     }
   );
+
+  const requestSummaryRefresh = useCallback(
+    (force = false) => {
+      const now = Date.now();
+      if (!force && now - lastRefreshAtRef.current < 1_000) return;
+
+      lastRefreshAtRef.current = now;
+      void mutateBranchMetrics();
+    },
+    [mutateBranchMetrics]
+  );
+
+  useEffect(() => {
+    if (!branchId) {
+      lastValidatedBranchIdRef.current = null;
+      lastRefreshAtRef.current = 0;
+      return;
+    }
+
+    if (lastValidatedBranchIdRef.current === branchId) return;
+
+    lastValidatedBranchIdRef.current = branchId;
+    requestSummaryRefresh(true);
+  }, [branchId, requestSummaryRefresh]);
+
+  useEffect(() => {
+    if (!branchId) return;
+
+    const matchesCurrentBranch = (payloadBranchId: string | null) =>
+      !payloadBranchId || payloadBranchId === branchId;
+
+    const unsubSales = subscribeSalesSync((payload) => {
+      if (!matchesCurrentBranch(payload.branchId)) return;
+      requestSummaryRefresh();
+    });
+    const unsubExpenses = subscribeExpensesSync((payload) => {
+      if (!matchesCurrentBranch(payload.branchId)) return;
+      requestSummaryRefresh();
+    });
+    const unsubCash = subscribeCashSync((payload) => {
+      if (!matchesCurrentBranch(payload.branchId)) return;
+      requestSummaryRefresh();
+    });
+
+    return () => {
+      unsubSales();
+      unsubExpenses();
+      unsubCash();
+    };
+  }, [branchId, requestSummaryRefresh]);
 
   const currentData = branchMetrics ?? fallbackData;
   const rangeLabel = formatSnapshotRangeLabel(currentData.range);
