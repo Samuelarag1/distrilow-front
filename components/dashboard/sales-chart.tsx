@@ -1,5 +1,6 @@
 "use client";
 
+import useSWR from "swr";
 import {
   Card,
   CardContent,
@@ -14,31 +15,100 @@ import {
 } from "@/components/ui/chart";
 import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
-import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
-import { format, subDays, isSameDay } from "date-fns";
-import { es } from "date-fns/locale";
+import {
+  fillAnalyticsSeries,
+  formatReportingPeriodLabel,
+  getReportingTimeZone,
+} from "@/lib/reports/reporting-sales-history";
+import { backendApi } from "@/lib/backend-api";
+import {
+  snapshotDateKeyToStableDate,
+} from "@/lib/snapshot-metrics";
+
+const reportingDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: getReportingTimeZone(),
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function shiftDateKey(dateKey: string, deltaDays: number) {
+  const [year, month, day] = dateKey.split("-").map(Number);
+  const base = new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12, 0, 0, 0));
+  base.setUTCDate(base.getUTCDate() + deltaDays);
+  return reportingDateFormatter.format(base);
+}
 
 export function SalesChart() {
-  const { sales } = useTransactions();
   const { branchId } = useUser();
+  const toKey = reportingDateFormatter.format(new Date());
+  const fromKey = shiftDateKey(toKey, -6);
+  const { data, isLoading } = useSWR(
+    branchId
+      ? [
+          "dashboard-sales-chart",
+          branchId,
+          fromKey,
+          toKey,
+        ]
+      : null,
+    async () => {
+      const [revenue, count] = await Promise.all([
+        backendApi.reporting.sales.history({
+          from: fromKey ?? "",
+          to: toKey ?? "",
+          groupBy: "day",
+          metric: "revenue",
+        }),
+        backendApi.reporting.sales.history({
+          from: fromKey ?? "",
+          to: toKey ?? "",
+          groupBy: "day",
+          metric: "count",
+        }),
+      ]);
 
-  // Si todavía no hay branch (onboarding), no tiene sentido graficar
+      const rangeFrom = snapshotDateKeyToStableDate(fromKey);
+      const rangeTo = snapshotDateKeyToStableDate(toKey);
+
+      if (!rangeFrom || !rangeTo) {
+        return {
+          revenuePoints: revenue.points ?? [],
+          countPoints: count.points ?? [],
+        };
+      }
+
+      return {
+        revenuePoints: fillAnalyticsSeries(
+          { from: rangeFrom, to: rangeTo },
+          "day",
+          revenue.points ?? []
+        ),
+        countPoints: fillAnalyticsSeries(
+          { from: rangeFrom, to: rangeTo },
+          "day",
+          count.points ?? []
+        ),
+      };
+    },
+    {
+      keepPreviousData: true,
+    }
+  );
+
   if (!branchId) return null;
 
-  const chartData = Array.from({ length: 7 }).map((_, i) => {
-    const date = subDays(new Date(), 6 - i);
-
-    const daySales = sales.filter(
-      (s: any) => s.branchId === branchId && isSameDay(new Date(s.date), date)
-    );
-
-    return {
-      name: format(date, "EEE", { locale: es }),
-      ventas: daySales.reduce((sum: number, s: any) => sum + s.amount, 0),
-      pedidos: daySales.length,
-    };
-  });
+  const revenuePoints = data?.revenuePoints ?? [];
+  const countByPeriod = new Map(
+    (data?.countPoints ?? []).map((point) => [point.period, point.value])
+  );
+  const chartData = revenuePoints.map((point) => ({
+    name: formatReportingPeriodLabel(point.period, "day"),
+    ventas: Number(point.value ?? 0),
+    pedidos: Number(countByPeriod.get(point.period) ?? 0),
+  }));
+  const weekLabel = `${formatReportingPeriodLabel(fromKey, "day", "long")} al ${formatReportingPeriodLabel(toKey, "day", "long")}`;
 
   const chartConfig = {
     ventas: { label: "Ventas", color: "hsl(var(--chart-1))" },
@@ -49,14 +119,19 @@ export function SalesChart() {
     <Card className="w-full overflow-hidden">
       <CardHeader>
         <CardTitle className="text-base sm:text-lg">
-          Desempeño de Ventas (7 días)
+          Desempeno de Ventas (7 dias)
         </CardTitle>
         <CardDescription className="text-sm">
-          Basado en transacciones reales del sistema
+          Ultima semana comercial: {weekLabel}
         </CardDescription>
       </CardHeader>
 
       <CardContent className="p-4 sm:p-6">
+        {isLoading && (
+          <p className="mb-3 text-sm text-muted-foreground">
+            Cargando rendimiento de ventas...
+          </p>
+        )}
         <div className="w-full h-[250px] sm:h-[300px]">
           <ChartContainer config={chartConfig} className="w-full h-full">
             <ResponsiveContainer width="100%" height="100%">

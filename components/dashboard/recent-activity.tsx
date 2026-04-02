@@ -1,5 +1,6 @@
 "use client";
 
+import useSWR from "swr";
 import {
   Card,
   CardContent,
@@ -9,8 +10,8 @@ import {
 } from "@/components/ui/card";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
-import { useTransactions } from "@/components/providers/transactions-provider";
-import { useBusiness } from "@/components/providers/business-provider";
+import { useUser } from "@/components/providers/user-provider";
+import { backendApi } from "@/lib/backend-api";
 import { formatDistanceToNow } from "date-fns";
 import { es } from "date-fns/locale";
 
@@ -18,43 +19,84 @@ const statusColors = {
   completed: "bg-green-100 text-green-800",
 };
 
-export function RecentActivity() {
-  const { sales } = useTransactions();
-  const { businessType } = useBusiness();
+type RecentSale = {
+  id: string;
+  customerName: string;
+  amount: number;
+  date: string;
+};
 
-  const filteredSales = sales
-    .filter((sale) => sale.businessType === businessType)
-    .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime())
-    .slice(0, 5);
+function resolveCustomerName(value: { clientId?: string | null }) {
+  return value.clientId ? `Cliente ${value.clientId}` : "Consumidor Final";
+}
+
+export function RecentActivity() {
+  const { branchId } = useUser();
+  const { data: recentSales = [], isLoading } = useSWR<RecentSale[]>(
+    branchId ? ["dashboard-recent-sales", branchId] : null,
+    async () => {
+      const payload = await backendApi.sales.list(
+        {
+          limit: 5,
+        },
+        branchId
+      );
+
+      return payload.items
+        .map((sale) => ({
+          id: String(sale.id),
+          customerName: resolveCustomerName(sale),
+          amount: Number(sale.totalAmount ?? sale.total ?? 0),
+          date: String(
+            sale.createdAt ?? sale.updatedAt ?? new Date().toISOString()
+          ),
+        }))
+        .sort((left, right) => {
+          return new Date(right.date).getTime() - new Date(left.date).getTime();
+        })
+        .slice(0, 5);
+    },
+    {
+      keepPreviousData: true,
+    }
+  );
 
   return (
     <Card className="w-full">
       <CardHeader>
         <CardTitle className="text-base sm:text-lg">Actividad Reciente</CardTitle>
         <CardDescription className="text-sm">
-          Ultimas transacciones y eventos
+          Ultimas transacciones criticas del negocio
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4 px-4 sm:px-6">
-        {filteredSales.map((sale) => (
+        {isLoading && recentSales.length === 0 && (
+          <div className="text-center py-6">
+            <p className="text-sm text-muted-foreground">
+              Cargando actividad reciente...
+            </p>
+          </div>
+        )}
+
+        {recentSales.map((sale) => (
           <div
             key={sale.id}
-            className="flex flex-wrap items-center justify-between gap-2 sm:gap-4 border-b pb-4 last:border-0 last:pb-0"
+            className="flex flex-wrap items-center justify-between gap-2 border-b pb-4 last:border-0 last:pb-0 sm:gap-4"
           >
-            <div className="flex items-center gap-3 min-w-0">
+            <div className="flex min-w-0 items-center gap-3">
               <Avatar className="h-9 w-9 shrink-0 border">
                 <AvatarFallback className="bg-primary/5 text-primary font-bold">
                   {sale.customerName
                     .split(" ")
-                    .map((n: string) => n[0])
+                    .map((part) => part[0])
                     .join("")}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0">
-                <p className="text-sm font-bold leading-none truncate">
+                <p className="truncate text-sm font-bold leading-none">
                   {sale.customerName}
                 </p>
-                <p className="text-xs text-muted-foreground truncate first-letter:uppercase mt-1">
+                <p className="mt-1 truncate text-xs text-muted-foreground first-letter:uppercase">
                   Venta realizada -{" "}
                   {formatDistanceToNow(new Date(sale.date), {
                     addSuffix: true,
@@ -75,7 +117,8 @@ export function RecentActivity() {
             </div>
           </div>
         ))}
-        {filteredSales.length === 0 && (
+
+        {!isLoading && recentSales.length === 0 && (
           <div className="text-center py-6">
             <p className="text-sm text-muted-foreground italic">
               No hay actividad reciente aun.

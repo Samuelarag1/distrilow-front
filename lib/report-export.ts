@@ -3,6 +3,12 @@
 type Column = {
   key: string;
   label: string;
+  align?: "left" | "center" | "right";
+};
+
+type SummaryItem = {
+  label: string;
+  value: unknown;
 };
 
 type ExportTableInput = {
@@ -11,6 +17,9 @@ type ExportTableInput = {
   subtitle?: string;
   columns: Column[];
   rows: Array<Record<string, unknown>>;
+  summary?: SummaryItem[];
+  emptyMessage?: string;
+  orientation?: "portrait" | "landscape";
 };
 
 function escapeHtml(value: unknown) {
@@ -50,36 +59,118 @@ export function exportRowsToPdf(input: ExportTableInput) {
   const popup = window.open("", "_blank", "width=1200,height=900");
   if (!popup) return;
 
+  const orientation =
+    input.orientation ?? (input.columns.length > 5 ? "landscape" : "portrait");
   const columns = input.columns
-    .map((column) => `<th>${escapeHtml(column.label)}</th>`)
+    .map(
+      (column) =>
+        `<th class="${escapeHtml(column.align ?? "left")}">${escapeHtml(column.label)}</th>`,
+    )
     .join("");
-  const rows = input.rows
-    .map((row) => {
-      const cells = input.columns
-        .map((column) => `<td>${escapeHtml(row[column.key])}</td>`)
-        .join("");
-      return `<tr>${cells}</tr>`;
-    })
-    .join("");
+  const rows =
+    input.rows.length > 0
+      ? input.rows
+          .map((row) => {
+            const cells = input.columns
+              .map(
+                (column) =>
+                  `<td class="${escapeHtml(column.align ?? "left")}">${escapeHtml(row[column.key])}</td>`,
+              )
+              .join("");
+            return `<tr>${cells}</tr>`;
+          })
+          .join("")
+      : `<tr><td colspan="${input.columns.length}" class="empty">${escapeHtml(
+          input.emptyMessage ?? "Sin datos para exportar.",
+        )}</td></tr>`;
+  const summary =
+    input.summary && input.summary.length > 0
+      ? `
+        <section class="summary-grid">
+          ${input.summary
+            .map(
+              (item) => `
+                <article class="summary-card">
+                  <span class="summary-label">${escapeHtml(item.label)}</span>
+                  <strong class="summary-value">${escapeHtml(item.value)}</strong>
+                </article>
+              `,
+            )
+            .join("")}
+        </section>
+      `
+      : "";
 
   popup.document.write(`
     <html>
       <head>
         <title>${escapeHtml(input.title)}</title>
         <style>
+          @page {
+            size: A4 ${orientation};
+            margin: 16mm;
+          }
+          * {
+            box-sizing: border-box;
+          }
           body {
             font-family: "Segoe UI", Arial, sans-serif;
-            margin: 28px;
+            margin: 0;
+            padding: 24px;
             color: #0f172a;
+            background: #ffffff;
+          }
+          .report-shell {
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+          }
+          .report-header {
+            border-bottom: 2px solid #e2e8f0;
+            padding-bottom: 16px;
           }
           h1 {
             margin: 0 0 4px 0;
-            font-size: 24px;
+            font-size: 26px;
+            line-height: 1.2;
           }
           p {
-            margin: 0 0 16px 0;
+            margin: 0;
             color: #475569;
-            font-size: 12px;
+            font-size: 13px;
+            line-height: 1.5;
+          }
+          .summary-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+            gap: 12px;
+          }
+          .summary-card {
+            border: 1px solid #cbd5e1;
+            border-radius: 12px;
+            background: #f8fafc;
+            padding: 12px 14px;
+            page-break-inside: avoid;
+          }
+          .summary-label {
+            display: block;
+            margin-bottom: 4px;
+            color: #64748b;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.04em;
+            text-transform: uppercase;
+          }
+          .summary-value {
+            display: block;
+            color: #0f172a;
+            font-size: 18px;
+            line-height: 1.35;
+          }
+          .table-shell {
+            overflow: hidden;
+            border: 1px solid #cbd5e1;
+            border-radius: 14px;
           }
           table {
             width: 100%;
@@ -87,34 +178,83 @@ export function exportRowsToPdf(input: ExportTableInput) {
             font-size: 12px;
           }
           thead {
-            background: #f1f5f9;
+            display: table-header-group;
+            background: #e2e8f0;
           }
           th, td {
-            border: 1px solid #cbd5e1;
-            padding: 8px;
+            padding: 12px 14px;
             text-align: left;
             vertical-align: top;
           }
-          tr:nth-child(even) {
+          th {
+            color: #334155;
+            font-size: 11px;
+            font-weight: 700;
+            letter-spacing: 0.03em;
+            text-transform: uppercase;
+          }
+          tbody tr {
+            page-break-inside: avoid;
+          }
+          tbody td {
+            border-top: 1px solid #e2e8f0;
+            line-height: 1.5;
+          }
+          tbody tr:nth-child(even) td {
             background: #f8fafc;
           }
+          th.right, td.right {
+            text-align: right;
+          }
+          th.center, td.center {
+            text-align: center;
+          }
+          td.empty {
+            padding: 24px;
+            color: #64748b;
+            text-align: center;
+          }
           .meta {
-            margin-top: 12px;
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            gap: 12px;
             font-size: 11px;
             color: #64748b;
+          }
+          @media print {
+            body {
+              padding: 0;
+            }
+            thead,
+            .summary-card,
+            tbody tr:nth-child(even) td {
+              -webkit-print-color-adjust: exact;
+              print-color-adjust: exact;
+            }
           }
         </style>
       </head>
       <body>
-        <h1>${escapeHtml(input.title)}</h1>
-        <p>${escapeHtml(input.subtitle ?? "")}</p>
-        <table>
-          <thead>
-            <tr>${columns}</tr>
-          </thead>
-          <tbody>${rows}</tbody>
-        </table>
-        <div class="meta">Generado: ${escapeHtml(new Date().toLocaleString())}</div>
+        <main class="report-shell">
+          <header class="report-header">
+            <h1>${escapeHtml(input.title)}</h1>
+            <p>${escapeHtml(input.subtitle ?? "")}</p>
+          </header>
+          ${summary}
+          <section class="table-shell">
+            <table>
+              <thead>
+                <tr>${columns}</tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </section>
+          <div class="meta">
+            <span>Registros: ${escapeHtml(input.rows.length)}</span>
+            <span>Generado: ${escapeHtml(new Date().toLocaleString())}</span>
+          </div>
+        </main>
       </body>
     </html>
   `);

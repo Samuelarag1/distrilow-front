@@ -27,7 +27,6 @@ import type {
   SalePaymentInput,
 } from "@/lib/api-types";
 import type { BusinessType } from "@/lib/data-service";
-import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
 import {
   classifySalePaymentType,
   getSalePaymentBreakdownByMethod,
@@ -456,15 +455,15 @@ async function collectAllPages<T>(
 
 export function TransactionsProvider({
   children,
+  autoLoadSales = false,
 }: {
   children: React.ReactNode;
+  autoLoadSales?: boolean;
 }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(autoLoadSales);
   const refreshRequestIdRef = useRef(0);
-  const expenseRefreshRequestIdRef = useRef(0);
-  const lastExpensesSyncAtRef = useRef(0);
   const { logEvent } = useAudit();
   const { token, branchId } = useUser();
   const { businessType } = useBusiness();
@@ -476,7 +475,9 @@ export function TransactionsProvider({
     [branchId]
   );
   const { data: salesSummaryData, mutate: mutateSalesSummary } = useSWR<Sale[]>(
-    token && branchId ? (["/sales", salesListFilters] as const) : null,
+    autoLoadSales && token && branchId
+      ? (["/sales", salesListFilters] as const)
+      : null,
     async () => {
       const apiSales = await collectAllPages((skip, take) =>
         backendApi.sales.list({ offset: skip, limit: take }, branchId)
@@ -491,9 +492,10 @@ export function TransactionsProvider({
     },
     {
       revalidateOnFocus: false,
-      revalidateOnReconnect: true,
+      revalidateOnReconnect: false,
       revalidateOnMount: false,
       keepPreviousData: true,
+      dedupingInterval: 60_000,
     }
   );
 
@@ -526,91 +528,42 @@ export function TransactionsProvider({
   const refreshTransactions = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current;
 
-    if (!token || !branchId) {
+    if (!autoLoadSales || !token || !branchId) {
       if (requestId !== refreshRequestIdRef.current) return;
       setSales([]);
-      setExpenses([]);
       setIsLoading(false);
       return;
     }
 
     setIsLoading(true);
     try {
-      const [, apiExpenses] = await Promise.all([
-        mutateSalesSummary(),
-        collectAllPages((skip, take) =>
-          backendApi.expenses.list({ skip, take }, branchId)
-        ),
-      ]);
-
+      await mutateSalesSummary();
       if (requestId !== refreshRequestIdRef.current) return;
-
-      setExpenses(
-        dedupeById(
-          apiExpenses
-            .map((expense) => normalizeExpense(expense, businessType))
-            .sort(
-              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-            )
-        )
-      );
     } catch (e) {
       if (requestId !== refreshRequestIdRef.current) return;
     } finally {
       if (requestId !== refreshRequestIdRef.current) return;
       setIsLoading(false);
     }
-  }, [token, branchId, businessType, mutateSalesSummary]);
+  }, [autoLoadSales, token, branchId, mutateSalesSummary]);
 
   useEffect(() => {
-    if (!token || !branchId) {
+    if (!autoLoadSales || !token || !branchId) {
       setSales([]);
       return;
     }
     if (!salesSummaryData) return;
     setSales(salesSummaryData);
-  }, [token, branchId, salesSummaryData]);
+  }, [autoLoadSales, token, branchId, salesSummaryData]);
 
-  const refreshExpensesOnly = useCallback(async () => {
-    const requestId = ++expenseRefreshRequestIdRef.current;
-    if (!token || !branchId) return;
-
-    try {
-      const apiExpenses = await collectAllPages((skip, take) =>
-        backendApi.expenses.list({ skip, take }, branchId)
-      );
-      if (requestId !== expenseRefreshRequestIdRef.current) return;
-
-      setExpenses(
-        dedupeById(
-          apiExpenses
-            .map((expense) => normalizeExpense(expense, businessType))
-            .sort(
-              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-            )
-        )
-      );
-    } catch (e) {
-      if (requestId !== expenseRefreshRequestIdRef.current) return;
-      console.error("Error refreshing expenses data", e);
+  useEffect(() => {
+    if (!autoLoadSales) {
+      setIsLoading(false);
+      setSales([]);
+      return;
     }
-  }, [token, branchId, businessType]);
-
-  useEffect(() => {
     void refreshTransactions();
-  }, [refreshTransactions]);
-
-  useEffect(() => {
-    if (!branchId) return;
-
-    return subscribeExpensesSync((payload) => {
-      if (payload.branchId && payload.branchId !== branchId) return;
-      const now = Date.now();
-      if (now - lastExpensesSyncAtRef.current < 1_500) return;
-      lastExpensesSyncAtRef.current = now;
-      void refreshExpensesOnly();
-    });
-  }, [branchId, refreshExpensesOnly]);
+  }, [autoLoadSales, refreshTransactions]);
 
   const addExpense = useCallback(
     async (newExpense: AddExpenseInput) => {

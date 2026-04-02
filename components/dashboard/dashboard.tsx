@@ -9,7 +9,11 @@ import { useUser } from "../providers/user-provider";
 import type { DashboardMetrics } from "@/lib/data-service";
 import useSWR from "swr";
 import { backendApi } from "@/lib/backend-api";
-import { normalizeSnapshotMetrics } from "@/lib/snapshot-metrics";
+import {
+  formatSnapshotRangeLabel,
+  normalizeSnapshotMetrics,
+  SNAPSHOT_REPORTING_TIME_ZONE,
+} from "@/lib/snapshot-metrics";
 
 interface DashboardProps {
   retailData: DashboardMetrics;
@@ -25,7 +29,7 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
     businessType === "wholesale" ? wholesaleData : retailData;
 
   const { data: branchMetrics } = useSWR<DashboardMetrics>(
-    branchId ? ["reporting-dashboard-summary", branchId, businessType] : null,
+    branchId ? ["reporting-dashboard-summary", branchId] : null,
     async () => {
       const snapshot = await backendApi.reporting.dashboard.summary({
         period: "monthly",
@@ -35,12 +39,20 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
     },
     {
       revalidateOnFocus: false,
-      revalidateOnReconnect: true,
-      keepPreviousData: false,
+      revalidateOnReconnect: false,
+      revalidateOnMount: false,
+      revalidateIfStale: false,
+      keepPreviousData: true,
+      fallbackData,
+      dedupingInterval: 60_000,
     }
   );
 
   const currentData = branchMetrics ?? fallbackData;
+  const rangeLabel = formatSnapshotRangeLabel(currentData.range);
+  const summaryCaption = rangeLabel
+    ? `Mes en curso real (${SNAPSHOT_REPORTING_TIME_ZONE}): ${rangeLabel}`
+    : "Resumen de tu negocio";
 
   return (
     <div className="space-y-6">
@@ -49,7 +61,7 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
           <h1 className="text-2xl sm:text-3xl font-bold tracking-tight">
             Dashboard - {activeBranch?.name}
           </h1>
-          <p className="text-muted-foreground">Resumen de tu negocio</p>
+          <p className="text-muted-foreground">{summaryCaption}</p>
         </div>
       </div>
       <MetricsCards metrics={currentData} type={businessType} />

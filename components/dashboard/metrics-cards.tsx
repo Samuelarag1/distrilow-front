@@ -7,12 +7,9 @@ import {
   DollarSign,
   PiggyBank,
   Receipt,
-  TrendingDown,
-  TrendingUp,
   Wallet,
 } from "lucide-react";
 import type { DashboardMetrics, BusinessType } from "@/lib/data-service";
-import { useTransactions } from "@/components/providers/transactions-provider";
 
 interface MetricsCardsProps {
   metrics: DashboardMetrics;
@@ -31,121 +28,15 @@ type MetricCard = {
   details?: string[];
 };
 
-function computePercentageChange(current: number, previous: number) {
-  if (!Number.isFinite(current) || !Number.isFinite(previous)) return 0;
-  if (previous === 0) {
-    if (current === 0) return 0;
-    return current > 0 ? 100 : -100;
-  }
-  return ((current - previous) / Math.abs(previous)) * 100;
-}
-
-function formatPercentage(value: number) {
-  const safeValue = Number.isFinite(value) ? value : 0;
-  const normalized = Math.abs(safeValue) < 0.05 ? 0 : safeValue;
-  const sign = normalized > 0 ? "+" : "";
-  return `${sign}${normalized.toFixed(1)}%`;
-}
-
-function sumInRange(
-  rows: Array<{ amount: number; date: string }>,
-  startMs: number,
-  endMs: number
-) {
-  return rows.reduce((acc, row) => {
-    const dateMs = new Date(row.date).getTime();
-    if (!Number.isFinite(dateMs)) return acc;
-    if (dateMs < startMs || dateMs >= endMs) return acc;
-    return acc + Number(row.amount ?? 0);
-  }, 0);
-}
-
 export function MetricsCards({ metrics, type }: MetricsCardsProps) {
-  const { getSalesByType, getExpensesByType } = useTransactions();
-  const sales = getSalesByType(type);
-  const expenses = getExpensesByType(type);
   const currencyFormatter = new Intl.NumberFormat("es-AR", {
     style: "currency",
     currency: "ARS",
   });
 
-  const now = new Date();
-  const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
-  const nextMonthStart = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  const previousMonthStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-  const currentMonthStartMs = currentMonthStart.getTime();
-  const nextMonthStartMs = nextMonthStart.getTime();
-  const previousMonthStartMs = previousMonthStart.getTime();
-
-  const currentRevenueFromTransactions = sumInRange(
-    sales,
-    currentMonthStartMs,
-    nextMonthStartMs
-  );
-  const previousRevenueFromTransactions = sumInRange(
-    sales,
-    previousMonthStartMs,
-    currentMonthStartMs
-  );
-  const currentExpensesFromTransactions = sumInRange(
-    expenses,
-    currentMonthStartMs,
-    nextMonthStartMs
-  );
-  const previousExpensesFromTransactions = sumInRange(
-    expenses,
-    previousMonthStartMs,
-    currentMonthStartMs
-  );
-  const currentNetProfitFromTransactions =
-    currentRevenueFromTransactions - currentExpensesFromTransactions;
-  const previousNetProfitFromTransactions =
-    previousRevenueFromTransactions - previousExpensesFromTransactions;
-
-  const hasLiveTransactions = sales.length > 0 || expenses.length > 0;
-
   const totalRevenue = Number(metrics?.totalRevenue ?? 0);
-  const totalExpenses = hasLiveTransactions
-    ? currentExpensesFromTransactions
-    : Number(metrics.operationalExpenses ?? 0);
-
-  const netProfit = (metrics.netProfit ?? 0);
-
-  const revenueGrowthPct = hasLiveTransactions
-    ? computePercentageChange(
-        currentRevenueFromTransactions,
-        previousRevenueFromTransactions
-      )
-    : 0;
-  const expensesGrowthPct = hasLiveTransactions
-    ? computePercentageChange(
-        currentExpensesFromTransactions,
-        previousExpensesFromTransactions
-      )
-    : 0;
-  const netProfitGrowthPct = hasLiveTransactions
-    ? computePercentageChange(
-        currentNetProfitFromTransactions,
-        previousNetProfitFromTransactions
-      )
-    : 0;
-
-  const revenueChange = hasLiveTransactions
-    ? formatPercentage(revenueGrowthPct)
-    : metrics.growthTrend ?? "+0%";
-  const expensesChange = formatPercentage(expensesGrowthPct);
-  const netProfitChange = formatPercentage(netProfitGrowthPct);
-  const revenueTrend: "up" | "down" = hasLiveTransactions
-    ? revenueGrowthPct < 0
-      ? "down"
-      : "up"
-    : String(metrics.growthTrend ?? "")
-        .trim()
-        .startsWith("-")
-    ? "down"
-    : "up";
-  const expensesTrend: "up" | "down" = expensesGrowthPct > 0 ? "down" : "up";
-  const netProfitTrend: "up" | "down" = netProfitGrowthPct < 0 ? "down" : "up";
+  const totalExpenses = Number(metrics.operationalExpenses ?? 0);
+  const netProfit = Number(metrics.netProfit ?? 0);
 
   const dailyCash = Number(metrics.dailyCashbox ?? 0);
   const dailyCashBreakdown = metrics.dailyCashBreakdown;

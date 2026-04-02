@@ -710,6 +710,12 @@ export interface SalePaymentsListQuery {
 }
 
 export interface SnapshotMetricsResponse {
+  period?: SnapshotPeriod;
+  scope?: "active" | "all";
+  range?: {
+    from?: string;
+    to?: string;
+  };
   totalRevenue?: number;
   totalIncome?: number;
   totalOrders?: number;
@@ -751,6 +757,13 @@ export interface SnapshotMetricsResponse {
     averageTicket?: number;
     growthTrend?: string;
   };
+  history?: Array<{
+    period?: string;
+    totalIncome?: number;
+    operationalExpenses?: number;
+    totalCostOfGoods?: number;
+    netProfit?: number;
+  }>;
   [key: string]: unknown;
 }
 
