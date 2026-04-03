@@ -950,7 +950,7 @@ function normalizeStockSharedRelation(
 
 function normalizeStockProductSnapshot(
   payload: unknown
-): Partial<ProductListItem> | null {
+): Partial<ProductListItem> & { minStock?: number; maxStock?: number } | null {
   const source = asRecord(payload);
   if (Object.keys(source).length === 0) return null;
 

@@ -21,14 +21,9 @@ const statusColors = {
 
 type RecentSale = {
   id: string;
-  customerName: string;
   amount: number;
   date: string;
 };
-
-function resolveCustomerName(value: { clientId?: string | null }) {
-  return value.clientId ? `Cliente ${value.clientId}` : "Consumidor Final";
-}
 
 export function RecentActivity() {
   const { branchId } = useUser();
@@ -45,7 +40,6 @@ export function RecentActivity() {
       return payload.items
         .map((sale) => ({
           id: String(sale.id),
-          customerName: resolveCustomerName(sale),
           amount: Number(sale.totalAmount ?? sale.total ?? 0),
           date: String(
             sale.createdAt ?? sale.updatedAt ?? new Date().toISOString()
@@ -86,15 +80,12 @@ export function RecentActivity() {
             <div className="flex min-w-0 items-center gap-3">
               <Avatar className="h-9 w-9 shrink-0 border">
                 <AvatarFallback className="bg-primary/5 text-primary font-bold">
-                  {sale.customerName
-                    .split(" ")
-                    .map((part) => part[0])
-                    .join("")}
+                  V{sale.id.slice(0, 1).toUpperCase()}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0">
                 <p className="truncate text-sm font-bold leading-none">
-                  {sale.customerName}
+                  Venta #{sale.id.slice(0, 8)}
                 </p>
                 <p className="mt-1 truncate text-xs text-muted-foreground first-letter:uppercase">
                   Venta realizada -{" "}

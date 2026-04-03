@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -52,6 +52,11 @@ import { backendApi } from "@/lib/backend-api";
 import { InventoryLotsSection } from "@/components/modules/inventory-lots-section";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
+import {
+  formatWholeAmountInput,
+  normalizeWholeAmountInput,
+  parseWholeAmount,
+} from "@/lib/sales-payments";
 import {
   Popover,
   PopoverContent,
@@ -369,7 +374,7 @@ function AdjustStockDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
-    const quantity = Math.abs(Math.trunc(Number(amount)));
+    const quantity = Math.abs(parseWholeAmount(amount));
     if (!quantity || quantity < 1) return;
 
     if (operation === "transfer" && !toBranchId) return;
@@ -411,8 +416,8 @@ function AdjustStockDialog({
     operation === "expired" ||
     operation === "transfer";
   const currentTotal = outgoing
-    ? Math.max(0, item.stock - (parseInt(amount) || 0))
-    : item.stock + (parseInt(amount) || 0);
+    ? Math.max(0, item.stock - parseWholeAmount(amount))
+    : item.stock + parseWholeAmount(amount);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -516,10 +521,13 @@ function AdjustStockDialog({
               <div className="relative">
                 <Input
                   id="amount"
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   placeholder="0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  value={formatWholeAmountInput(amount)}
+                  onChange={(e) =>
+                    setAmount(normalizeWholeAmountInput(e.target.value))
+                  }
                   autoFocus
                   className="text-2xl font-black h-14 pl-12 focus-visible:ring-primary/20"
                   disabled={isSubmitting}
@@ -826,6 +834,7 @@ export function InventoryModule() {
   const { branches, branchId } = useUser();
   const { registerStockMovement } = useProductActions();
   const effectiveBranchId = normalizeBranchContextId(branchId);
+  const criticalTableRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 350);
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -1104,6 +1113,10 @@ export function InventoryModule() {
       ),
     [inventory]
   );
+  const inventoryByProductId = useMemo(
+    () => new Map(inventory.map((item) => [item.productId, item])),
+    [inventory]
+  );
   const lowStockNamesPreview = useMemo(() => {
     if (!Array.isArray(lowStockRows)) return [];
 
@@ -1135,6 +1148,16 @@ export function InventoryModule() {
   const lowStockHiddenCount = Math.max(
     lowStockCountKpi - lowStockNamesPreview.length,
     0
+  );
+  const outOfStockRows = useMemo(
+    () =>
+      lowStockRows.filter((row) => Number(row.stock ?? 0) <= Number.EPSILON),
+    [lowStockRows]
+  );
+  const criticalStockRows = useMemo(
+    () =>
+      lowStockRows.filter((row) => Number(row.stock ?? 0) > Number.EPSILON),
+    [lowStockRows]
   );
   const totalPages = Math.max(
     1,
@@ -1643,6 +1666,181 @@ export function InventoryModule() {
               </span>
             </p>
           </div>
+        </div>
+      )}
+
+      {lowStockRows.length > 0 && (
+        <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+          <Card className="border-red-200 shadow-sm">
+            <CardHeader className="space-y-3">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <CardTitle className="text-base">Alertas de stock</CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Prioriza primero los articulos agotados.
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  onClick={() =>
+                    criticalTableRef.current?.scrollIntoView({
+                      behavior: "smooth",
+                      block: "start",
+                    })
+                  }
+                >
+                  Ver tabla critica
+                </Button>
+              </div>
+            </CardHeader>
+            <CardContent className="space-y-3">
+              <div className="rounded-lg border border-red-200 bg-red-50/80 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+                  Sin stock
+                </p>
+                <p className="mt-1 text-3xl font-black text-red-600">
+                  {outOfStockRows.length.toLocaleString()}
+                </p>
+                <p className="text-xs text-red-700">
+                  Productos sin unidades disponibles para vender.
+                </p>
+              </div>
+              <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                  Stock critico
+                </p>
+                <p className="mt-1 text-3xl font-black text-amber-600">
+                  {criticalStockRows.length.toLocaleString()}
+                </p>
+                <p className="text-xs text-amber-700">
+                  Productos con stock bajo, pero todavia disponibles.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card ref={criticalTableRef} className="border-red-200 shadow-sm">
+            <CardHeader className="space-y-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <CardTitle className="text-base">
+                    Tabla de stock critico
+                  </CardTitle>
+                  <p className="text-sm text-muted-foreground">
+                    Lista directa para reponer articulos con faltante.
+                  </p>
+                </div>
+                <Badge className="w-fit bg-red-100 text-red-800 hover:bg-red-100">
+                  {lowStockRows.length} articulos en alerta
+                </Badge>
+              </div>
+            </CardHeader>
+            <CardContent>
+              <div className="overflow-hidden rounded-xl border">
+                <div className="overflow-x-auto">
+                  <table className="w-full text-sm">
+                    <thead className="bg-muted/50">
+                      <tr>
+                        <th className="px-4 py-3 text-left font-medium">
+                          Producto
+                        </th>
+                        <th className="px-4 py-3 text-left font-medium">
+                          Stock
+                        </th>
+                        <th className="px-4 py-3 text-left font-medium">
+                          Minimo
+                        </th>
+                        <th className="px-4 py-3 text-left font-medium">
+                          Faltante
+                        </th>
+                        <th className="px-4 py-3 text-left font-medium">
+                          Estado
+                        </th>
+                        <th className="px-4 py-3 text-right font-medium">
+                          Acciones
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y">
+                      {lowStockRows.map((row) => {
+                        const linkedInventoryItem =
+                          inventoryByProductId.get(row.productId) ?? null;
+                        const isOutOfStock =
+                          Number(row.stock ?? 0) <= Number.EPSILON;
+
+                        return (
+                          <tr
+                            key={row.productId}
+                            className="transition-colors hover:bg-muted/25"
+                          >
+                            <td className="px-4 py-3">
+                              <div>
+                                <p className="font-medium">{row.productName}</p>
+                                <p className="text-xs text-muted-foreground">
+                                  {row.category?.name ?? "Sin categoria"}
+                                </p>
+                              </div>
+                            </td>
+                            <td className="px-4 py-3 font-semibold">
+                              {Number(row.stock ?? 0).toLocaleString("es-AR")}
+                            </td>
+                            <td className="px-4 py-3">
+                              {Number(row.minStock ?? 0).toLocaleString("es-AR")}
+                            </td>
+                            <td className="px-4 py-3 font-bold text-red-600">
+                              {Number(row.shortageQty ?? 0).toLocaleString("es-AR")}
+                            </td>
+                            <td className="px-4 py-3">
+                              <Badge
+                                className={
+                                  isOutOfStock
+                                    ? "bg-red-100 text-red-800"
+                                    : "bg-amber-100 text-amber-800"
+                                }
+                              >
+                                {isOutOfStock ? "Sin stock" : "Critico"}
+                              </Badge>
+                            </td>
+                            <td className="px-4 py-3">
+                              <div className="flex justify-end gap-2">
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => {
+                                    setSearchQuery(row.productName);
+                                    setCurrentPage(1);
+                                  }}
+                                >
+                                  Filtrar
+                                </Button>
+                                <Button
+                                  type="button"
+                                  size="sm"
+                                  onClick={() => {
+                                    if (!linkedInventoryItem) return;
+                                    setStockDetailTarget({
+                                      productId: row.productId,
+                                      productName: row.productName,
+                                      item: linkedInventoryItem,
+                                    });
+                                  }}
+                                  disabled={!linkedInventoryItem}
+                                >
+                                  Detalle
+                                </Button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
         </div>
       )}
 

@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Plus,
   Minus,
@@ -60,10 +61,12 @@ import { emitProductsSync } from "@/lib/products-live-sync";
 import type { PaymentMethod, PriceType, PricingMode } from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import {
+  formatWholeAmountInput,
   getPaymentMethodLabel as getSharedPaymentMethodLabel,
   normalizeWholeAmountInput,
   parseWholeAmount,
 } from "@/lib/sales-payments";
+import { buildSaleNotesPayload } from "@/lib/sale-notes";
 
 interface CartItem extends Product {
   quantity: number;
@@ -91,12 +94,14 @@ type PersistedPosCart = {
   transferPaymentAmount: string;
   transferReference: string;
   pendingPaymentReason: string;
+  saleNote: string;
 };
 
 const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
 const POS_CART_TTL_MS = 12 * 60 * 60 * 1000;
 const POS_SCAN_CACHE_TTL_MS = 5_000;
 const POS_PENDING_REASON_MAX_LENGTH = 180;
+const POS_SALE_NOTE_MAX_LENGTH = 240;
 const POS_SCANNER_BURST_MS = 450;
 const POS_SCANNER_CONCAT_CODE_LENGTHS = [13, 12, 8] as const;
 type ScanCacheEntry = {
@@ -264,6 +269,7 @@ type PosPaymentCardProps = {
   itemCount: number;
   total: number;
   totalInitialPayments: number;
+  pendingAfterInitialPayments: number;
   changeDuePreview: number;
   transferExcessPreview: number;
   cashPaymentAmount: string;
@@ -297,6 +303,8 @@ type PosPaymentConfirmDialogProps = {
   previewCashierName: string;
   paymentPreviewRows: PaymentPreviewRow[];
   pendingPaymentReason: string;
+  saleNote: string;
+  onSaleNoteChange: (value: string) => void;
   onProcessPayment: () => Promise<void>;
 };
 
@@ -347,6 +355,7 @@ function parsePersistedPosCart(raw: string | null): PersistedPosCart | null {
         typeof parsed.pendingPaymentReason === "string"
           ? parsed.pendingPaymentReason
           : "",
+      saleNote: typeof parsed.saleNote === "string" ? parsed.saleNote : "",
     };
   } catch {
     return null;
@@ -1287,6 +1296,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
   itemCount,
   total,
   totalInitialPayments,
+  pendingAfterInitialPayments,
   changeDuePreview,
   transferExcessPreview,
   cashPaymentAmount,
@@ -1305,7 +1315,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
 }: PosPaymentCardProps) {
   const showPendingReasonInput =
     cartLength > 0 &&
-    (totalInitialPayments <= 0 || pendingPaymentReason.trim().length > 0);
+    (pendingAfterInitialPayments > 0 || pendingPaymentReason.trim().length > 0);
 
   return (
     <Card>
@@ -1354,12 +1364,10 @@ const PosPaymentCard = memo(function PosPaymentCard({
                   Efectivo
                 </label>
                 <Input
-                  type="number"
-                  step="1"
-                  min="0"
+                  type="text"
                   inputMode="numeric"
                   placeholder="0"
-                  value={cashPaymentAmount}
+                  value={formatWholeAmountInput(cashPaymentAmount)}
                   onChange={(event) =>
                     onCashPaymentAmountChange(event.target.value)
                   }
@@ -1372,12 +1380,10 @@ const PosPaymentCard = memo(function PosPaymentCard({
                   Transferencia
                 </label>
                 <Input
-                  type="number"
-                  step="1"
-                  min="0"
+                  type="text"
                   inputMode="numeric"
                   placeholder="0"
-                  value={transferPaymentAmount}
+                  value={formatWholeAmountInput(transferPaymentAmount)}
                   onChange={(event) =>
                     onTransferPaymentAmountChange(event.target.value)
                   }
@@ -1395,7 +1401,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
                 <Input
                   value={pendingPaymentReason}
                   maxLength={POS_PENDING_REASON_MAX_LENGTH}
-                  placeholder="Ej: Cliente conocido, paga manana"
+                  placeholder="Ej: saldo a regularizar manana"
                   onChange={(event) =>
                     onPendingPaymentReasonChange(event.target.value)
                   }
@@ -1474,10 +1480,13 @@ function PosPaymentConfirmDialog({
   previewCashierName,
   paymentPreviewRows,
   pendingPaymentReason,
+  saleNote,
+  onSaleNoteChange,
   onProcessPayment,
 }: PosPaymentConfirmDialogProps) {
   if (!open) return null;
   const normalizedPendingPaymentReason = pendingPaymentReason.trim();
+  const normalizedSaleNote = saleNote.trim();
 
   return (
     <Dialog
@@ -1564,7 +1573,7 @@ function PosPaymentConfirmDialog({
                 </p>
                 <p className="mt-3 text-sm leading-6 text-white/90">
                   {changeDuePreview > 0
-                    ? "Este es el importe que deberias devolver al cliente al cerrar la operacion."
+                    ? "Este es el importe que deberias devolver al cerrar la operacion."
                     : transferExcessPreview > 0
                     ? "El excedente por transferencia es informativo y no genera vuelto."
                     : pendingAfterInitialPayments > 0
@@ -1733,6 +1742,27 @@ function PosPaymentConfirmDialog({
 
             <div className="rounded-2xl border bg-card p-5 shadow-sm">
               <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                Nota de la venta
+              </h3>
+              <div className="mt-4 space-y-2">
+                <Textarea
+                  value={saleNote}
+                  onChange={(event) => onSaleNoteChange(event.target.value)}
+                  placeholder="Agrega una nota opcional para esta venta"
+                  maxLength={POS_SALE_NOTE_MAX_LENGTH}
+                  className="min-h-[120px] resize-none"
+                />
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>Visible luego en el detalle de la venta.</span>
+                  <span>
+                    {normalizedSaleNote.length}/{POS_SALE_NOTE_MAX_LENGTH}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-card p-5 shadow-sm">
+              <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
                 Totales
               </h3>
               <div className="mt-4 space-y-3 text-sm">
@@ -1826,6 +1856,7 @@ export function POSModule() {
   const [transferPaymentAmount, setTransferPaymentAmount] = useState("");
   const [transferReference, setTransferReference] = useState("");
   const [pendingPaymentReason, setPendingPaymentReason] = useState("");
+  const [saleNote, setSaleNote] = useState("");
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isSaleCommitted, setIsSaleCommitted] = useState(false);
@@ -1847,7 +1878,7 @@ export function POSModule() {
     setCashPaymentAmount((prev) => normalizeWholeAmountInput(prev));
   }, []);
   const handleTransferPaymentAmountBlur = useCallback(() => {
-    setTransferPaymentAmount(normalizeWholeAmountInput(value));
+    setTransferPaymentAmount((prev) => normalizeWholeAmountInput(prev));
   }, []);
 
   useEffect(() => {
@@ -1883,6 +1914,7 @@ export function POSModule() {
       );
       setTransferReference(persisted.transferReference);
       setPendingPaymentReason(persisted.pendingPaymentReason);
+      setSaleNote(persisted.saleNote);
       setIsSaleCommitted(false);
 
       toast({
@@ -1911,7 +1943,8 @@ export function POSModule() {
         !cashPaymentAmount.trim() &&
         !transferPaymentAmount.trim() &&
         !transferReference.trim() &&
-        !pendingPaymentReason.trim();
+        !pendingPaymentReason.trim() &&
+        !saleNote.trim();
 
       if (isEmptyState) {
         window.localStorage.removeItem(posCartStorageKey);
@@ -1930,6 +1963,7 @@ export function POSModule() {
         transferPaymentAmount,
         transferReference,
         pendingPaymentReason,
+        saleNote,
       };
 
       window.localStorage.setItem(posCartStorageKey, JSON.stringify(payload));
@@ -1948,6 +1982,7 @@ export function POSModule() {
     transferPaymentAmount,
     transferReference,
     pendingPaymentReason,
+    saleNote,
     currentUser?.id,
     branchId,
   ]);
@@ -1978,6 +2013,7 @@ export function POSModule() {
       setTransferPaymentAmount("");
       setTransferReference("");
       setPendingPaymentReason("");
+      setSaleNote("");
       toast({
         title: "Sucursal cambiada",
         description:
@@ -2522,6 +2558,7 @@ export function POSModule() {
 
   const normalizedPendingPaymentReason =
     normalizePendingPaymentReason(pendingPaymentReason);
+  const normalizedSaleNote = saleNote.trim();
   const isPendingReasonRequired =
     total > 0 && totalInitialPayments <= Number.EPSILON;
 
@@ -2603,6 +2640,7 @@ export function POSModule() {
       transferPaymentAmount: string;
       transferReference: string;
       pendingPaymentReason: string;
+      saleNote: string;
     } | null = null;
 
     try {
@@ -2677,6 +2715,7 @@ export function POSModule() {
         transferPaymentAmount,
         transferReference,
         pendingPaymentReason,
+        saleNote,
       };
 
       setIsPaymentConfirmOpen(false);
@@ -2702,9 +2741,13 @@ export function POSModule() {
           };
         }),
         payments,
-        notes: isPendingReasonRequired
-          ? normalizedPendingPaymentReason
-          : undefined,
+        notes: buildSaleNotesPayload({
+          pendingReason:
+            pendingAfterInitialPayments > 0
+              ? normalizedPendingPaymentReason
+              : undefined,
+          note: normalizedSaleNote,
+        }),
       });
 
       const paidAmount = Number(createdSale.paidAmount ?? 0);
@@ -2786,6 +2829,7 @@ export function POSModule() {
         setTransferPaymentAmount(rollbackState.transferPaymentAmount);
         setTransferReference(rollbackState.transferReference);
         setPendingPaymentReason(rollbackState.pendingPaymentReason);
+        setSaleNote(rollbackState.saleNote);
         setIsPaymentConfirmOpen(true);
       }
       toast({
@@ -2805,6 +2849,7 @@ export function POSModule() {
     setTransferPaymentAmount("");
     setTransferReference("");
     setPendingPaymentReason("");
+    setSaleNote("");
     if (!options?.silent) {
       toast({
         title: "Carrito vaciado",
@@ -2878,6 +2923,7 @@ export function POSModule() {
               itemCount={itemCount}
               total={total}
               totalInitialPayments={totalInitialPayments}
+              pendingAfterInitialPayments={pendingAfterInitialPayments}
               changeDuePreview={changeDuePreview}
               transferExcessPreview={transferExcessPreview}
               cashPaymentAmount={cashPaymentAmount}
@@ -2917,6 +2963,10 @@ export function POSModule() {
           previewCashierName={previewCashierName}
           paymentPreviewRows={paymentPreviewRows}
           pendingPaymentReason={normalizedPendingPaymentReason}
+          saleNote={saleNote}
+          onSaleNoteChange={(value) =>
+            setSaleNote(value.slice(0, POS_SALE_NOTE_MAX_LENGTH))
+          }
           onProcessPayment={processPayment}
         />
       </div>
@@ -3356,9 +3406,9 @@ export function POSModule() {
                       </label>
                       <Input
                         type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={cashPaymentAmount}
+                        inputMode="numeric"
+                        placeholder="0"
+                        value={formatWholeAmountInput(cashPaymentAmount)}
                         onChange={(event) =>
                           handleCashPaymentAmountChange(event.target.value)
                         }
@@ -3372,9 +3422,9 @@ export function POSModule() {
                       </label>
                       <Input
                         type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={transferPaymentAmount}
+                        inputMode="numeric"
+                        placeholder="0"
+                        value={formatWholeAmountInput(transferPaymentAmount)}
                         onChange={(event) =>
                           handleTransferPaymentAmountChange(event.target.value)
                         }
@@ -3435,6 +3485,7 @@ export function POSModule() {
             itemCount={itemCount}
             total={total}
             totalInitialPayments={totalInitialPayments}
+            pendingAfterInitialPayments={pendingAfterInitialPayments}
             changeDuePreview={changeDuePreview}
             transferExcessPreview={transferExcessPreview}
             cashPaymentAmount={cashPaymentAmount}
@@ -3474,6 +3525,10 @@ export function POSModule() {
         previewCashierName={previewCashierName}
         paymentPreviewRows={paymentPreviewRows}
         pendingPaymentReason={normalizedPendingPaymentReason}
+        saleNote={saleNote}
+        onSaleNoteChange={(value) =>
+          setSaleNote(value.slice(0, POS_SALE_NOTE_MAX_LENGTH))
+        }
         onProcessPayment={processPayment}
       />
     </div>

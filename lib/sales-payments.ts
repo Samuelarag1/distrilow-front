@@ -12,6 +12,9 @@ export type SalePaymentBreakdownByMethod = {
 };
 
 const PAYMENT_AMOUNT_THRESHOLD = 0.0001;
+const WHOLE_AMOUNT_FORMATTER = new Intl.NumberFormat("es-AR", {
+  maximumFractionDigits: 0,
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -115,14 +118,22 @@ export function getSalePaymentTypeBadgeClassName(type: SalePaymentType) {
 }
 
 export function normalizeWholeAmountInput(value: string) {
-  const trimmed = value.trim();
-  if (!trimmed) return "";
+  const digits = String(value ?? "").replace(/\D/g, "");
+  if (!digits) return "";
 
-  const normalized = trimmed.replace(",", ".");
-  const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0) return "";
+  return digits.replace(/^0+(?=\d)/, "");
+}
 
-  return String(Math.trunc(parsed));
+export function formatWholeAmountInput(value: unknown) {
+  const normalized =
+    typeof value === "string"
+      ? normalizeWholeAmountInput(value)
+      : typeof value === "number" && Number.isFinite(value) && value > 0
+      ? String(Math.trunc(value))
+      : "";
+
+  if (!normalized) return "";
+  return WHOLE_AMOUNT_FORMATTER.format(Number(normalized));
 }
 
 export function parseWholeAmount(value: unknown) {

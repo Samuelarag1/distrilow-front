@@ -5,7 +5,7 @@ import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { TrendingUp, TrendingDown, Target, Award, Calendar, Users } from "lucide-react";
+import { TrendingUp, TrendingDown, Target, Award, Calendar } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
 import {
   getSalesAnalysisConfig,
@@ -139,16 +139,6 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Crecimiento en Clientes</span>
-                  <Badge variant="outline">No disponible</Badge>
-                </div>
-                <p className="text-xs text-muted-foreground">
-                  Reporting agregado aun no expone clientes unicos por periodo.
-                </p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
                   <span className="text-sm font-medium">Ticket Promedio</span>
                   <div className="flex items-center gap-1">
                     {avgOrderGrowth >= 0 ? (
@@ -237,20 +227,6 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="p-6">
-            <div className="text-center space-y-3">
-              <Users className="h-8 w-8 mx-auto text-purple-500" />
-              <div>
-                <p className="text-sm text-muted-foreground">Clientes</p>
-                <p className="font-bold">No disponible</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Falta customers en reporting/sales/history
-                </p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );

@@ -27,20 +27,13 @@ export interface InventoryItem {
 }
 
 export type ExpenseCategoryKnown =
-  | "RENT"
-  | "SERVICES"
+  | "RENT"|"SERVICES"
   | "SALARIES"
-  | "SUPPLIES"
   | "MARKETING"
-  | "MAINTENANCE"
-  | "TAXES"
   | "LUZ"
   | "DESCARTABLES"
   | "LIMPIEZA"
-  | "BOLSAS"
   | "DESINFECCION"
-  | "NAFTA"
-  | "MONOTRIBUTO"
   | "VEHICULO_PARTICULAR"
   | "OTHER";
 export type ExpenseCategory = ExpenseCategoryKnown;

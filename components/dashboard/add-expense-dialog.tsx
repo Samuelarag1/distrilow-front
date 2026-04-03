@@ -25,6 +25,10 @@ import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { EXPENSE_CATEGORY_OPTIONS } from "@/lib/expense-categories";
+import {
+  formatDecimalAmountInput,
+  parseDecimalAmountInput,
+} from "@/lib/numeric-input";
 
 interface AddExpenseDialogProps {
   open: boolean;
@@ -76,7 +80,7 @@ export function AddExpenseDialog({
 
     try {
       await addExpense({
-        amount: Number(formData.amount),
+        amount: parseDecimalAmountInput(formData.amount),
         category: formData.category as any,
         description: formData.description,
       });
@@ -120,11 +124,15 @@ export function AddExpenseDialog({
             <Label htmlFor="amount">Monto ($)</Label>
             <Input
               id="amount"
-              type="number"
-              placeholder="0.00"
+              type="text"
+              inputMode="decimal"
+              placeholder="0,00"
               value={formData.amount}
               onChange={(e) =>
-                setFormData({ ...formData, amount: e.target.value })
+                setFormData({
+                  ...formData,
+                  amount: formatDecimalAmountInput(e.target.value),
+                })
               }
               className="text-lg"
               autoFocus

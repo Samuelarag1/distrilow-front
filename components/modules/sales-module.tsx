@@ -17,7 +17,6 @@ import {
   TrendingDown,
   DollarSign,
   ShoppingCart,
-  Users,
   Target,
   Download,
 } from "lucide-react";
@@ -120,9 +119,6 @@ export function SalesModule() {
     const monthRevenue = monthSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
     const prevMonthRevenue = prevMonthSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
 
-    const todayCustomers = new Set(todaySales.map((sale) => sale.customerName)).size;
-    const monthCustomers = new Set(monthSales.map((sale) => sale.customerName)).size;
-
     const todayAvgOrder = todaySales.length > 0 ? todayRevenue / todaySales.length : 0;
     const monthAvgOrder = monthSales.length > 0 ? monthRevenue / monthSales.length : 0;
 
@@ -153,27 +149,17 @@ export function SalesModule() {
       today: {
         sales: todayRevenue,
         orders: todaySales.length,
-        customers: todayCustomers,
         avgOrder: todayAvgOrder,
         growth: pct(todayRevenue, yesterdayRevenue),
         ordersGrowth: pct(todaySales.length, yesterdaySales.length),
-        customersGrowth: pct(
-          todayCustomers,
-          new Set(yesterdaySales.map((sale) => sale.customerName)).size
-        ),
         avgOrderGrowth: pct(todayAvgOrder, yesterdayAvgOrder),
       },
       monthly: {
         sales: reportingMonthRevenue,
         orders: reportingMonthOrders,
-        customers: monthCustomers,
         avgOrder: reportingMonthAvgOrder,
         growth: pct(reportingMonthRevenue, reportingPrevMonthRevenue),
         ordersGrowth: pct(reportingMonthOrders, reportingPrevMonthOrders),
-        customersGrowth: pct(
-          monthCustomers,
-          new Set(prevMonthSales.map((sale) => sale.customerName)).size
-        ),
         avgOrderGrowth: pct(reportingMonthAvgOrder, reportingPrevMonthAvgOrder),
       },
     };
@@ -222,7 +208,7 @@ export function SalesModule() {
         </TabsList>
 
         <TabsContent value="daily" className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Card>
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
@@ -265,25 +251,6 @@ export function SalesModule() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Clientes Hoy</p>
-                    <p className="text-2xl font-bold">{metrics.today.customers}</p>
-                    <div className="flex items-center text-xs mt-1">
-                      <TrendingUp className="mr-1 h-3 w-3 text-purple-500" />
-                      <span className="text-purple-500">{metrics.today.customersGrowth.toFixed(1)}%</span>
-                      <span className="text-muted-foreground ml-1">vs ayer</span>
-                    </div>
-                  </div>
-                  <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center">
-                    <Users className="h-4 w-4 text-purple-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
                     <p className="text-sm font-medium text-muted-foreground">Ticket Promedio</p>
                     <p className="text-2xl font-bold">${metrics.today.avgOrder.toFixed(2)}</p>
                     <div className="flex items-center text-xs mt-1">
@@ -310,7 +277,7 @@ export function SalesModule() {
         </TabsContent>
 
         <TabsContent value="monthly" className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Card>
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
@@ -344,25 +311,6 @@ export function SalesModule() {
                   </div>
                   <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
                     <ShoppingCart className="h-4 w-4 text-blue-600" />
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardContent className="p-6">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-muted-foreground">Clientes del Mes</p>
-                    <p className="text-2xl font-bold">{metrics.monthly.customers}</p>
-                    <div className="flex items-center text-xs mt-1">
-                      <TrendingUp className="mr-1 h-3 w-3 text-purple-500" />
-                      <span className="text-purple-500">{metrics.monthly.customersGrowth.toFixed(1)}%</span>
-                      <span className="text-muted-foreground ml-1">vs periodo anterior</span>
-                    </div>
-                  </div>
-                  <div className="h-8 w-8 rounded-full bg-purple-100 flex items-center justify-center">
-                    <Users className="h-4 w-4 text-purple-600" />
                   </div>
                 </div>
               </CardContent>

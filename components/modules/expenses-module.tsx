@@ -66,6 +66,10 @@ import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
+import {
+  formatDecimalAmountInput,
+  parseDecimalAmountInput,
+} from "@/lib/numeric-input";
 
 const PAGE_SIZE = 15;
 const SEARCH_DEBOUNCE_MS = 350;
@@ -158,7 +162,7 @@ export function ExpensesModule() {
     description: "",
   });
   const allowedCategories = useMemo(
-    () => new Set(EXPENSE_CATEGORY_OPTIONS.map((category) => category.value)),
+    () => new Set<string>(EXPENSE_CATEGORY_OPTIONS.map((category) => category.value)),
     []
   );
 
@@ -391,7 +395,7 @@ export function ExpensesModule() {
     event.preventDefault();
     if (isSubmittingExpense) return;
 
-    const amount = Number(newExpense.amount);
+    const amount = parseDecimalAmountInput(newExpense.amount);
     if (
       !Number.isFinite(amount) ||
       amount <= 0 ||
@@ -532,15 +536,16 @@ export function ExpensesModule() {
                     <Label htmlFor="amount">Monto</Label>
                     <Input
                       id="amount"
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={newExpense.amount}
                       onChange={(event) =>
                         setNewExpense((prev) => ({
                           ...prev,
-                          amount: event.target.value,
+                          amount: formatDecimalAmountInput(event.target.value),
                         }))
                       }
+                      placeholder="0,00"
                       required
                     />
                   </div>
@@ -714,7 +719,7 @@ export function ExpensesModule() {
                   <TableHead>Fecha</TableHead>
                   <TableHead>Descripcion</TableHead>
                   <TableHead>Categoria</TableHead>
-                  <TableHead>Situacion</TableHead>
+                  {/* <TableHead>Situacion</TableHead> */}
                   <TableHead className="text-right">Monto</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
@@ -766,9 +771,7 @@ export function ExpensesModule() {
                             <p className="truncate font-medium">
                               {expense.description}
                             </p>
-                            <p className="truncate text-xs text-muted-foreground">
-                              {expense.id}
-                            </p>
+                         
                           </div>
                         </TableCell>
                         <TableCell>
@@ -776,7 +779,7 @@ export function ExpensesModule() {
                             {getExpenseCategoryLabel(expense.category)}
                           </Badge>
                         </TableCell>
-                        <TableCell>
+                        {/* <TableCell>
                           <div className="space-y-1">
                             <Badge className={situation.badgeClassName}>
                               {situation.label}
@@ -785,7 +788,7 @@ export function ExpensesModule() {
                               {situation.detail}
                             </p>
                           </div>
-                        </TableCell>
+                        </TableCell> */}
                         <TableCell className="text-right font-semibold">
                           {formatMoney(expense.amount)}
                         </TableCell>
@@ -886,14 +889,14 @@ export function ExpensesModule() {
                     {getExpenseCategoryLabel(detailTarget.category)}
                   </p>
                 </div>
-                <div>
+                {/* <div>
                   <p className="text-muted-foreground">Situacion</p>
                   {detailSituation && (
                     <Badge className={detailSituation.badgeClassName}>
                       {detailSituation.label}
                     </Badge>
                   )}
-                </div>
+                </div> */}
               </div>
               <div className="rounded-md border p-3">
                 <p className="font-semibold">Descripcion</p>

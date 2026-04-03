@@ -24,6 +24,10 @@ import {
   EXPENSE_CATEGORY_OPTIONS,
   getExpenseCategoryLabel,
 } from "@/lib/expense-categories";
+import {
+  formatDecimalAmountInput,
+  parseDecimalAmountInput,
+} from "@/lib/numeric-input";
 import type {
   CashMovementType,
   CashSession,
@@ -238,8 +242,8 @@ export function CashModule() {
   );
 
   const handleOpenCash = async () => {
-    const opening = Number(openingFloat);
-    if (!Number.isFinite(opening)) {
+    const opening = parseDecimalAmountInput(openingFloat);
+    if (!openingFloat.trim()) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
@@ -296,9 +300,9 @@ export function CashModule() {
   const handleAddMovement = async () => {
     if (!cashSession) return;
 
-    const amount = Number(movementAmount);
+    const amount = parseDecimalAmountInput(movementAmount);
     const reason = movementReason.trim();
-    if (!Number.isFinite(amount) || amount < 0.01) {
+    if (!movementAmount.trim() || !Number.isFinite(amount) || amount < 0.01) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
@@ -466,9 +470,11 @@ export function CashModule() {
   };
 
   const expectedCash = Number(cashSession?.expectedCash ?? 0);
-  const countedCashNumber = Number(countedCashInput);
+  const countedCashNumber = parseDecimalAmountInput(countedCashInput);
   const hasValidCountedCash =
-    Number.isFinite(countedCashNumber) && countedCashNumber >= 0;
+    countedCashInput.trim().length > 0 &&
+    Number.isFinite(countedCashNumber) &&
+    countedCashNumber >= 0;
   const closeDifferencePreview = hasValidCountedCash
     ? Number((countedCashNumber - expectedCash).toFixed(2))
     : 0;
@@ -637,12 +643,13 @@ export function CashModule() {
               <Label htmlFor="opening-float">Fondo inicial</Label>
               <Input
                 id="opening-float"
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
+                type="text"
+                inputMode="decimal"
+                placeholder="0,00"
                 value={openingFloat}
-                onChange={(event) => setOpeningFloat(event.target.value)}
+                onChange={(event) =>
+                  setOpeningFloat(formatDecimalAmountInput(event.target.value))
+                }
               />
               <Button
                 className="w-full"
@@ -767,12 +774,15 @@ export function CashModule() {
                   </>
                 )}
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
+                  type="text"
+                  inputMode="decimal"
                   placeholder="Monto"
                   value={movementAmount}
-                  onChange={(event) => setMovementAmount(event.target.value)}
+                  onChange={(event) =>
+                    setMovementAmount(
+                      formatDecimalAmountInput(event.target.value)
+                    )
+                  }
                 />
                 <Input
                   placeholder={
@@ -807,12 +817,15 @@ export function CashModule() {
                 <Label htmlFor="counted-cash">Efectivo contado al cierre</Label>
                 <Input
                   id="counted-cash"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
                   value={countedCashInput}
-                  onChange={(event) => setCountedCashInput(event.target.value)}
+                  onChange={(event) =>
+                    setCountedCashInput(
+                      formatDecimalAmountInput(event.target.value)
+                    )
+                  }
                 />
 
                 <p className="text-xs text-muted-foreground">

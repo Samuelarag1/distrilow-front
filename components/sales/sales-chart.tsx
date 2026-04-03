@@ -140,9 +140,6 @@ export function SalesChart({ period }: SalesChartProps) {
               </ResponsiveContainer>
             </ChartContainer>
           </div>
-          <p className="mt-3 text-xs text-muted-foreground">
-            Clientes unicos todavia no esta disponible en reporting agregado.
-          </p>
         </CardContent>
       </Card>
     </div>

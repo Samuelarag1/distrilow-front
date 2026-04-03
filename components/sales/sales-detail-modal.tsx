@@ -126,6 +126,7 @@ export function SalesDetailModal({
     day: "numeric",
   });
   const pendingReason = String(sale.pendingReason ?? "").trim();
+  const saleNote = String(sale.notes ?? "").trim();
   const showPendingReason = Number(sale.outstandingAmount ?? 0) > 0;
 
   const getDisplayProductName = (productId: string, providedName?: string) => {
@@ -224,6 +225,17 @@ export function SalesDetailModal({
               </p>
               <p className="mt-1 text-sm text-amber-900">
                 {pendingReason || "Sin motivo informado"}
+              </p>
+            </div>
+          ) : null}
+
+          {saleNote ? (
+            <div className="rounded-lg border border-sky-200 bg-sky-50/70 p-3">
+              <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+                Nota de la venta
+              </p>
+              <p className="mt-1 whitespace-pre-line text-sm text-sky-950">
+                {saleNote}
               </p>
             </div>
           ) : null}
@@ -378,6 +390,11 @@ export function SalesDetailModal({
                             ) : null}
                             {payment.reference ? (
                               <p>Ref: {payment.reference}</p>
+                            ) : null}
+                            {payment.notes ? (
+                              <p className="whitespace-pre-line">
+                                Nota: {payment.notes}
+                              </p>
                             ) : null}
                           </div>
                         </div>

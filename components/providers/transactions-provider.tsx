@@ -36,6 +36,7 @@ import {
   type SalePaymentBreakdownByMethod,
   type SalePaymentType,
 } from "@/lib/sales-payments";
+import { parseSaleNotesPayload } from "@/lib/sale-notes";
 
 export interface Expense {
   id: string;
@@ -365,9 +366,18 @@ function normalizeSale(
   const paymentType = classifySalePaymentType(paymentBreakdownByMethod);
   const hasDetailItems = Array.isArray((row as ApiSaleDetail).items);
   const hasDetailPayments = Array.isArray((row as ApiSaleDetail).payments);
+  const rawNotes = toOptionalText((row as ApiSaleSummary).notes);
+  const parsedSaleNotes = parseSaleNotesPayload(rawNotes);
   const pendingReason =
     toOptionalText((row as ApiSaleSummary).pendingReason) ??
-    toOptionalText((row as ApiSaleSummary).notes);
+    (outstandingAmount > 0
+      ? parsedSaleNotes.pendingReason ?? rawNotes
+      : undefined);
+  const saleNote =
+    parsedSaleNotes.note ??
+    (parsedSaleNotes.isStructured || outstandingAmount > 0
+      ? undefined
+      : rawNotes);
 
   const normalized: Sale = {
     id: String(row.id),
@@ -388,7 +398,7 @@ function normalizeSale(
     paymentType,
     paymentMethods,
     pendingReason,
-    notes: String((row as ApiSaleSummary).notes ?? "").trim() || undefined,
+    notes: saleNote,
     date: String(row.createdAt ?? row.updatedAt ?? new Date().toISOString()),
     businessType,
     userId: String((row as any).userId ?? "unknown"),

@@ -699,10 +699,7 @@ export function CashCalendarReport() {
                       <th className="px-4 py-3">Mes</th>
                       <th className="px-4 py-3 text-right">Efectivo</th>
                       <th className="px-4 py-3 text-right">Transf.</th>
-                      <th className="px-4 py-3 text-right">
-                        Ingreso Manual de Caja
-                      </th>
-                      <th className="px-4 py-3 text-right">Salidas de Caja</th>
+                      <th className="px-4 py-3 text-right">Total ventas</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50 bg-background">
@@ -728,13 +725,12 @@ export function CashCalendarReport() {
                         <td className="px-4 py-3 text-right">
                           {formatMoney(item.transferFromSales, 0)}
                         </td>
-                        <td className="px-4 py-3 text-right">
-                          <span className="text-emerald-600">
-                            +{formatMoney(item.manualIn, 0)}
-                          </span>{" "}
-                        </td>
-                        <td className="px-4 py-3 text-right font-bold text-red-600">
-                          {formatMoney(item.manualOut, 0)}
+                        <td className="px-4 py-3 text-right font-semibold">
+                          {formatMoney(
+                            Number(item.cashFromSales ?? 0) +
+                              Number(item.transferFromSales ?? 0),
+                            0
+                          )}
                         </td>
                       </tr>
                     ))}
