@@ -1670,178 +1670,179 @@ export function InventoryModule() {
       )}
 
       {lowStockRows.length > 0 && (
-        <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
-          <Card className="border-red-200 shadow-sm">
-            <CardHeader className="space-y-3">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <CardTitle className="text-base">Alertas de stock</CardTitle>
-                  <p className="text-sm text-muted-foreground">
-                    Prioriza primero los articulos agotados.
-                  </p>
-                </div>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  onClick={() =>
-                    criticalTableRef.current?.scrollIntoView({
-                      behavior: "smooth",
-                      block: "start",
-                    })
-                  }
-                >
-                  Ver tabla critica
-                </Button>
-              </div>
-            </CardHeader>
-            <CardContent className="space-y-3">
-              <div className="rounded-lg border border-red-200 bg-red-50/80 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
-                  Sin stock
-                </p>
-                <p className="mt-1 text-3xl font-black text-red-600">
-                  {outOfStockRows.length.toLocaleString()}
-                </p>
-                <p className="text-xs text-red-700">
-                  Productos sin unidades disponibles para vender.
-                </p>
-              </div>
-              <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
-                  Stock critico
-                </p>
-                <p className="mt-1 text-3xl font-black text-amber-600">
-                  {criticalStockRows.length.toLocaleString()}
-                </p>
-                <p className="text-xs text-amber-700">
-                  Productos con stock bajo, pero todavia disponibles.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
+        // <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+        //   <Card className="border-red-200 shadow-sm">
+        //     <CardHeader className="space-y-3">
+        //       <div className="flex items-center justify-between gap-3">
+        //         <div>
+        //           <CardTitle className="text-base">Alertas de stock</CardTitle>
+        //           <p className="text-sm text-muted-foreground">
+        //             Prioriza primero los articulos agotados.
+        //           </p>
+        //         </div>
+        //         <Button
+        //           type="button"
+        //           variant="destructive"
+        //           onClick={() =>
+        //             criticalTableRef.current?.scrollIntoView({
+        //               behavior: "smooth",
+        //               block: "start",
+        //             })
+        //           }
+        //         >
+        //           Ver tabla critica
+        //         </Button>
+        //       </div>
+        //     </CardHeader>
+        //     <CardContent className="space-y-3">
+        //       <div className="rounded-lg border border-red-200 bg-red-50/80 p-4">
+        //         <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+        //           Sin stock
+        //         </p>
+        //         <p className="mt-1 text-3xl font-black text-red-600">
+        //           {outOfStockRows.length.toLocaleString()}
+        //         </p>
+        //         <p className="text-xs text-red-700">
+        //           Productos sin unidades disponibles para vender.
+        //         </p>
+        //       </div>
+        //       <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4">
+        //         <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+        //           Stock critico
+        //         </p>
+        //         <p className="mt-1 text-3xl font-black text-amber-600">
+        //           {criticalStockRows.length.toLocaleString()}
+        //         </p>
+        //         <p className="text-xs text-amber-700">
+        //           Productos con stock bajo, pero todavia disponibles.
+        //         </p>
+        //       </div>
+        //     </CardContent>
+        //   </Card>
 
-          <Card ref={criticalTableRef} className="border-red-200 shadow-sm">
-            <CardHeader className="space-y-3">
-              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <CardTitle className="text-base">
-                    Tabla de stock critico
-                  </CardTitle>
-                  <p className="text-sm text-muted-foreground">
-                    Lista directa para reponer articulos con faltante.
-                  </p>
-                </div>
-                <Badge className="w-fit bg-red-100 text-red-800 hover:bg-red-100">
-                  {lowStockRows.length} articulos en alerta
-                </Badge>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="overflow-hidden rounded-xl border">
-                <div className="overflow-x-auto">
-                  <table className="w-full text-sm">
-                    <thead className="bg-muted/50">
-                      <tr>
-                        <th className="px-4 py-3 text-left font-medium">
-                          Producto
-                        </th>
-                        <th className="px-4 py-3 text-left font-medium">
-                          Stock
-                        </th>
-                        <th className="px-4 py-3 text-left font-medium">
-                          Minimo
-                        </th>
-                        <th className="px-4 py-3 text-left font-medium">
-                          Faltante
-                        </th>
-                        <th className="px-4 py-3 text-left font-medium">
-                          Estado
-                        </th>
-                        <th className="px-4 py-3 text-right font-medium">
-                          Acciones
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y">
-                      {lowStockRows.map((row) => {
-                        const linkedInventoryItem =
-                          inventoryByProductId.get(row.productId) ?? null;
-                        const isOutOfStock =
-                          Number(row.stock ?? 0) <= Number.EPSILON;
+        //   {/* <Card ref={criticalTableRef} className="border-red-200 shadow-sm">
+        //     <CardHeader className="space-y-3">
+        //       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        //         <div>
+        //           <CardTitle className="text-base">
+        //             Tabla de stock critico
+        //           </CardTitle>
+        //           <p className="text-sm text-muted-foreground">
+        //             Lista directa para reponer articulos con faltante.
+        //           </p>
+        //         </div>
+        //         <Badge className="w-fit bg-red-100 text-red-800 hover:bg-red-100">
+        //           {lowStockRows.length} articulos en alerta
+        //         </Badge>
+        //       </div>
+        //     </CardHeader>
+        //     <CardContent>
+        //       <div className="overflow-hidden rounded-xl border">
+        //         <div className="overflow-x-auto">
+        //           <table className="w-full text-sm">
+        //             <thead className="bg-muted/50">
+        //               <tr>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Producto
+        //                 </th>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Stock
+        //                 </th>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Minimo
+        //                 </th>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Faltante
+        //                 </th>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Estado
+        //                 </th>
+        //                 <th className="px-4 py-3 text-right font-medium">
+        //                   Acciones
+        //                 </th>
+        //               </tr>
+        //             </thead>
+        //             <tbody className="divide-y">
+        //               {lowStockRows.map((row) => {
+        //                 const linkedInventoryItem =
+        //                   inventoryByProductId.get(row.productId) ?? null;
+        //                 const isOutOfStock =
+        //                   Number(row.stock ?? 0) <= Number.EPSILON;
 
-                        return (
-                          <tr
-                            key={row.productId}
-                            className="transition-colors hover:bg-muted/25"
-                          >
-                            <td className="px-4 py-3">
-                              <div>
-                                <p className="font-medium">{row.productName}</p>
-                                <p className="text-xs text-muted-foreground">
-                                  {row.category?.name ?? "Sin categoria"}
-                                </p>
-                              </div>
-                            </td>
-                            <td className="px-4 py-3 font-semibold">
-                              {Number(row.stock ?? 0).toLocaleString("es-AR")}
-                            </td>
-                            <td className="px-4 py-3">
-                              {Number(row.minStock ?? 0).toLocaleString("es-AR")}
-                            </td>
-                            <td className="px-4 py-3 font-bold text-red-600">
-                              {Number(row.shortageQty ?? 0).toLocaleString("es-AR")}
-                            </td>
-                            <td className="px-4 py-3">
-                              <Badge
-                                className={
-                                  isOutOfStock
-                                    ? "bg-red-100 text-red-800"
-                                    : "bg-amber-100 text-amber-800"
-                                }
-                              >
-                                {isOutOfStock ? "Sin stock" : "Critico"}
-                              </Badge>
-                            </td>
-                            <td className="px-4 py-3">
-                              <div className="flex justify-end gap-2">
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => {
-                                    setSearchQuery(row.productName);
-                                    setCurrentPage(1);
-                                  }}
-                                >
-                                  Filtrar
-                                </Button>
-                                <Button
-                                  type="button"
-                                  size="sm"
-                                  onClick={() => {
-                                    if (!linkedInventoryItem) return;
-                                    setStockDetailTarget({
-                                      productId: row.productId,
-                                      productName: row.productName,
-                                      item: linkedInventoryItem,
-                                    });
-                                  }}
-                                  disabled={!linkedInventoryItem}
-                                >
-                                  Detalle
-                                </Button>
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+        //                 return (
+        //                   <tr
+        //                     key={row.productId}
+        //                     className="transition-colors hover:bg-muted/25"
+        //                   >
+        //                     <td className="px-4 py-3">
+        //                       <div>
+        //                         <p className="font-medium">{row.productName}</p>
+        //                         <p className="text-xs text-muted-foreground">
+        //                           {row.category?.name ?? "Sin categoria"}
+        //                         </p>
+        //                       </div>
+        //                     </td>
+        //                     <td className="px-4 py-3 font-semibold">
+        //                       {Number(row.stock ?? 0).toLocaleString("es-AR")}
+        //                     </td>
+        //                     <td className="px-4 py-3">
+        //                       {Number(row.minStock ?? 0).toLocaleString("es-AR")}
+        //                     </td>
+        //                     <td className="px-4 py-3 font-bold text-red-600">
+        //                       {Number(row.shortageQty ?? 0).toLocaleString("es-AR")}
+        //                     </td>
+        //                     <td className="px-4 py-3">
+        //                       <Badge
+        //                         className={
+        //                           isOutOfStock
+        //                             ? "bg-red-100 text-red-800"
+        //                             : "bg-amber-100 text-amber-800"
+        //                         }
+        //                       >
+        //                         {isOutOfStock ? "Sin stock" : "Critico"}
+        //                       </Badge>
+        //                     </td>
+        //                     <td className="px-4 py-3">
+        //                       <div className="flex justify-end gap-2">
+        //                         <Button
+        //                           type="button"
+        //                           size="sm"
+        //                           variant="outline"
+        //                           onClick={() => {
+        //                             setSearchQuery(row.productName);
+        //                             setCurrentPage(1);
+        //                           }}
+        //                         >
+        //                           Filtrar
+        //                         </Button>
+        //                         <Button
+        //                           type="button"
+        //                           size="sm"
+        //                           onClick={() => {
+        //                             if (!linkedInventoryItem) return;
+        //                             setStockDetailTarget({
+        //                               productId: row.productId,
+        //                               productName: row.productName,
+        //                               item: linkedInventoryItem,
+        //                             });
+        //                           }}
+        //                           disabled={!linkedInventoryItem}
+        //                         >
+        //                           Detalle
+        //                         </Button>
+        //                       </div>
+        //                     </td>
+        //                   </tr>
+        //                 );
+        //               })}
+        //             </tbody>
+        //           </table>
+        //         </div>
+        //       </div>
+        //     </CardContent>
+        //   </Card> */}
+        // </div>
+        <div></div>
       )}
 
       <Card>
