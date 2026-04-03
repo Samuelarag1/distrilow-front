@@ -1,14 +1,14 @@
-import type { PaymentMethod } from "@/lib/api-types";
-
-export type SalePaymentType =
-  | "MIXTO"
-  | "SOLO_EFECTIVO"
-  | "SOLO_TRANSFERENCIA"
-  | "SIN_PAGO";
+import type {
+  PaymentMethod,
+  SalePaymentBreakdownByMethod as ApiSalePaymentBreakdownByMethod,
+  SalePaymentType,
+} from "@/lib/api-types";
 
 export type SalePaymentBreakdownByMethod = {
   cash: number;
   transfer: number;
+  card: number;
+  other: number;
 };
 
 const PAYMENT_AMOUNT_THRESHOLD = 0.0001;
@@ -32,6 +32,9 @@ export function normalizeSalePaymentMethodKey(method: unknown) {
 
   if (normalized === "EFECTIVO") return "CASH";
   if (normalized === "TRANSFERENCIA") return "TRANSFER";
+  if (normalized === "DEBITO") return "DEBIT_CARD";
+  if (normalized === "CREDITO") return "CREDIT_CARD";
+  if (normalized === "TARJETA") return "CARD";
   return normalized;
 }
 
@@ -75,17 +78,36 @@ export function normalizeSalePaymentBreakdown(
 export function getSalePaymentBreakdownByMethod(
   value: unknown
 ): SalePaymentBreakdownByMethod {
+  const source =
+    value && typeof value === "object" && !Array.isArray(value)
+      ? (value as ApiSalePaymentBreakdownByMethod)
+      : null;
   const breakdown = normalizeSalePaymentBreakdown(value);
+  const cardBreakdownTotal = [
+    breakdown.CARD,
+    breakdown.DEBIT_CARD,
+    breakdown.CREDIT_CARD,
+    breakdown.DEBITO,
+    breakdown.CREDITO,
+  ].reduce((sum, amount) => sum + toFiniteNumber(amount, 0), 0);
+  const otherKnownTotals = [
+    breakdown.OTHER,
+    breakdown.MERCADO_PAGO,
+    breakdown.MP,
+  ].reduce((sum, amount) => sum + toFiniteNumber(amount, 0), 0);
 
   return {
-    cash: toFiniteNumber(breakdown.CASH ?? breakdown.cash, 0),
+    cash: toFiniteNumber(source?.cash, breakdown.CASH ?? breakdown.cash ?? 0),
     transfer: toFiniteNumber(
+      source?.transfer,
       breakdown.TRANSFER ??
         breakdown.transfer ??
         breakdown.TRANSFERENCIA ??
-        breakdown.transferencia,
-      0
+        breakdown.transferencia ??
+        0
     ),
+    card: toFiniteNumber(source?.card, cardBreakdownTotal),
+    other: toFiniteNumber(source?.other, otherKnownTotals),
   };
 }
 
@@ -96,24 +118,31 @@ export function classifySalePaymentType(
     toFiniteNumber(breakdownByMethod.cash, 0) > PAYMENT_AMOUNT_THRESHOLD;
   const hasTransfer =
     toFiniteNumber(breakdownByMethod.transfer, 0) > PAYMENT_AMOUNT_THRESHOLD;
+  const hasCard =
+    toFiniteNumber(breakdownByMethod.card, 0) > PAYMENT_AMOUNT_THRESHOLD;
+  const hasOther =
+    toFiniteNumber(breakdownByMethod.other, 0) > PAYMENT_AMOUNT_THRESHOLD;
+  const activeMethodCount = [hasCash, hasTransfer, hasCard, hasOther].filter(
+    Boolean
+  ).length;
 
-  if (hasCash && hasTransfer) return "MIXTO";
-  if (hasCash) return "SOLO_EFECTIVO";
-  if (hasTransfer) return "SOLO_TRANSFERENCIA";
-  return "SIN_PAGO";
+  if (activeMethodCount > 1) return "MIXED";
+  if (hasCash) return "CASH";
+  if (hasTransfer) return "TRANSFER";
+  return "OTHER";
 }
 
 export function getSalePaymentTypeLabel(type: SalePaymentType) {
-  if (type === "MIXTO") return "Mixto";
-  if (type === "SOLO_EFECTIVO") return "Efectivo";
-  if (type === "SOLO_TRANSFERENCIA") return "Transferencia";
-  return "Sin pago";
+  if (type === "MIXED") return "Mixto";
+  if (type === "CASH") return "Efectivo";
+  if (type === "TRANSFER") return "Transferencia";
+  return "Otro";
 }
 
 export function getSalePaymentTypeBadgeClassName(type: SalePaymentType) {
-  if (type === "MIXTO") return "text-sky-800 bg-orange-100 text-orange-800";
-  if (type === "SOLO_EFECTIVO") return "bg-emerald-100 text-emerald-800";
-  if (type === "SOLO_TRANSFERENCIA") return "bg-blue-100 text-blue-800";
+  if (type === "MIXED") return "bg-orange-100 text-orange-800";
+  if (type === "CASH") return "bg-emerald-100 text-emerald-800";
+  if (type === "TRANSFER") return "bg-blue-100 text-blue-800";
   return "bg-slate-100 text-slate-700";
 }
 

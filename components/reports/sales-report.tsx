@@ -22,7 +22,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { format } from "date-fns";
 import { Download } from "lucide-react";
 import useSWR from "swr";
 
@@ -30,8 +29,10 @@ import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
+import { useToast } from "@/hooks/use-toast";
 import { formatReportingPeriodLabel } from "@/lib/reports/reporting-sales-history";
 import { getRollingMonthRange } from "@/lib/reports/rolling-month";
+import { createMonthSelection, formatMonthInputValue } from "@/lib/reports/month-selection";
 import type {
   MeasurementType,
   ReportsSalesPricingSourcesSummaryItem,
@@ -62,10 +63,6 @@ type ProductPricingSnapshot = {
   retailPrice: number;
   wholesalePrice: number;
 };
-
-function toYmd(value: Date) {
-  return format(value, "yyyy-MM-dd");
-}
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -122,6 +119,79 @@ function formatQuantity(value: number, maximumFractionDigits = 3) {
 
 function formatPercent(value: number) {
   return `${Number(value ?? 0).toFixed(2)}%`;
+}
+
+function formatMonthLabel(value: string) {
+  const parsed = new Date(`${String(value ?? "").trim()}-01T12:00:00`);
+  if (Number.isNaN(parsed.getTime())) return value || "-";
+
+  return new Intl.DateTimeFormat("es-AR", {
+    month: "long",
+    year: "numeric",
+  }).format(parsed);
+}
+
+function formatMeasurementLabel(value: MeasurementType | null) {
+  if (value === "kg") return "Kg";
+  if (value === "gram") return "Gr";
+  if (value === "liter") return "Litros";
+  if (value === "ml") return "Ml";
+  if (value === "unit") return "Unidad";
+  return "-";
+}
+
+function formatProductQuantity(value: number, measurementType: MeasurementType | null) {
+  return formatQuantity(
+    value,
+    measurementType === "unit" || measurementType === null ? 0 : 3
+  );
+}
+
+function formatAverageTicketLikeValue(revenue: number, quantity: number) {
+  if (!Number.isFinite(quantity) || quantity <= 0) return "-";
+  return formatMoney(revenue / quantity);
+}
+
+function formatRevenueShare(value: number, total: number) {
+  if (!Number.isFinite(total) || total <= 0) return "0.00%";
+  return formatPercent((value / total) * 100);
+}
+
+function buildSalesExportRows(
+  items: ReportsTopProductItem[],
+  totalRevenue: number
+) {
+  return items.map((item, index) => {
+    const measurementType = getTopProductMeasurementType(item);
+    const unitsTotal = Number(item.unitsTotal ?? 0);
+    const revenueTotal = Number(item.revenueTotal ?? 0);
+    const costTotal = Number(item.costTotal ?? 0);
+    const marginTotal = Number(item.marginTotal ?? 0);
+
+    return {
+      posicion: index + 1,
+      producto: item.productName,
+      categoria: item.categoryName ?? "Sin categoria",
+      medida: formatMeasurementLabel(measurementType),
+      cantidadTotal: formatProductQuantity(unitsTotal, measurementType),
+      precioPromedio: formatAverageTicketLikeValue(revenueTotal, unitsTotal),
+      ingresosTotal: formatMoney(revenueTotal),
+      participacionIngresos: formatRevenueShare(revenueTotal, totalRevenue),
+      costoTotal: formatMoney(costTotal),
+      gananciaTotal: formatMoney(marginTotal),
+      margenPct: formatPercent(Number(item.marginPct ?? 0)),
+      cantidadMinorista: formatProductQuantity(
+        Number(item.unitsRetail ?? 0),
+        measurementType
+      ),
+      ingresosMinorista: formatMoney(Number(item.revenueRetail ?? 0)),
+      cantidadMayorista: formatProductQuantity(
+        Number(item.unitsWholesale ?? 0),
+        measurementType
+      ),
+      ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
+    };
+  });
 }
 
 function calculateMarginPctFromConfiguredPrice(
@@ -182,25 +252,36 @@ function getTopProductMarginBreakdown(
 
 export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const { branchId } = useUser();
+  const { toast } = useToast();
   const [detailSearchInput, setDetailSearchInput] = useState("");
   const [detailPage, setDetailPage] = useState(1);
+  const [isExporting, setIsExporting] = useState(false);
   const debouncedDetailSearch = useDebouncedValue(detailSearchInput, 350);
   const detailSearchAbortControllerRef = useRef<AbortController | null>(null);
+  const defaultRange = useMemo(() => {
+    const rollingRange = getRollingMonthRange();
+    return {
+      from: dateRange?.from ?? rollingRange.from,
+      to: dateRange?.to ?? rollingRange.to,
+    };
+  }, [dateRange?.from, dateRange?.to]);
+  const [selectedMonth, setSelectedMonth] = useState(() =>
+    formatMonthInputValue(defaultRange.to)
+  );
 
   const range = useMemo(() => {
-    const defaultRange = getRollingMonthRange();
-    const from = dateRange?.from ?? defaultRange.from;
-    const to = dateRange?.to ?? defaultRange.to;
-
-    return {
-      from,
-      to,
-      fromYmd: toYmd(from),
-      toYmd: toYmd(to),
-    };
-  }, [dateRange]);
+    return createMonthSelection(defaultRange.from, defaultRange.to, {
+      fromMonth: selectedMonth,
+      toMonth: selectedMonth,
+    });
+  }, [defaultRange.from, defaultRange.to, selectedMonth]);
 
   const normalizedDetailSearch = debouncedDetailSearch.trim();
+
+  const handleSelectedMonthChange = (value: string) => {
+    setSelectedMonth(value);
+    setDetailPage(1);
+  };
 
   const {
     data: overviewData,
@@ -766,34 +847,160 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   );
 
   const exportColumns = [
-    { key: "posicion", label: "#" },
+    { key: "posicion", label: "#", align: "right" as const },
     { key: "producto", label: "Producto" },
     { key: "categoria", label: "Categoria" },
-    { key: "unidadesTotal", label: "Unidades Total" },
-    { key: "ingresosTotal", label: "Ingresos Total" },
-    { key: "unidadesMinorista", label: "Unid. Minorista" },
-    { key: "ingresosMinorista", label: "Ingresos Minorista" },
-    { key: "unidadesMayorista", label: "Unid. Mayorista" },
-    { key: "ingresosMayorista", label: "Ingresos Mayorista" },
-    { key: "margenPct", label: "Margen % Global" },
-    { key: "margenPctMinMay", label: "Margen % Min/May" },
+    { key: "medida", label: "Medida", align: "center" as const },
+    { key: "cantidadTotal", label: "Cantidad Total", align: "right" as const },
+    { key: "precioPromedio", label: "Precio Promedio", align: "right" as const },
+    { key: "ingresosTotal", label: "Ingresos Total", align: "right" as const },
+    {
+      key: "participacionIngresos",
+      label: "% Ingresos",
+      align: "right" as const,
+    },
+    { key: "costoTotal", label: "Costo Total", align: "right" as const },
+    { key: "gananciaTotal", label: "Ganancia Total", align: "right" as const },
+    { key: "margenPct", label: "Margen %", align: "right" as const },
+    {
+      key: "cantidadMinorista",
+      label: "Cant. Minorista",
+      align: "right" as const,
+    },
+    {
+      key: "ingresosMinorista",
+      label: "Ingresos Minorista",
+      align: "right" as const,
+    },
+    {
+      key: "cantidadMayorista",
+      label: "Cant. Mayorista",
+      align: "right" as const,
+    },
+    {
+      key: "ingresosMayorista",
+      label: "Ingresos Mayorista",
+      align: "right" as const,
+    },
   ];
 
-  const handleExport = (formatType: "csv" | "pdf") => {
-    const payload = {
-      filename: "reporte-ventas",
-      title: "Reporte de Ventas",
-      subtitle: `Periodo ${range.fromYmd} a ${range.toYmd}.`,
-      columns: exportColumns,
-      rows: tableRows,
-    };
+  const handleExport = async (formatType: "csv" | "pdf") => {
+    if (!branchId) return;
 
-    if (formatType === "csv") {
-      exportRowsToCsv(payload);
-      return;
+    try {
+      setIsExporting(true);
+
+      const exportItems: ReportsTopProductItem[] = [];
+      const exportPageSize = 100;
+      let page = 1;
+      let hasMore = true;
+      let exportWasCapped = false;
+
+      while (hasMore && exportItems.length < TOP_PRODUCTS_FETCH_LIMIT) {
+        const remaining = TOP_PRODUCTS_FETCH_LIMIT - exportItems.length;
+        const response = await backendApi.reporting.sales.topProducts.report(
+          {
+            from: range.fromYmd,
+            to: range.toYmd,
+            limit: Math.min(exportPageSize, remaining),
+            page,
+            branchId: branchId ?? undefined,
+          },
+          branchId
+        );
+
+        const pageItems = Array.isArray(response?.items) ? response.items : [];
+        exportItems.push(...pageItems);
+
+        const pageHasMore =
+          typeof response?.meta?.hasMore === "boolean"
+            ? response.meta.hasMore
+            : typeof response?.hasMore === "boolean"
+            ? response.hasMore
+            : pageItems.length >= Math.min(exportPageSize, remaining);
+
+        if (pageHasMore && exportItems.length >= TOP_PRODUCTS_FETCH_LIMIT) {
+          exportWasCapped = true;
+        }
+
+        hasMore = pageHasMore && pageItems.length > 0;
+        page += 1;
+      }
+
+      const exportRows = buildSalesExportRows(
+        exportItems,
+        Number(effectiveTotals.revenueTotal ?? 0)
+      );
+      const exportSummary = [
+        {
+          label: "Mes",
+          value: formatMonthLabel(selectedMonth),
+        },
+        {
+          label: "Ingresos Totales",
+          value: formatMoney(effectiveTotals.revenueTotal),
+        },
+        {
+          label: "Productos Exportados",
+          value: exportRows.length,
+        },
+        {
+          label: "Unidades",
+          value: formatQuantity(displayedSoldUnits),
+        },
+        {
+          label: "Kilos",
+          value: formatQuantity(displayedSoldKilos),
+        },
+        {
+          label: "Efectivo",
+          value: formatMoney(cashSalesTotal),
+        },
+        {
+          label: "Transferencia",
+          value: formatMoney(transferSalesTotal),
+        },
+        ...(profitabilitySummary
+          ? [
+              {
+                label: "Rentabilidad Estimada",
+                value: `${formatMoney(
+                  profitabilitySummary.marginTotal
+                )} (${profitabilitySummary.marginPct.toFixed(2)}%)`,
+              },
+            ]
+          : []),
+      ];
+
+      const payload = {
+        filename: `reporte-ventas-${selectedMonth}`,
+        title: "Reporte de Ventas",
+        subtitle: `Mes ${formatMonthLabel(selectedMonth)}. Periodo ${range.fromYmd} a ${range.toYmd}.${exportWasCapped ? ` Export limitado a ${TOP_PRODUCTS_FETCH_LIMIT} productos.` : ""}`,
+        columns: exportColumns,
+        rows: exportRows,
+        summary: exportSummary,
+        emptyMessage: "No hay productos vendidos en el mes seleccionado.",
+        orientation: "landscape" as const,
+      };
+
+      if (formatType === "csv") {
+        exportRowsToCsv(payload);
+        return;
+      }
+
+      exportRowsToPdf(payload);
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "No se pudo exportar el reporte",
+        description:
+          error instanceof Error
+            ? error.message
+            : "Intenta nuevamente en unos segundos.",
+      });
+    } finally {
+      setIsExporting(false);
     }
-
-    exportRowsToPdf(payload);
   };
 
   if (!branchId) {
@@ -809,27 +1016,43 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   return (
     <div className="space-y-4">
       <div className="flex flex-col gap-2 sm:flex-row sm:justify-end">
+        <div className="space-y-1 sm:mr-auto">
+          <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+            Mes
+          </p>
+          <Input
+            type="month"
+            value={selectedMonth}
+            onChange={(event) => handleSelectedMonthChange(event.target.value)}
+            className="min-w-[160px]"
+          />
+        </div>
         <Button
           className="w-full sm:w-auto"
           variant="outline"
           size="sm"
-          onClick={() => handleExport("csv")}
-          disabled={tableRows.length === 0}
+          onClick={() => void handleExport("csv")}
+          disabled={tableRows.length === 0 || isExporting}
         >
           <Download className="mr-2 h-4 w-4" />
-          Exportar CSV
+          {isExporting ? "Exportando..." : "Exportar CSV"}
         </Button>
         <Button
           className="w-full sm:w-auto"
           variant="outline"
           size="sm"
-          onClick={() => handleExport("pdf")}
-          disabled={tableRows.length === 0}
+          onClick={() => void handleExport("pdf")}
+          disabled={tableRows.length === 0 || isExporting}
         >
           <Download className="mr-2 h-4 w-4" />
-          Exportar PDF
+          {isExporting ? "Exportando..." : "Exportar PDF"}
         </Button>
       </div>
+
+      <p className="text-sm text-muted-foreground">
+        El reporte muestra las ventas del mes seleccionado, desde{" "}
+        {range.fromYmd} hasta {range.toYmd}.
+      </p>
 
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-6">
         <Card>
@@ -964,6 +1187,8 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
       {!isLoading && !error && (
         <>
+       
+
           <div className="grid gap-4 lg:grid-cols-7">
             <Card className="lg:col-span-4">
               <CardHeader>

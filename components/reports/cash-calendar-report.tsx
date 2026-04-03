@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   addMonths,
+  endOfMonth,
   format,
   isSameMonth,
   startOfMonth,
@@ -40,13 +41,19 @@ import {
   YAxis,
 } from "recharts";
 import { exportRowsToPdf } from "@/lib/report-export";
+import {
+  buildCashOverviewFromLegacyDailyBook,
+  buildCashOverviewFromLegacyMonthly,
+  getCashOutflowLabel,
+  normalizeCashOverviewResponse,
+  type CashOverviewResult,
+  type CashOverviewRow,
+} from "@/lib/adapters/cash-overview";
 
 import type {
   CashBookEntry,
   CashBookDailyResponse,
   CashSession,
-  ReportsCashMonthlyItem,
-  ReportsCashMonthlyResponse,
 } from "@/lib/api-types";
 
 function formatMoney(value: number, maximumFractionDigits = 2) {
@@ -55,6 +62,37 @@ function formatMoney(value: number, maximumFractionDigits = 2) {
     currency: "ARS",
     maximumFractionDigits,
   });
+}
+
+function parseMonthDate(value: unknown) {
+  if (typeof value !== "string") return null;
+
+  const normalized = value.trim();
+  if (!normalized) return null;
+
+  const monthOnlyMatch = normalized.match(/^(\d{4})-(\d{2})$/);
+  if (monthOnlyMatch) {
+    const parsed = new Date(`${normalized}-01T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const fullDateMatch = normalized.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (fullDateMatch) {
+    const parsed = new Date(`${normalized}T12:00:00`);
+    return Number.isNaN(parsed.getTime()) ? null : parsed;
+  }
+
+  const parsed = new Date(normalized);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function formatMonthValue(value: unknown, pattern: string) {
+  const parsed = parseMonthDate(value);
+  if (!parsed) {
+    return typeof value === "string" && value.trim() ? value : "-";
+  }
+
+  return format(parsed, pattern, { locale: es });
 }
 
 function emptyDailyResponse(date: string): CashBookDailyResponse {
@@ -89,8 +127,6 @@ function emptyDailyResponse(date: string): CashBookDailyResponse {
 
 const DAILY_MOVEMENTS_LIMIT = 5;
 const DAILY_ENTRIES_FETCH_LIMIT = 500;
-const CASH_PURCHASE_REASON_PREFIX = "compra con caja";
-
 function getEntryMethodLabel(method?: string | null) {
   if (method === "CASH") return "Efectivo";
   if (method === "TRANSFER") return "Transferencia";
@@ -108,53 +144,16 @@ function getEntryLabel(entry: CashBookEntry) {
   return entry.notes?.trim() || "Movimiento de caja";
 }
 
-function isCashPurchaseEntry(entry: CashBookEntry) {
-  if (entry.direction !== "OUT") {
-    return false;
-  }
-
-  const label =
-    entry.notes?.trim() ||
-    entry.description?.trim() ||
-    entry.reference?.trim() ||
-    "";
-
-  return label.toLowerCase().startsWith(CASH_PURCHASE_REASON_PREFIX);
-}
-
-function toTimestamp(value?: string | null) {
-  if (!value) return null;
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function entryBelongsToSession(entry: CashBookEntry, session: CashSession) {
-  if (entry.sessionId && entry.sessionId === session.id) {
-    return true;
-  }
-
-  const createdAt = toTimestamp(entry.createdAt);
-  const openedAt = toTimestamp(session.openedAt);
-  if (createdAt === null || openedAt === null) {
-    return false;
-  }
-
-  const closedAt = toTimestamp(session.closedAt);
-  if (closedAt === null) {
-    return createdAt >= openedAt;
-  }
-
-  return createdAt >= openedAt && createdAt <= closedAt;
-}
-
 export function CashCalendarReport() {
   const { branchId } = useUser();
   const [visibleMonth, setVisibleMonth] = useState(() =>
     startOfMonth(new Date())
   );
   const [selectedDate, setSelectedDate] = useState(() => new Date());
-  const [monthlyPayload, setMonthlyPayload] =
-    useState<ReportsCashMonthlyResponse | null>(null);
+  const [monthlyOverview, setMonthlyOverview] =
+    useState<CashOverviewResult | null>(null);
+  const [dayOverview, setDayOverview] = useState<CashOverviewRow | null>(null);
+  const [sessionOverviewRows, setSessionOverviewRows] = useState<CashOverviewRow[]>([]);
   const [dailyPayload, setDailyPayload] =
     useState<CashBookDailyResponse | null>(null);
   const [isMonthlyLoading, setIsMonthlyLoading] = useState(false);
@@ -168,36 +167,64 @@ export function CashCalendarReport() {
 
   const loadMonthly = useCallback(async () => {
     if (!branchId) {
-      setMonthlyPayload(null);
+      setMonthlyOverview(null);
       setError("No hay sucursal activa para consultar cajas.");
       return;
     }
 
     const fromMonth = format(subMonths(visibleMonth, 5), "yyyy-MM");
     const toMonth = format(visibleMonth, "yyyy-MM");
+    const fromDate = `${fromMonth}-01`;
+    const toDate = format(endOfMonth(visibleMonth), "yyyy-MM-dd");
 
     try {
       setIsMonthlyLoading(true);
       setError(null);
 
-      const payload = await backendApi.reporting.cash.monthly(
-        {
+      try {
+        const payload = await backendApi.reporting.cash.overview(
+          {
+            branchId,
+            from: fromDate,
+            to: toDate,
+            groupBy: "month",
+          },
           branchId,
-          fromMonth,
-          toMonth,
-        },
-        branchId,
-        undefined
-      );
+          undefined
+        );
 
-      setMonthlyPayload(payload);
+        setMonthlyOverview(
+          normalizeCashOverviewResponse(payload, {
+            from: fromDate,
+            to: toDate,
+            groupBy: "month",
+          })
+        );
+      } catch {
+        const payload = await backendApi.reporting.cash.monthly(
+          {
+            branchId,
+            fromMonth,
+            toMonth,
+          },
+          branchId,
+          undefined
+        );
+
+        setMonthlyOverview(
+          buildCashOverviewFromLegacyMonthly(payload, {
+            from: fromDate,
+            to: toDate,
+          })
+        );
+      }
     } catch (fetchError) {
       const message =
         fetchError instanceof Error
           ? fetchError.message
           : "No se pudo cargar el reporte mensual de cajas.";
       setError(message);
-      setMonthlyPayload(null);
+      setMonthlyOverview(null);
     } finally {
       setIsMonthlyLoading(false);
     }
@@ -205,6 +232,8 @@ export function CashCalendarReport() {
 
   const loadDaily = useCallback(async () => {
     if (!branchId) {
+      setDayOverview(null);
+      setSessionOverviewRows([]);
       setDailyPayload(emptyDailyResponse(selectedDateYmd));
       setError("No hay sucursal activa para consultar caja diaria.");
       return;
@@ -224,12 +253,59 @@ export function CashCalendarReport() {
       );
 
       setDailyPayload(payload);
+
+      try {
+        const [dayPayload, sessionPayload] = await Promise.all([
+          backendApi.reporting.cash.overview(
+            {
+              branchId,
+              from: selectedDateYmd,
+              to: selectedDateYmd,
+              groupBy: "day",
+            },
+            branchId
+          ),
+          backendApi.reporting.cash.overview(
+            {
+              branchId,
+              from: selectedDateYmd,
+              to: selectedDateYmd,
+              groupBy: "session",
+            },
+            branchId
+          ),
+        ]);
+
+        setDayOverview(
+          normalizeCashOverviewResponse(dayPayload, {
+            from: selectedDateYmd,
+            to: selectedDateYmd,
+            groupBy: "day",
+          }).items[0] ?? null
+        );
+        setSessionOverviewRows(
+          normalizeCashOverviewResponse(sessionPayload, {
+            from: selectedDateYmd,
+            to: selectedDateYmd,
+            groupBy: "session",
+          }).items
+        );
+      } catch {
+        setDayOverview(
+          buildCashOverviewFromLegacyDailyBook(payload, "day").items[0] ?? null
+        );
+        setSessionOverviewRows(
+          buildCashOverviewFromLegacyDailyBook(payload, "session").items
+        );
+      }
     } catch (fetchError) {
       const message =
         fetchError instanceof Error
           ? fetchError.message
           : "No se pudo cargar el libro diario de caja.";
       setError(message);
+      setDayOverview(null);
+      setSessionOverviewRows([]);
       setDailyPayload(emptyDailyResponse(selectedDateYmd));
     } finally {
       setIsDailyLoading(false);
@@ -270,39 +346,47 @@ export function CashCalendarReport() {
 
   const monthlyItems = useMemo(
     () =>
-      (monthlyPayload?.items ?? [])
+      (monthlyOverview?.items ?? [])
         .slice()
-        .sort((a, b) => a.month.localeCompare(b.month)),
-    [monthlyPayload?.items]
+        .sort((a, b) =>
+          String(a.month ?? a.label).localeCompare(String(b.month ?? b.label))
+        ),
+    [monthlyOverview?.items]
   );
 
   const selectedMonthKey = format(visibleMonth, "yyyy-MM");
   const selectedMonth = useMemo(
     () =>
-      monthlyItems.find((item) => item.month === selectedMonthKey) ??
+      monthlyItems.find(
+        (item) => item.month === selectedMonthKey || item.label === selectedMonthKey
+      ) ??
       ({
+        key: selectedMonthKey,
+        label: selectedMonthKey,
+        groupBy: "month",
         month: selectedMonthKey,
-        openingFloatTotal: 0,
-        cashFromSales: 0,
-        transferFromSales: 0,
-        manualIn: 0,
-        manualOut: 0,
-        expectedCashClose: 0,
-        countedCashClose: 0,
+        cashSales: 0,
+        transferSales: 0,
+        salesTotal: 0,
+        manualIncome: 0,
+        cashPurchases: 0,
+        withdrawalsGross: 0,
+        withdrawalsNet: 0,
+        netTotal: 0,
+        expectedCash: 0,
+        countedCash: 0,
         difference: 0,
-        sessionsCount: 0,
-        daysWithClose: 0,
-        avgDifference: 0,
-      } satisfies ReportsCashMonthlyItem),
+        source: {},
+      } satisfies CashOverviewRow),
     [monthlyItems, selectedMonthKey]
   );
 
   const monthlyChartData = useMemo(
     () =>
       monthlyItems.map((item) => ({
-        month: item.month,
-        esperado: Number(item.expectedCashClose ?? 0),
-        contado: Number(item.countedCashClose ?? 0),
+        month: item.month ?? item.label,
+        esperado: Number(item.expectedCash ?? 0),
+        contado: Number(item.countedCash ?? 0),
         diferencia: Number(item.difference ?? 0),
       })),
     [monthlyItems]
@@ -321,112 +405,107 @@ export function CashCalendarReport() {
     );
   }, [dailyPayload]);
 
-  const cashPurchaseEntries = useMemo(
-    () =>
-      (dailyPayload?.entries ?? []).filter((entry) =>
-        isCashPurchaseEntry(entry)
-      ),
-    [dailyPayload?.entries]
-  );
-
-  const cashPurchasesTotal = useMemo(
-    () =>
-      cashPurchaseEntries.reduce(
-        (sum, entry) => sum + Number(entry.amount ?? 0),
-        0
-      ),
-    [cashPurchaseEntries]
-  );
-
-  const cashPurchasesBySessionId = useMemo(() => {
-    const sessions = dailyPayload?.sessions ?? [];
-    const totals = new Map<string, number>();
-
-    cashPurchaseEntries.forEach((entry) => {
-      const matchedSession = sessions.find((session) =>
-        entryBelongsToSession(entry, session)
-      );
-      if (!matchedSession) return;
-
-      totals.set(
-        matchedSession.id,
-        (totals.get(matchedSession.id) ?? 0) + Number(entry.amount ?? 0)
-      );
+  const sessionMetaById = useMemo(() => {
+    const map = new Map<string, CashSession>();
+    (dailyPayload?.sessions ?? []).forEach((session) => {
+      map.set(session.id, session);
     });
+    return map;
+  }, [dailyPayload?.sessions]);
 
-    return totals;
-  }, [cashPurchaseEntries, dailyPayload?.sessions]);
+  const sessionSummaries = useMemo(
+    () =>
+      sessionOverviewRows.map((row, index) => {
+        const session =
+          (row.sessionId ? sessionMetaById.get(row.sessionId) : null) ??
+          dailyPayload?.sessions?.[index] ??
+          null;
 
-  const reportedOutflowTotal = useMemo(
-    () => Number(dailyPayload?.summary.outflow.movementOut ?? 0),
-    [dailyPayload]
+        return {
+          row,
+          session,
+        };
+      }),
+    [dailyPayload?.sessions, sessionMetaById, sessionOverviewRows]
+  );
+
+  const selectedDaySummary = useMemo(
+    () =>
+      dayOverview ??
+      ({
+        key: selectedDateYmd,
+        label: selectedDateYmd,
+        groupBy: "day",
+        date: selectedDateYmd,
+        cashSales: 0,
+        transferSales: 0,
+        salesTotal: 0,
+        manualIncome: 0,
+        cashPurchases: 0,
+        withdrawalsGross: 0,
+        withdrawalsNet: 0,
+        netTotal: 0,
+        countedCash: 0,
+        expectedCash: 0,
+        difference: 0,
+        source: {},
+      } satisfies CashOverviewRow),
+    [dayOverview, selectedDateYmd]
   );
 
   const withdrawalsTotal = useMemo(
-    () => Math.max(0, reportedOutflowTotal - cashPurchasesTotal),
-    [reportedOutflowTotal, cashPurchasesTotal]
+    () => Number(selectedDaySummary.withdrawalsNet ?? 0),
+    [selectedDaySummary]
   );
 
   const cashIncomeTotal = useMemo(() => {
-    if (!dailyPayload) return 0;
-    return Number(dailyPayload.summary.income.cashFromPayments ?? 0);
-  }, [dailyPayload]);
+    return Number(selectedDaySummary.cashSales ?? 0);
+  }, [selectedDaySummary]);
 
   const transferIncomeTotal = useMemo(
-    () => Number(dailyPayload?.summary.income.transferFromPayments ?? 0),
-    [dailyPayload]
+    () => Number(selectedDaySummary.transferSales ?? 0),
+    [selectedDaySummary]
   );
 
   const manualIncomeTotal = useMemo(
-    () => Number(dailyPayload?.summary.income.movementIn ?? 0),
-    [dailyPayload]
+    () => Number(selectedDaySummary.manualIncome ?? 0),
+    [selectedDaySummary]
+  );
+
+  const cashPurchasesTotal = useMemo(
+    () => Number(selectedDaySummary.cashPurchases ?? 0),
+    [selectedDaySummary]
   );
 
   const dailyGrossIncomeTotal = useMemo(() => {
-    if (!dailyPayload) return 0;
-    return cashIncomeTotal + transferIncomeTotal + manualIncomeTotal;
-  }, [cashIncomeTotal, dailyPayload, manualIncomeTotal, transferIncomeTotal]);
+    return Number(selectedDaySummary.salesTotal ?? 0) + manualIncomeTotal;
+  }, [manualIncomeTotal, selectedDaySummary]);
 
   const nextShiftAmount = useMemo(() => {
-    if (!dailyPayload) return 0;
     if (
       latestClosedSession?.countedCash !== undefined &&
       latestClosedSession?.countedCash !== null
     ) {
       return Number(latestClosedSession.countedCash);
     }
-    return Number(dailyPayload.summary.countedCash ?? 0);
-  }, [dailyPayload, latestClosedSession]);
+    return Number(selectedDaySummary.countedCash ?? 0);
+  }, [latestClosedSession, selectedDaySummary]);
 
   const exportDailyPdf = useCallback(() => {
     if (!dailyPayload) return;
 
-    const sessionsSummary = dailyPayload.sessions.map((session, index) => {
-      const cashIncome = Number(session.totals?.cashPayments ?? 0);
-      const transferIncome = Number(session.totals?.transferPayments ?? 0);
-      const manualIncome = Number(session.totals?.movementIn ?? 0);
-      const purchasesWithCash = Number(
-        cashPurchasesBySessionId.get(session.id) ?? 0
-      );
-      const withdrawalsOut = Math.max(
-        0,
-        Number(session.totals?.movementOut ?? 0) - purchasesWithCash
-      );
-      const sessionIncomeTotal = cashIncome + transferIncome + manualIncome;
-      const sessionNetTotal =
-        sessionIncomeTotal - withdrawalsOut - purchasesWithCash;
-
-      return {
-        label: `Sesion ${index + 1}`,
-        cashIncome,
-        transferIncome,
-        manualIncome,
-        withdrawalsOut,
-        purchasesWithCash,
-        sessionIncomeTotal,
-        sessionNetTotal,
-      };
-    });
+    const sessionsSummary = sessionSummaries.map(({ row, session }, index) => ({
+      label: session ? `Sesion ${index + 1}` : row.label,
+      cashIncome: row.cashSales,
+      transferIncome: row.transferSales,
+      manualIncome: row.manualIncome,
+      withdrawalsOut: row.withdrawalsNet,
+      purchasesWithCash: row.cashPurchases,
+      unclassifiedOutflow: row.unclassifiedOutflow ?? 0,
+      sessionIncomeTotal: row.salesTotal + row.manualIncome,
+      sessionNetTotal: row.netTotal,
+      outflowLabel: getCashOutflowLabel(row),
+    }));
 
     const totalCashIncome = sessionsSummary.reduce(
       (sum, session) => sum + session.cashIncome,
@@ -448,9 +527,12 @@ export function CashCalendarReport() {
       (sum, session) => sum + session.purchasesWithCash,
       0
     );
-    const totalIncome =
-      totalCashIncome + totalTransferIncome + totalManualIncome;
-    const totalNetDay = totalIncome - totalWithdrawals - totalCashPurchases;
+    const totalUnclassifiedOutflow = sessionsSummary.reduce(
+      (sum, session) => sum + session.unclassifiedOutflow,
+      0
+    );
+    const totalIncome = dailyGrossIncomeTotal;
+    const totalNetDay = Number(selectedDaySummary.netTotal ?? 0);
 
     const rows: Array<Record<string, unknown>> = [
       {
@@ -478,6 +560,15 @@ export function CashCalendarReport() {
         detalle: "Total compras con caja",
         valor: `-${formatMoney(totalCashPurchases)}`,
       },
+      ...(totalUnclassifiedOutflow > 0
+        ? [
+            {
+              seccion: "Resumen general",
+              detalle: "Retiros/compras no clasificados",
+              valor: `-${formatMoney(totalUnclassifiedOutflow)}`,
+            },
+          ]
+        : []),
       {
         seccion: "Resumen general",
         detalle: "Total ingresos del dia",
@@ -514,7 +605,7 @@ export function CashCalendarReport() {
         },
         {
           seccion: session.label,
-          detalle: "Retiro de caja",
+          detalle: session.outflowLabel,
           valor: `-${formatMoney(session.withdrawalsOut)}`,
         },
         {
@@ -522,6 +613,15 @@ export function CashCalendarReport() {
           detalle: "Compra con caja",
           valor: `-${formatMoney(session.purchasesWithCash)}`,
         },
+        ...(session.unclassifiedOutflow > 0
+          ? [
+              {
+                seccion: session.label,
+                detalle: "Retiros/compras no clasificados",
+                valor: `-${formatMoney(session.unclassifiedOutflow)}`,
+              },
+            ]
+          : []),
         {
           seccion: session.label,
           detalle: "Total ingresos sesion",
@@ -546,7 +646,7 @@ export function CashCalendarReport() {
       ],
       rows,
     });
-  }, [cashPurchasesBySessionId, dailyPayload, nextShiftAmount]);
+  }, [dailyGrossIncomeTotal, dailyPayload, nextShiftAmount, selectedDaySummary, sessionSummaries]);
 
   return (
     <div className="space-y-4">
@@ -590,15 +690,19 @@ export function CashCalendarReport() {
               </p>
               <p
                 className={`text-2xl font-bold ${
-                  selectedMonth.difference < 0
+                  Number(selectedMonth.difference ?? 0) < 0
                     ? "text-red-600"
                     : "text-emerald-600"
                 }`}
               >
-                {formatMoney(selectedMonth.difference, 0)}
+                {formatMoney(Number(selectedMonth.difference ?? 0), 0)}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Promedio: {formatMoney(selectedMonth.avgDifference, 0)}
+                Promedio:{" "}
+                {formatMoney(
+                  Number(selectedMonth.source.avgDifference ?? 0),
+                  0
+                )}
               </p>
             </div>
 
@@ -606,15 +710,14 @@ export function CashCalendarReport() {
               <p className="text-xs text-muted-foreground">Ingresos</p>
               <p className="text-2xl font-bold">
                 {formatMoney(
-                  Number(selectedMonth.cashFromSales ?? 0) +
-                    Number(selectedMonth.transferFromSales ?? 0),
+                  Number(selectedMonth.salesTotal ?? 0),
                   0
                 )}
               </p>
               <p className="text-[11px] text-muted-foreground">
-                Efectivo: {formatMoney(selectedMonth.cashFromSales, 0)} /
+                Efectivo: {formatMoney(selectedMonth.cashSales, 0)} /
                 Transferencias:{" "}
-                {formatMoney(selectedMonth.transferFromSales, 0)}
+                {formatMoney(selectedMonth.transferSales, 0)}
               </p>
             </div>
           </div>
@@ -643,11 +746,7 @@ export function CashCalendarReport() {
                       tickLine={false}
                       axisLine={false}
                       fontSize={11}
-                      tickFormatter={(val) =>
-                        format(new Date(val + "-01T12:00:00"), "MMM yy", {
-                          locale: es,
-                        })
-                      }
+                      tickFormatter={(val) => formatMonthValue(val, "MMM yy")}
                     />
                     <YAxis tickLine={false} axisLine={false} fontSize={11} />
                     <Tooltip
@@ -703,37 +802,33 @@ export function CashCalendarReport() {
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-border/50 bg-background">
-                    {monthlyItems.map((item) => (
-                      <tr
-                        key={item.month}
-                        className={
-                          item.month === selectedMonthKey
-                            ? "bg-primary/5 font-semibold"
-                            : "hover:bg-muted/30"
-                        }
-                      >
-                        <td className="px-4 py-3 uppercase">
-                          {format(
-                            new Date(item.month + "-01T12:00:00"),
-                            "MMMM yyyy",
-                            { locale: es }
-                          )}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {formatMoney(item.cashFromSales, 0)}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          {formatMoney(item.transferFromSales, 0)}
-                        </td>
-                        <td className="px-4 py-3 text-right font-semibold">
-                          {formatMoney(
-                            Number(item.cashFromSales ?? 0) +
-                              Number(item.transferFromSales ?? 0),
-                            0
-                          )}
-                        </td>
-                      </tr>
-                    ))}
+                    {monthlyItems.map((item) => {
+                      const monthKey = item.month ?? item.label ?? item.key;
+
+                      return (
+                        <tr
+                          key={monthKey}
+                          className={
+                            monthKey === selectedMonthKey
+                              ? "bg-primary/5 font-semibold"
+                              : "hover:bg-muted/30"
+                          }
+                        >
+                          <td className="px-4 py-3 uppercase">
+                            {formatMonthValue(monthKey, "MMMM yyyy")}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {formatMoney(item.cashSales, 0)}
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            {formatMoney(item.transferSales, 0)}
+                          </td>
+                          <td className="px-4 py-3 text-right font-semibold">
+                            {formatMoney(Number(item.salesTotal ?? 0), 0)}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -796,7 +891,7 @@ export function CashCalendarReport() {
                     Sesiones del día
                   </h3>
                   <div className="grid gap-4">
-                    {dailyPayload?.sessions?.length === 0 ? (
+                    {sessionSummaries.length === 0 ? (
                       <div className="flex flex-col items-center justify-center rounded-xl border border-dashed py-12 text-center bg-muted/20">
                         <History className="mb-3 h-10 w-10 text-muted-foreground/20" />
                         <p className="text-sm text-muted-foreground font-medium">
@@ -804,48 +899,58 @@ export function CashCalendarReport() {
                         </p>
                       </div>
                     ) : (
-                      dailyPayload.sessions.map((session) => {
-                        const cashIncome = Number(
-                          session.totals?.cashPayments ?? 0
-                        );
-                        const transferIncome = Number(
-                          session.totals?.transferPayments ?? 0
-                        );
-                        const manualIncome = Number(
-                          session.totals?.movementIn ?? 0
-                        );
-                        const purchasesWithCash = Number(
-                          cashPurchasesBySessionId.get(session.id) ?? 0
-                        );
-                        const withdrawalsOut = Number(
-                          Math.max(
-                            0,
-                            Number(session.totals?.movementOut ?? 0) -
-                              purchasesWithCash
-                          )
-                        );
+                      sessionSummaries.map(({ row, session }) => {
+                        const cashIncome = Number(row.cashSales ?? 0);
+                        const transferIncome = Number(row.transferSales ?? 0);
+                        const manualIncome = Number(row.manualIncome ?? 0);
+                        const purchasesWithCash = Number(row.cashPurchases ?? 0);
+                        const withdrawalsOut = Number(row.withdrawalsNet ?? 0);
                         const sessionIncomeTotal =
-                          cashIncome + transferIncome + manualIncome;
+                          Number(row.salesTotal ?? 0) + manualIncome;
                         const projectedOperational = Number(
-                          session.expectedCash ?? 0
+                          row.expectedCash ?? session?.expectedCash ?? 0
                         );
                         const countedOperational =
-                          session.status === "CLOSED"
-                            ? Number(session.countedCash ?? 0)
+                          (row.countedCash ?? null) !== null ||
+                          session?.status === "CLOSED"
+                            ? Number(row.countedCash ?? session?.countedCash ?? 0)
                             : null;
                         const differenceOperational =
-                          session.status === "CLOSED"
-                            ? Number(session.difference ?? 0)
+                          (row.difference ?? null) !== null ||
+                          session?.status === "CLOSED"
+                            ? Number(row.difference ?? session?.difference ?? 0)
                             : 0;
+                        const sessionStatus =
+                          String(
+                            (row.source.status as string | undefined) ??
+                              session?.status ??
+                              "CLOSED"
+                          ).toUpperCase() === "OPEN"
+                            ? "OPEN"
+                            : "CLOSED";
+                        const openedAt =
+                          (row.source.openedAt as string | undefined) ??
+                          session?.openedAt ??
+                          null;
+                        const closedAt =
+                          (row.source.closedAt as string | undefined) ??
+                          session?.closedAt ??
+                          null;
+                        const openingFloat = Number(
+                          (row.source.openingFloat as number | undefined) ??
+                            session?.openingFloat ??
+                            0
+                        );
+                        const salesCount = Number(session?.salesCount ?? 0);
 
                         return (
                           <div
-                            key={session.id}
+                            key={row.sessionId ?? row.key}
                             className="group relative overflow-hidden rounded-xl border bg-card p-5 shadow-sm transition-all hover:shadow-md"
                           >
                             <div
                               className={`absolute left-0 top-0 h-full w-1.5 ${
-                                session.status === "OPEN"
+                                sessionStatus === "OPEN"
                                   ? "bg-emerald-500"
                                   : "bg-blue-600"
                               }`}
@@ -855,35 +960,29 @@ export function CashCalendarReport() {
                                 <div className="flex items-center gap-2">
                                   <Badge
                                     className={
-                                      session.status === "OPEN"
+                                      sessionStatus === "OPEN"
                                         ? "bg-emerald-500 hover:bg-emerald-600"
                                         : "bg-blue-600 hover:bg-blue-700"
                                     }
                                   >
-                                    {session.status === "OPEN"
+                                    {sessionStatus === "OPEN"
                                       ? "ABIERTA"
                                       : "CERRADA"}
                                   </Badge>
                                 </div>
                                 <div className="text-lg font-bold tracking-tight">
-                                  {format(
-                                    new Date(session.openedAt!),
-                                    "HH:mm",
-                                    {
-                                      locale: es,
-                                    }
-                                  )}{" "}
+                                  {openedAt
+                                    ? format(new Date(openedAt), "HH:mm", {
+                                        locale: es,
+                                      })
+                                    : "--:--"}{" "}
                                   <span className="mx-1 text-muted-foreground/50">
                                     →
                                   </span>{" "}
-                                  {session.closedAt
-                                    ? format(
-                                        new Date(session.closedAt),
-                                        "HH:mm",
-                                        {
-                                          locale: es,
-                                        }
-                                      )
+                                  {closedAt
+                                    ? format(new Date(closedAt), "HH:mm", {
+                                        locale: es,
+                                      })
                                     : "En curso"}
                                 </div>
                               </div>
@@ -894,7 +993,7 @@ export function CashCalendarReport() {
                                     Apertura
                                   </p>
                                   <p className="text-sm font-semibold">
-                                    {formatMoney(session.openingFloat, 0)}
+                                    {formatMoney(openingFloat, 0)}
                                   </p>
                                 </div>
                                 <div className="text-right sm:border-r sm:pr-6">
@@ -905,7 +1004,7 @@ export function CashCalendarReport() {
                                     {formatMoney(projectedOperational, 0)}
                                   </p>
                                 </div>
-                                {session.status === "CLOSED" && (
+                                {sessionStatus === "CLOSED" && (
                                   <>
                                     <div className="text-right sm:border-r sm:pr-6">
                                       <p className="text-[10px] font-bold uppercase text-muted-foreground">
@@ -942,7 +1041,7 @@ export function CashCalendarReport() {
                             <div className="mt-4 flex flex-wrap items-center gap-4 border-t pt-3 text-xs text-muted-foreground">
                               <span className="flex items-center gap-1.5 rounded-full bg-muted/50 px-2.5 py-1">
                                 <Ticket className="h-3.5 w-3.5" />
-                                {session.salesCount} Ventas
+                                {salesCount} Ventas
                               </span>
                             </div>
 
@@ -987,6 +1086,16 @@ export function CashCalendarReport() {
                                   {formatMoney(purchasesWithCash, 0)}
                                 </p>
                               </div>
+                              {(row.unclassifiedOutflow ?? 0) > 0 ? (
+                                <div className="rounded-md border bg-background p-2">
+                                  <p className="text-[10px] font-semibold uppercase text-muted-foreground">
+                                    Retiros/compras no clasificados
+                                  </p>
+                                  <p className="font-bold text-orange-600">
+                                    {formatMoney(row.unclassifiedOutflow ?? 0, 0)}
+                                  </p>
+                                </div>
+                              ) : null}
                               <div className="rounded-md border bg-background p-2">
                                 <p className="text-[10px] font-semibold uppercase text-muted-foreground">
                                   Ventas Totales
@@ -1086,7 +1195,7 @@ export function CashCalendarReport() {
                       variant="outline"
                       className="bg-background font-mono"
                     >
-                      {dailyPayload.date}
+                      {selectedDaySummary.date ?? selectedDateYmd}
                     </Badge>
                   </h3>
 
@@ -1110,9 +1219,7 @@ export function CashCalendarReport() {
                       <div className="flex justify-between items-center text-sm">
                         <span className="text-muted-foreground">Efectivo</span>
                         <span className="font-semibold text-foreground">
-                          {formatMoney(
-                            dailyPayload.summary.income.cashFromPayments
-                          )}
+                          {formatMoney(cashIncomeTotal)}
                         </span>
                       </div>
                       <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
@@ -1147,6 +1254,16 @@ export function CashCalendarReport() {
                           {formatMoney(cashPurchasesTotal)}
                         </span>
                       </div>
+                      {(selectedDaySummary.unclassifiedOutflow ?? 0) > 0 ? (
+                        <div className="flex justify-between items-center text-sm border-b border-dashed pb-2">
+                          <span className="text-muted-foreground font-medium">
+                            Retiros/compras no clasificados
+                          </span>
+                          <span className="font-bold text-orange-600">
+                            {formatMoney(selectedDaySummary.unclassifiedOutflow ?? 0)}
+                          </span>
+                        </div>
+                      ) : null}
                     </div>
 
                     <div className="rounded-xl border bg-background px-4 py-5">

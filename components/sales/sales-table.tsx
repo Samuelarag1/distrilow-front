@@ -85,9 +85,21 @@ function matchesSalePaymentFilter(
   filter: SalesPaymentMethodFilter | null
 ) {
   if (!filter) return true;
-  if (filter === "CASH") return sale.paymentType === "SOLO_EFECTIVO";
-  if (filter === "TRANSFER") return sale.paymentType === "SOLO_TRANSFERENCIA";
-  return sale.paymentType === "MIXTO";
+  if (filter === "CASH") return sale.paymentType === "CASH";
+  if (filter === "TRANSFER") return sale.paymentType === "TRANSFER";
+  return sale.paymentType === "MIXED";
+}
+
+function getSalePaymentDisplayLabel(sale: Sale) {
+  if (sale.paidAmount <= Number.EPSILON) {
+    return "Sin pago";
+  }
+
+  return getSalePaymentTypeLabel(sale.paymentType);
+}
+
+function getSalePendingReasonDisplay(sale: Sale | null | undefined) {
+  return sale?.pendingReasonLabel ?? sale?.pendingReason;
 }
 
 export function SalesTable() {
@@ -145,10 +157,16 @@ export function SalesTable() {
         const matchesSearch =
           query.length === 0 ||
           sale.id.toLowerCase().includes(query) ||
-          String(sale.notes ?? "")
+          String(sale.note ?? "")
+            .toLowerCase()
+            .includes(query) ||
+          String(getSalePendingReasonDisplay(sale) ?? "")
             .toLowerCase()
             .includes(query) ||
           String(sale.pendingReason ?? "")
+            .toLowerCase()
+            .includes(query) ||
+          String(sale.originalNotes ?? "")
             .toLowerCase()
             .includes(query);
         const matchesStatus =
@@ -365,17 +383,18 @@ export function SalesTable() {
                             </td>
                             <td className="p-3">
                               <div className="max-w-[260px] space-y-1 text-sm">
-                                {sale.pendingReason ? (
+                                {getSalePendingReasonDisplay(sale) ? (
                                   <p className="font-medium text-amber-700">
-                                    Pendiente: {sale.pendingReason}
+                                    Motivo pendiente:{" "}
+                                    {getSalePendingReasonDisplay(sale)}
                                   </p>
                                 ) : null}
-                                {sale.notes ? (
+                                {sale.note ? (
                                   <p className="text-muted-foreground">
-                                    Nota: {sale.notes}
+                                    Nota: {sale.note}
                                   </p>
                                 ) : null}
-                                {!sale.pendingReason && !sale.notes ? (
+                                {!getSalePendingReasonDisplay(sale) && !sale.note ? (
                                   <p className="text-muted-foreground">
                                     Sin observaciones
                                   </p>
@@ -395,8 +414,22 @@ export function SalesTable() {
                                     sale.paymentType
                                   )}
                                 >
-                                  {getSalePaymentTypeLabel(sale.paymentType)}
+                                  {getSalePaymentDisplayLabel(sale)}
                                 </Badge>
+                                {sale.paymentBreakdownByMethod.card >
+                                Number.EPSILON ? (
+                                  <p className="text-muted-foreground">
+                                    Tarjetas:{" "}
+                                    {formatMoney(sale.paymentBreakdownByMethod.card)}
+                                  </p>
+                                ) : null}
+                                {sale.paymentBreakdownByMethod.other >
+                                Number.EPSILON ? (
+                                  <p className="text-muted-foreground">
+                                    Otros:{" "}
+                                    {formatMoney(sale.paymentBreakdownByMethod.other)}
+                                  </p>
+                                ) : null}
                               </div>
                             </td>
                             <td className="p-3">
@@ -562,12 +595,12 @@ export function SalesTable() {
                   </div>
                   <Badge
                     className={getSalePaymentTypeBadgeClassName(
-                      saleForPayment?.paymentType ?? "SIN_PAGO"
+                      saleForPayment?.paymentType ?? "OTHER"
                     )}
                   >
-                    {getSalePaymentTypeLabel(
-                      saleForPayment?.paymentType ?? "SIN_PAGO"
-                    )}
+                    {saleForPayment
+                      ? getSalePaymentDisplayLabel(saleForPayment)
+                      : getSalePaymentTypeLabel("OTHER")}
                   </Badge>
                 </div>
 
@@ -596,7 +629,7 @@ export function SalesTable() {
                             {formatMoney(
                               item.subtotal ??
                                 Number(item.quantity ?? 0) *
-                                  Number(item.price ?? 0)
+                                  Number(item.unitPrice ?? 0)
                             )}
                           </p>
                         </div>
@@ -610,24 +643,24 @@ export function SalesTable() {
                 </div>
               </div>
 
-              {saleForPayment?.pendingReason ? (
+              {getSalePendingReasonDisplay(saleForPayment) ? (
                 <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
                     Motivo del saldo pendiente
                   </p>
                   <p className="mt-1 text-sm text-amber-950">
-                    {saleForPayment.pendingReason}
+                    {getSalePendingReasonDisplay(saleForPayment)}
                   </p>
                 </div>
               ) : null}
 
-              {saleForPayment?.notes ? (
+              {saleForPayment?.note ? (
                 <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
                     Nota de la venta
                   </p>
                   <p className="mt-1 whitespace-pre-line text-sm text-sky-950">
-                    {saleForPayment.notes}
+                    {saleForPayment.note}
                   </p>
                 </div>
               ) : null}

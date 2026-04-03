@@ -1,6 +1,5 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,7 +12,6 @@ import {
 } from "@/components/ui/dialog";
 import { Link } from "lucide-react";
 import type { Sale } from "@/components/providers/transactions-provider";
-import { backendApi } from "@/lib/backend-api";
 import {
   getPaymentMethodLabel,
   getSalePaymentTypeBadgeClassName,
@@ -35,6 +33,27 @@ function formatHourRange(date: Date): string {
   return `${hour}:${minute}`;
 }
 
+function getSalePaymentDisplayLabel(sale: Sale) {
+  if (sale.paidAmount <= Number.EPSILON) {
+    return "Sin pago";
+  }
+
+  return getSalePaymentTypeLabel(sale.paymentType);
+}
+
+function getSalePendingReasonDisplay(sale: Sale) {
+  return sale.pendingReasonLabel ?? sale.pendingReason;
+}
+
+function getPaymentBreakdownLines(sale: Sale) {
+  return [
+    { label: "Efectivo", amount: sale.paymentBreakdownByMethod.cash },
+    { label: "Transferencia", amount: sale.paymentBreakdownByMethod.transfer },
+    { label: "Tarjetas", amount: sale.paymentBreakdownByMethod.card },
+    { label: "Otros", amount: sale.paymentBreakdownByMethod.other },
+  ].filter((entry) => entry.amount > Number.EPSILON);
+}
+
 export function SalesDetailModal({
   sale,
   open,
@@ -44,77 +63,10 @@ export function SalesDetailModal({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const nameCacheRef = useRef<Map<string, string>>(new Map());
-  const [resolvedNames, setResolvedNames] = useState<Record<string, string>>(
-    {}
-  );
-  const saleId = sale?.id ?? "";
-  const lineItems = useMemo(() => sale?.lineItems ?? [], [sale]);
+  const lineItems = sale?.lineItems ?? [];
   const uniqueProductCount = new Set(lineItems.map((item) => item.productId))
     .size;
   const hasLinkedProducts = lineItems.some((item) => item.linkedProductId);
-
-  const missingProductIds = useMemo(() => {
-    const ids = new Set<string>();
-    lineItems.forEach((item) => {
-      const currentName = String(item.productName ?? "").trim();
-      const isPlaceholder =
-        currentName.length === 0 || currentName.toLowerCase() === "producto";
-      if (isPlaceholder && item.productId) {
-        ids.add(item.productId);
-      }
-    });
-    return [...ids];
-  }, [lineItems]);
-
-  useEffect(() => {
-    let cancelled = false;
-
-    const hydrateFromCache = () => {
-      const cachedNames: Record<string, string> = {};
-      lineItems.forEach((item) => {
-        const cached = nameCacheRef.current.get(item.productId);
-        if (cached) {
-          cachedNames[item.productId] = cached;
-        }
-      });
-      setResolvedNames(cachedNames);
-    };
-
-    const pendingIds = missingProductIds.filter(
-      (productId) => !nameCacheRef.current.has(productId)
-    );
-
-    if (pendingIds.length === 0) {
-      hydrateFromCache();
-      return () => {
-        cancelled = true;
-      };
-    }
-
-    const loadMissingNames = async () => {
-      const responses = await Promise.allSettled(
-        pendingIds.map((productId) => backendApi.products.getById(productId))
-      );
-
-      if (cancelled) return;
-
-      responses.forEach((response, index) => {
-        if (response.status !== "fulfilled") return;
-        const productName = String(response.value?.name ?? "").trim();
-        if (!productName) return;
-        nameCacheRef.current.set(pendingIds[index], productName);
-      });
-
-      hydrateFromCache();
-    };
-
-    void loadMissingNames();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [lineItems, missingProductIds, saleId]);
 
   if (!sale) return null;
 
@@ -125,17 +77,15 @@ export function SalesDetailModal({
     month: "long",
     day: "numeric",
   });
-  const pendingReason = String(sale.pendingReason ?? "").trim();
-  const saleNote = String(sale.notes ?? "").trim();
-  const showPendingReason = Number(sale.outstandingAmount ?? 0) > 0;
+  const pendingReason = String(getSalePendingReasonDisplay(sale) ?? "").trim();
+  const saleNote = String(sale.note ?? "").trim();
+  const showPendingReason = Boolean(pendingReason);
 
   const getDisplayProductName = (productId: string, providedName?: string) => {
     const rawName = String(providedName ?? "").trim();
     if (rawName.length > 0 && rawName.toLowerCase() !== "producto") {
       return rawName;
     }
-    const resolved = resolvedNames[productId]?.trim();
-    if (resolved) return resolved;
     return `ID ${productId.slice(0, 8)}`;
   };
 
@@ -192,19 +142,12 @@ export function SalesDetailModal({
                 <Badge
                   className={getSalePaymentTypeBadgeClassName(sale.paymentType)}
                 >
-                  {getSalePaymentTypeLabel(sale.paymentType)}
+                  {getSalePaymentDisplayLabel(sale)}
                 </Badge>
                 <p className="text-xs text-muted-foreground">
-                  {sale.paymentBreakdownByMethod.cash > 0
-                    ? `Efectivo: ${formatMoney(
-                        sale.paymentBreakdownByMethod.cash
-                      )}`
-                    : null}
-                  {sale.paymentBreakdownByMethod.transfer > 0
-                    ? `Transf.: ${formatMoney(
-                        sale.paymentBreakdownByMethod.transfer
-                      )}`
-                    : null}
+                  {getPaymentBreakdownLines(sale)
+                    .map((entry) => `${entry.label}: ${formatMoney(entry.amount)}`)
+                    .join(" / ") || "Sin desglose disponible"}
                 </p>
               </div>
             </div>
@@ -270,7 +213,7 @@ export function SalesDetailModal({
                     ) : (
                       lineItems.map((item, index) => {
                         const subtotal =
-                          item.subtotal ?? item.quantity * item.price;
+                          item.subtotal ?? item.quantity * item.unitPrice;
                         return (
                           <tr
                             key={`${item.productId}-${index}`}
@@ -295,7 +238,7 @@ export function SalesDetailModal({
                               )}
                             </td>
                             <td className="p-3 text-right">
-                              {formatMoney(item.price)}
+                              {formatMoney(item.unitPrice)}
                             </td>
                             <td className="p-3 text-right font-semibold">
                               {formatMoney(subtotal)}

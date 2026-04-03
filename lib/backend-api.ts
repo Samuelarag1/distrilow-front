@@ -54,10 +54,14 @@ import type {
   ReportingGlobalMetricsResponse,
   ReportsCashMonthlyQuery,
   ReportsCashMonthlyResponse,
+  ReportsCashOverviewQuery,
+  ReportsCashOverviewResponse,
   ReportsExpensesProjectionQuery,
   ReportsExpensesProjectionResponse,
   ReportsInventoryLowStockQuery,
   ReportsInventoryLowStockResponse,
+  ReportsInventoryOverviewQuery,
+  ReportsInventoryOverviewResponse,
   ReportsInventorySummaryQuery,
   ReportsInventorySummaryResponse,
   ReportsSalesPricingSourcesSummaryQuery,
@@ -229,6 +233,71 @@ function buildOffsetQuery(params: object) {
 
   const value = query.toString();
   return value ? `?${value}` : "";
+}
+
+async function getFirstAvailablePath<T>(
+  paths: string[],
+  options?: Parameters<typeof apiClientFetch.get<T>>[1]
+) {
+  let lastError: unknown = null;
+
+  for (const path of paths) {
+    try {
+      return await apiClientFetch.get<T>(path, options);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.status !== 404) {
+        throw error;
+      }
+      lastError = error;
+    }
+  }
+
+  throw lastError ?? new Error("No available API path");
+}
+
+function toPaginatedItemsResponse<T>(
+  payload: unknown,
+  fallbackOffset = 0,
+  fallbackLimit = 20
+): PaginatedResponse<T> {
+  if (Array.isArray(payload)) {
+    return toPaginatedResponse(payload, fallbackOffset, fallbackLimit);
+  }
+
+  const source =
+    payload && typeof payload === "object"
+      ? (payload as Record<string, unknown>)
+      : {};
+  const items = Array.isArray(source.items) ? (source.items as T[]) : [];
+  const page = Math.max(1, toFiniteNumber(source.page, 1));
+  const limit = Math.max(
+    1,
+    toFiniteNumber(source.limit ?? source.take, fallbackLimit)
+  );
+  const total = Math.max(items.length, toFiniteNumber(source.total, items.length));
+  const offset = Math.max(
+    0,
+    toFiniteNumber(
+      source.offset ?? source.skip,
+      source.page ? (page - 1) * limit : fallbackOffset
+    )
+  );
+
+  return {
+    items,
+    meta: normalizeOffsetMeta(
+      source.meta ?? {
+        total,
+        limit,
+        offset,
+        hasMore: offset + limit < total,
+        page,
+      },
+      fallbackOffset,
+      fallbackLimit,
+      total
+    ),
+  };
 }
 
 function normalizeOffsetMeta(
@@ -2592,6 +2661,77 @@ export const backendApi = {
       },
     },
     inventory: {
+      overview: async (
+        query: ReportsInventoryOverviewQuery = {},
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const { branchId: ignoredBranchId, ...overviewQueryRaw } = query;
+        void ignoredBranchId;
+        const fallbackLimit = Math.min(
+          100,
+          Math.max(
+            1,
+            toFiniteNumber(
+              overviewQueryRaw.limit ?? overviewQueryRaw.take,
+              20
+            )
+          )
+        );
+        const fallbackOffset = Math.max(
+          0,
+          toFiniteNumber(
+            overviewQueryRaw.offset ?? overviewQueryRaw.skip,
+            0
+          )
+        );
+        const overviewQuery = {
+          ...overviewQueryRaw,
+          search: toTrimmedOrUndefined(overviewQueryRaw.search),
+          categoryId: toTrimmedOrUndefined(overviewQueryRaw.categoryId),
+          stockStatus: toTrimmedOrUndefined(overviewQueryRaw.stockStatus),
+          page:
+            overviewQueryRaw.page ??
+            Math.floor(fallbackOffset / fallbackLimit) + 1,
+          limit: fallbackLimit,
+          offset: undefined,
+          skip: undefined,
+          take: undefined,
+        };
+
+        return withRateLimitRetry(
+          async () =>
+            toPaginatedItemsResponse<ReportsInventoryOverviewResponse["items"][number]>(
+              await getFirstAvailablePath<
+                | ReportsInventoryOverviewResponse
+                | ReportsInventoryOverviewResponse["items"]
+              >(
+                [
+                  `/reporting/inventory/overview${buildQuery(overviewQuery, {
+                    preserveLimitAndOffset: true,
+                  })}`,
+                  `/reports/inventory/overview${buildQuery(overviewQuery, {
+                    preserveLimitAndOffset: true,
+                  })}`,
+                ],
+                {
+                  headers: {
+                    "x-branch-id": effectiveBranchId,
+                  },
+                  signal: options?.signal,
+                }
+              ),
+              fallbackOffset,
+              fallbackLimit
+            ),
+          options?.signal
+        );
+      },
       summary: async (
         query: ReportsInventorySummaryQuery = {},
         branchIdOverride?: string | null,
@@ -2718,6 +2858,40 @@ export const backendApi = {
       },
     },
     cash: {
+      overview: async (
+        query: ReportsCashOverviewQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const { branchId: ignoredBranchId, ...overviewQuery } = query;
+        void ignoredBranchId;
+
+        return withRateLimitRetry(
+          () =>
+            getFirstAvailablePath<ReportsCashOverviewResponse>(
+              [
+                `/reporting/cash/overview${buildQuery(overviewQuery, {
+                  preserveLimitAndOffset: true,
+                })}`,
+                `/reports/cash/overview${buildQuery(overviewQuery, {
+                  preserveLimitAndOffset: true,
+                })}`,
+              ],
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
       monthly: async (
         query: ReportsCashMonthlyQuery,
         branchIdOverride?: string | null,
@@ -3256,6 +3430,11 @@ export const backendApi = {
         ),
     },
     inventory: {
+      overview: async (
+        query: ReportsInventoryOverviewQuery = {},
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => backendApi.reporting.inventory.overview(query, branchIdOverride, options),
       summary: async (
         query: ReportsInventorySummaryQuery = {},
         branchIdOverride?: string | null,
@@ -3290,6 +3469,11 @@ export const backendApi = {
         ),
     },
     cash: {
+      overview: async (
+        query: ReportsCashOverviewQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => backendApi.reporting.cash.overview(query, branchIdOverride, options),
       monthly: async (
         query: ReportsCashMonthlyQuery,
         branchIdOverride?: string | null,

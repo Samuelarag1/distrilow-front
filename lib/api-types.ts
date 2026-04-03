@@ -44,6 +44,7 @@ export type AnalyticsMetric = "revenue" | "count" | "avgTicket" | "profit";
 export type SnapshotPeriod = "monthly" | "quarterly" | "semiannual" | "annual";
 export type SaleChargeStatus = "PENDING" | "PARTIALLY_PAID" | "PAID";
 export type SaleLifecycleStatus = "ACTIVE" | "CANCELLED";
+export type SalePaymentType = "CASH" | "TRANSFER" | "MIXED" | "OTHER";
 export type PricingMode = "AUTO" | "MANUAL";
 export type PriceType = "RETAIL" | "WHOLESALE";
 export type PaymentMethod =
@@ -622,6 +623,13 @@ export interface SalePaymentBreakdown {
     | undefined;
 }
 
+export interface SalePaymentBreakdownByMethod {
+  cash?: number | null;
+  transfer?: number | null;
+  card?: number | null;
+  other?: number | null;
+}
+
 export interface CreateSaleRequest {
   branchId?: string;
   clientId?: string;
@@ -634,6 +642,7 @@ export interface SaleSummary {
   id: string;
   branchId: string;
   userId?: string | null;
+  userName?: string | null;
   clientId?: string | null;
   total?: number;
   totalAmount?: number;
@@ -650,8 +659,13 @@ export interface SaleSummary {
   itemsCount?: number;
   itemsQuantity?: number;
   paymentBreakdown?: SalePaymentBreakdown;
+  paymentBreakdownByMethod?: SalePaymentBreakdownByMethod | null;
+  paymentType?: SalePaymentType | null;
   pendingReason?: string | null;
+  note?: string | null;
   notes?: string | null;
+  notesRaw?: string | null;
+  originalNotes?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -1149,6 +1163,57 @@ export interface ReportsInventoryLowStockResponse {
   };
 }
 
+export type InventoryOverviewStockStatus =
+  | "OUT_OF_STOCK"
+  | "LOW"
+  | "NORMAL"
+  | "HIGH";
+
+export interface ReportsInventoryOverviewQuery {
+  branchId?: string;
+  categoryId?: string;
+  search?: string;
+  stockStatus?: InventoryOverviewStockStatus;
+  page?: number;
+  limit?: number;
+  offset?: number;
+  skip?: number;
+  take?: number;
+}
+
+export interface ReportsInventoryOverviewItem {
+  productId: string;
+  productName: string;
+  branchId?: string | null;
+  sourceBranchId?: string | null;
+  categoryId?: string | null;
+  categoryName?: string | null;
+  measurementType?: MeasurementType | null;
+  trackStock?: boolean | null;
+  stock?: number | null;
+  baseQuantity?: number | null;
+  stockProductId?: string | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  minStock?: number | null;
+  maxStock?: number | null;
+  shortageQty?: number | null;
+  stockStatus?: InventoryOverviewStockStatus | null;
+  sharedStock?: StockSharedRelation | null;
+  averageCost?: number | null;
+  retailPrice?: number | null;
+  wholesalePrice?: number | null;
+  updatedAt?: string | null;
+}
+
+export interface ReportsInventoryOverviewResponse {
+  items: ReportsInventoryOverviewItem[];
+  total?: number;
+  page?: number;
+  limit?: number;
+  meta?: OffsetPaginationMeta;
+}
+
 export interface ReportsExpensesProjectionQuery {
   branchId?: string;
   from: string;
@@ -1220,6 +1285,56 @@ export interface ReportsCashMonthlyResponse {
     branchId?: string | null;
   };
   items: ReportsCashMonthlyItem[];
+}
+
+export type CashOverviewGroupBy = "day" | "month" | "session";
+
+export interface ReportsCashOverviewQuery {
+  branchId?: string;
+  from: string;
+  to: string;
+  groupBy: CashOverviewGroupBy;
+}
+
+export interface ReportsCashOverviewSource {
+  unclassifiedOutflow?: number | null;
+  outflowClassificationStatus?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ReportsCashOverviewItem {
+  id?: string | null;
+  key?: string | null;
+  label?: string | null;
+  period?: string | null;
+  date?: string | null;
+  month?: string | null;
+  sessionId?: string | null;
+  cashSales?: number | null;
+  transferSales?: number | null;
+  salesTotal?: number | null;
+  manualIncome?: number | null;
+  cashPurchases?: number | null;
+  withdrawalsGross?: number | null;
+  withdrawalsNet?: number | null;
+  netTotal?: number | null;
+  countedCash?: number | null;
+  expectedCash?: number | null;
+  difference?: number | null;
+  source?: ReportsCashOverviewSource | null;
+}
+
+export interface ReportsCashOverviewResponse {
+  range?: {
+    from?: string;
+    to?: string;
+  };
+  filters?: {
+    branchId?: string | null;
+  };
+  groupBy?: CashOverviewGroupBy;
+  items: ReportsCashOverviewItem[];
+  totals?: ReportsCashOverviewItem | null;
 }
 
 export interface AuditLog {

@@ -44,11 +44,16 @@ import type {
   ReportsInventoryLowStockResponse,
   ReportsInventorySummaryResponse,
   StockDetail,
-  StockListItem,
   StockSharedProduct,
 } from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import { backendApi } from "@/lib/backend-api";
+import {
+  buildInventoryOverviewRowFromLegacy,
+  normalizeInventoryOverviewPage,
+  type InventoryOverviewRow,
+  type NormalizedInventoryOverviewPage,
+} from "@/lib/adapters/inventory-overview";
 import { InventoryLotsSection } from "@/components/modules/inventory-lots-section";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
@@ -97,10 +102,7 @@ type Category = {
   isActive: boolean;
 };
 
-type InventoryRow = StockListItem & {
-  name?: string | null;
-  product?: Partial<Product> & { id?: string; name?: string };
-};
+type InventoryRow = InventoryOverviewRow;
 
 function getLooseCategoryLabel(category: unknown): string {
   if (typeof category === "string" && category.trim()) return category.trim();
@@ -218,7 +220,7 @@ function formatInventoryQuantityWithUnit(
 }
 
 function resolveInventoryRowName(item: InventoryRow) {
-  const directName = String(item.name ?? "").trim();
+  const directName = String(item.productName ?? item.name ?? "").trim();
   if (directName) return directName;
   const nestedName = String(item.product?.name ?? "").trim();
   if (nestedName) return nestedName;
@@ -227,9 +229,13 @@ function resolveInventoryRowName(item: InventoryRow) {
 
 function resolveInventoryRowPrices(item: InventoryRow) {
   const product = item.product ?? {};
-  const costPrice = Number((product as any).costPrice ?? 0);
-  const wholesalePrice = Number((product as any).wholesalePrice ?? Number.NaN);
-  const retailPrice = Number((product as any).retailPrice ?? Number.NaN);
+  const costPrice = Number(item.averageCost ?? (product as any).costPrice ?? 0);
+  const wholesalePrice = Number(
+    item.wholesalePrice ?? (product as any).wholesalePrice ?? Number.NaN
+  );
+  const retailPrice = Number(
+    item.retailPrice ?? (product as any).retailPrice ?? Number.NaN
+  );
   const wholesale =
     Number.isFinite(wholesalePrice) && wholesalePrice > 0
       ? wholesalePrice
@@ -246,7 +252,9 @@ function resolveInventoryRowPrices(item: InventoryRow) {
 }
 
 function resolveInventoryRowCategoryId(item: InventoryRow) {
-  const categoryId = String((item.product as any)?.categoryId ?? "").trim();
+  const categoryId = String(
+    item.categoryId ?? (item.product as any)?.categoryId ?? ""
+  ).trim();
   return categoryId || null;
 }
 
@@ -270,74 +278,13 @@ function toFiniteQuantity(value: unknown, fallback = 0) {
   return Number.isFinite(numeric) ? numeric : fallback;
 }
 
-function buildInventoryRowFromProduct(
-  product: Partial<Product>,
-  fallbackBranchId: string | null
-): InventoryRow {
-  const productId = toTrimmedText(product.id);
-  const productName = toTrimmedText(product.name) || productId;
-  const branchId =
-    normalizeBranchContextId(
-      toTrimmedText(product.branchId) || fallbackBranchId || undefined
-    ) ?? "";
-  const stockQuantity = toFiniteQuantity((product as any).stock, 0);
-  const stockConsumptionQuantity = Math.max(
-    toFiniteQuantity((product as any).stockConsumptionQuantity, 1),
-    1
-  );
-  const measurementType =
-    normalizeMeasurementType((product as any).measurementType) ??
-    (Boolean((product as any).isWeighable) ? "kg" : "unit");
-  const stockBaseProductId =
-    toTrimmedText((product as any).stockBaseProductId) || productId;
-  const isSharedStock = Boolean(
-    productId && stockBaseProductId && stockBaseProductId !== productId
-  );
-  const baseQuantity = isSharedStock
-    ? stockQuantity * stockConsumptionQuantity
-    : stockQuantity;
-
-  return {
-    id: [branchId || "branch", productId || "product"].join(":"),
-    branchId,
-    productId,
-    stockProductId: stockBaseProductId || productId,
-    quantity: stockQuantity,
-    baseQuantity: Number.isFinite(baseQuantity) ? baseQuantity : null,
-    stockConsumptionQuantity,
-    stockBaseUnit:
-      normalizeMeasurementType((product as any).stockBaseUnit) ?? measurementType,
-    sharedStock: isSharedStock
-      ? {
-          stockProductId: stockBaseProductId || productId,
-          isShared: true,
-          linkedProductsCount: 0,
-          linkedProducts: [],
-        }
-      : null,
-    averageCost: toFiniteQuantity((product as any).costPrice, 0),
-    createdAt:
-      typeof product.createdAt === "string" ? product.createdAt : undefined,
-    updatedAt:
-      typeof product.updatedAt === "string" ? product.updatedAt : undefined,
-    name: productName || productId,
-    product: {
-      ...product,
-      id: productId || undefined,
-      name: productName || undefined,
-      branchId: branchId || undefined,
-      stock: stockQuantity,
-      measurementType,
-    },
-  };
-}
-
 function buildStockDetailFromInventoryRow(item: InventoryRow): StockDetail {
   return {
     ...item,
     stockProductId:
       toTrimmedText(item.stockProductId) || toTrimmedText(item.productId) || null,
     baseQuantity: item.baseQuantity ?? toFiniteQuantity(item.quantity, 0),
+    updatedAt: item.updatedAt ?? undefined,
   };
 }
 
@@ -869,7 +816,7 @@ export function InventoryModule() {
     mutate: mutateInventoryPage,
     isLoading: isLoadingInventoryPage,
     error: inventoryPageError,
-  } = useSWR(
+  } = useSWR<NormalizedInventoryOverviewPage>(
     effectiveBranchId ? ["inventory-products", effectiveBranchId, inventoryQuery] : null,
     async () => {
       productsAbortControllerRef.current?.abort();
@@ -877,17 +824,67 @@ export function InventoryModule() {
       productsAbortControllerRef.current = controller;
 
       try {
-        return await backendApi.productsWithStock(
-          {
-            ...inventoryQuery,
-            name: inventoryQuery.search,
-            q: inventoryQuery.search,
-          },
-          effectiveBranchId,
-          {
-            signal: controller.signal,
+        try {
+          const overviewPayload = await backendApi.reporting.inventory.overview(
+            {
+              ...inventoryQuery,
+              page: currentPage,
+              limit: pageSize,
+            },
+            effectiveBranchId,
+            {
+              signal: controller.signal,
+            }
+          );
+
+          return normalizeInventoryOverviewPage(overviewPayload, {
+            offset: inventoryQuery.skip,
+            limit: pageSize,
+          });
+        } catch (overviewError) {
+          if (
+            overviewError instanceof DOMException &&
+            overviewError.name === "AbortError"
+          ) {
+            throw overviewError;
           }
-        );
+
+          const [productsPage, stockRows] = await Promise.all([
+            backendApi.productsWithStock(
+              {
+                ...inventoryQuery,
+                name: inventoryQuery.search,
+                q: inventoryQuery.search,
+              },
+              effectiveBranchId,
+              {
+                signal: controller.signal,
+              }
+            ),
+            backendApi.stocks.listByBranch(effectiveBranchId as string),
+          ]);
+          const stockByProductId = new Map<string, Partial<StockDetail>>();
+          stockRows.forEach((row) => {
+            const productId = String(row.productId ?? "").trim();
+            if (!productId || stockByProductId.has(productId)) return;
+            stockByProductId.set(productId, row);
+          });
+
+          return {
+            items: (productsPage.items ?? []).map((product) =>
+              buildInventoryOverviewRowFromLegacy({
+                product,
+                stockRow: stockByProductId.get(String(product.id ?? "")) ?? null,
+                branchId: effectiveBranchId,
+              })
+            ),
+            total: Number(productsPage.total ?? 0),
+            skip: Number(productsPage.skip ?? inventoryQuery.skip ?? 0),
+            take: Number(productsPage.take ?? pageSize),
+            nextSkip: productsPage.nextSkip ?? null,
+            hasMore: Boolean(productsPage.hasMore),
+          } satisfies NormalizedInventoryOverviewPage;
+        }
       } finally {
         if (productsAbortControllerRef.current === controller) {
           productsAbortControllerRef.current = null;
@@ -900,75 +897,7 @@ export function InventoryModule() {
       shouldRetryOnError: false,
     }
   );
-  const { data: stockRows, mutate: mutateStockRows } = useSWR<InventoryRow[]>(
-    effectiveBranchId ? ["stocks-branch", effectiveBranchId] : null,
-    () =>
-      backendApi.stocks
-        .listByBranch(effectiveBranchId as string)
-        .then((rows) => rows as InventoryRow[]),
-    {
-      revalidateOnFocus: false,
-      keepPreviousData: true,
-      shouldRetryOnError: false,
-    }
-  );
-
-  const inventory = useMemo(() => {
-    const sourceProducts = (inventoryPage?.items ?? []) as Product[];
-    if (sourceProducts.length === 0) return [];
-
-    const stockByProductId = new Map<string, InventoryRow>();
-    (stockRows ?? []).forEach((row) => {
-      const productId = String(row.productId ?? "").trim();
-      if (!productId || stockByProductId.has(productId)) return;
-      stockByProductId.set(productId, row);
-    });
-
-    return sourceProducts.map((product) => {
-      const fallbackRow = buildInventoryRowFromProduct(product, effectiveBranchId);
-      const stockRow = stockByProductId.get(fallbackRow.productId);
-      if (!stockRow) return fallbackRow;
-
-      const resolvedQuantity = toFiniteQuantity(
-        (product as any).stock,
-        toFiniteQuantity(stockRow.quantity, fallbackRow.quantity)
-      );
-      const resolvedName =
-        toTrimmedText(stockRow.name) ||
-        toTrimmedText(fallbackRow.name) ||
-        fallbackRow.productId;
-
-      return {
-        ...fallbackRow,
-        ...stockRow,
-        productId: stockRow.productId || fallbackRow.productId,
-        stockProductId:
-          toTrimmedText(stockRow.stockProductId) || fallbackRow.stockProductId,
-        branchId: toTrimmedText(stockRow.branchId) || fallbackRow.branchId,
-        quantity: resolvedQuantity,
-        baseQuantity: stockRow.baseQuantity ?? fallbackRow.baseQuantity,
-        stockConsumptionQuantity:
-          stockRow.stockConsumptionQuantity ?? fallbackRow.stockConsumptionQuantity,
-        stockBaseUnit: stockRow.stockBaseUnit ?? fallbackRow.stockBaseUnit,
-        averageCost: toFiniteQuantity(
-          stockRow.averageCost,
-          fallbackRow.averageCost
-        ),
-        name: resolvedName,
-        product: {
-          ...(fallbackRow.product ?? {}),
-          ...(stockRow.product ?? {}),
-          id: fallbackRow.productId || undefined,
-          name: resolvedName || undefined,
-          branchId:
-            toTrimmedText(stockRow.branchId) ||
-            toTrimmedText((fallbackRow.product as any)?.branchId) ||
-            undefined,
-          stock: resolvedQuantity,
-        },
-      };
-    });
-  }, [inventoryPage?.items, stockRows, effectiveBranchId]);
+  const inventory = inventoryPage?.items ?? [];
   const inventoryTotal = Number(inventoryPage?.total ?? inventory.length);
   const hasMore = Boolean(inventoryPage?.hasMore);
   const skip = Number(
@@ -1020,6 +949,9 @@ export function InventoryModule() {
   }, [categoriesData]);
 
   const getProductCategoryLabel = (item: InventoryRow) => {
+    const directCategoryName = String(item.categoryName ?? "").trim();
+    if (directCategoryName) return directCategoryName;
+
     const categoryId = resolveInventoryRowCategoryId(item);
     if (categoryId) {
       const mapped = categoryNameById.get(categoryId);
@@ -1176,17 +1108,24 @@ export function InventoryModule() {
   }, [currentPage, totalPages]);
 
   const getStockStatus = (
+    item: InventoryRow,
     stock: number,
     minStock: number,
-    maxStock: number
+    maxStock: number | null
   ) => {
+    if (item.stockStatus === "OUT_OF_STOCK") return "out";
+    if (item.stockStatus === "LOW") return "low";
+    if (item.stockStatus === "HIGH") return "high";
+    if (item.stockStatus === "NORMAL") return "normal";
+    if (stock <= Number.EPSILON) return "out";
     if (stock <= minStock) return "low";
-    if (stock >= maxStock * 0.8) return "high";
+    if (maxStock !== null && maxStock > 0 && stock >= maxStock) return "high";
     return "normal";
   };
 
   const getStockColor = (status: string) => {
     switch (status) {
+      case "out":
       case "low":
         return "text-red-500";
       case "high":
@@ -1196,20 +1135,23 @@ export function InventoryModule() {
     }
   };
 
-  const getProgressValue = (stock: number, maxStock: number) => {
-    const max = maxStock || 100;
-    return (stock / max) * 100;
+  const getProgressValue = (stock: number, maxStock: number | null) => {
+    if (maxStock === null || maxStock <= 0) return null;
+    return Math.max(0, Math.min(100, (stock / maxStock) * 100));
   };
 
   function InventoryItemCard({ item }: { item: InventoryRow }) {
     const itemName = resolveInventoryRowName(item);
     const categoryLabel = getProductCategoryLabel(item);
-    const stockQuantity = Number(item.quantity ?? 0);
-    const minStock = Number((item.product as any)?.minStock ?? 0);
-    const maxStock = Number((item.product as any)?.maxStock ?? 100);
+    const stockQuantity = Number(item.stock ?? item.quantity ?? 0);
+    const minStock = Number(item.minStock ?? (item.product as any)?.minStock ?? 0);
+    const maxStockValue = Number(
+      item.maxStock ?? (item.product as any)?.maxStock ?? Number.NaN
+    );
+    const maxStock = Number.isFinite(maxStockValue) ? maxStockValue : null;
     const measurementType = resolveMeasurementTypeFromItem(item);
     const unitLabel = toDisplayMeasurementUnit(measurementType);
-    const status = getStockStatus(stockQuantity, minStock, maxStock);
+    const status = getStockStatus(item, stockQuantity, minStock, maxStock);
     const progressValue = getProgressValue(stockQuantity, maxStock);
     const { costPrice, wholesaleUnitPrice } = resolveInventoryRowPrices(item);
     const inventoryValue = stockQuantity * wholesaleUnitPrice;
@@ -1223,17 +1165,6 @@ export function InventoryModule() {
       normalizeMeasurementType(item.stockBaseUnit) ?? measurementType;
     const consumptionLabel = toDisplayMeasurementUnit(baseMeasurementType);
     const baseQuantity = Number(item.baseQuantity ?? Number.NaN);
-    const hasLinkedBase =
-      Boolean(item.stockProductId) &&
-      Boolean(item.productId) &&
-      item.stockProductId !== item.productId;
-    const relativeStockFromBase =
-      hasLinkedBase &&
-      Number.isFinite(baseQuantity) &&
-      Number.isFinite(consumptionQuantity) &&
-      consumptionQuantity > 0
-        ? Math.max(0, baseQuantity / consumptionQuantity)
-        : null;
     const formattedStockQuantity = formatInventoryQuantity(
       stockQuantity,
       measurementType,
@@ -1249,14 +1180,11 @@ export function InventoryModule() {
           precise: true,
         })
       : null;
-    const formattedRelativeStock =
-      relativeStockFromBase !== null
-        ? formatInventoryQuantity(relativeStockFromBase, measurementType, {
-            precise: true,
-          })
-        : null;
     const formattedMinStock = formatInventoryQuantity(minStock, measurementType);
-    const formattedMaxStock = formatInventoryQuantity(maxStock, measurementType);
+    const formattedMaxStock =
+      maxStock !== null
+        ? formatInventoryQuantity(maxStock, measurementType)
+        : "Sin maximo definido";
     const adjustDialogItem = {
       id: item.productId,
       name: itemName,
@@ -1286,7 +1214,6 @@ export function InventoryModule() {
         });
         await Promise.all([
           mutateInventoryPage(),
-          mutateStockRows(),
           mutateInventorySummary(),
           mutateLowStockRows(),
         ]);
@@ -1313,16 +1240,16 @@ export function InventoryModule() {
         className="w-full p-4 transition-all hover:shadow-lg border-l-4 group relative overflow-hidden"
         style={{
           borderLeftColor:
-            status === "low"
+            status === "low" || status === "out"
               ? "#ef4444"
               : status === "high"
               ? "#22c55e"
               : "#3b82f6",
         }}
       >
-        {status === "low" && (
+        {(status === "low" || status === "out") && (
           <div className="absolute top-0 right-0 p-1 bg-red-500 text-white transform rotate-0 text-[8px] font-black uppercase px-2 rounded-bl-lg">
-            Reposicion Urgente
+            {status === "out" ? "Sin stock" : "Reposicion urgente"}
           </div>
         )}
         <div className="flex flex-col md:flex-row items-center gap-6">
@@ -1331,7 +1258,9 @@ export function InventoryModule() {
               <div className="flex items-center gap-3">
                 <div
                   className={`p-2.5 rounded-xl ${
-                    status === "low" ? "bg-red-500/10" : "bg-primary/10"
+                    status === "low" || status === "out"
+                      ? "bg-red-500/10"
+                      : "bg-primary/10"
                   }`}
                 >
                   <img
@@ -1454,7 +1383,7 @@ export function InventoryModule() {
               </span>{" "}
               por unidad vendida
             </p>
-            {isSharedStock && !hasLinkedBase && formattedBaseQuantity && (
+            {isSharedStock && formattedBaseQuantity && (
               <p className="mb-3 text-xs text-muted-foreground">
                 Stock base compartido real:{" "}
                 <span className="font-semibold text-foreground">
@@ -1463,49 +1392,34 @@ export function InventoryModule() {
                 . Los productos vinculados descuentan de este mismo saldo.
               </p>
             )}
-            {relativeStockFromBase !== null && (
-              <p className="mb-3 text-xs text-muted-foreground">
-                Stock relativo estimado:{" "}
-                <span className="font-semibold text-foreground">
-                  {formattedRelativeStock}{" "}
-                  {unitLabel}
-                </span>{" "}
-                (base real:{" "}
-                {formattedBaseQuantity} {consumptionLabel})
-              </p>
-            )}
-            {isSharedStock &&
-              relativeStockFromBase !== null &&
-              formattedBaseQuantity && (
-                <p className="mb-3 text-xs text-muted-foreground">
-                  Calculo compartido:{" "}
-                  <span className="font-semibold text-foreground">
-                    {formattedBaseQuantity} {consumptionLabel}
-                  </span>{" "}
-                  /{" "}
-                  <span className="font-semibold text-foreground">
-                    {formattedConsumptionQuantity} {consumptionLabel}
-                  </span>{" "}
-                  por producto ={" "}
-                  <span className="font-semibold text-foreground">
-                    {formattedRelativeStock} {unitLabel}
-                  </span>
-                  .
-                </p>
-            )}
 
             <div className="space-y-1.5 mt-4">
-              <Progress
-                value={progressValue}
-                className={`h-2 ${
-                  status === "low" ? "bg-red-100" : "bg-secondary"
-                }`}
-              />
+              {progressValue !== null ? (
+                <Progress
+                  value={progressValue}
+                  className={`h-2 ${
+                    status === "low" || status === "out"
+                      ? "bg-red-100"
+                      : "bg-secondary"
+                  }`}
+                />
+              ) : (
+                <div className="h-2 rounded-full bg-secondary" />
+              )}
               <div className="flex justify-between text-[10px] text-muted-foreground font-black uppercase tracking-wider">
-                <span className={status === "low" ? "text-red-500" : ""}>
+                <span
+                  className={
+                    status === "low" || status === "out" ? "text-red-500" : ""
+                  }
+                >
                   Min: {formattedMinStock} {unitLabel}
                 </span>
-                <span>Capacidad: {formattedMaxStock} {unitLabel}</span>
+                <span>
+                  Capacidad:{" "}
+                  {maxStock !== null
+                    ? `${formattedMaxStock} ${unitLabel}`
+                    : formattedMaxStock}
+                </span>
               </div>
             </div>
           </div>
