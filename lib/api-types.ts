@@ -1022,6 +1022,51 @@ export interface ReportsTopProductsResponse {
   meta?: OffsetPaginationMeta;
 }
 
+export interface ReportsProductMarginsTableQuery {
+  branchId?: string;
+  startDate: string;
+  endDate: string;
+  page?: number;
+  limit?: number;
+  search?: string;
+  categoryId?: string;
+}
+
+export interface ReportsProductMarginsMetrics {
+  quantitySold: number;
+  revenue: number;
+  cost: number;
+  grossProfit: number;
+  grossMarginPercent: number;
+}
+
+export interface ReportsProductMarginsTableItem {
+  productId: string;
+  productName: string;
+  categoryId?: string | null;
+  categoryName?: string | null;
+  retail: ReportsProductMarginsMetrics;
+  wholesale: ReportsProductMarginsMetrics;
+  override: ReportsProductMarginsMetrics;
+  total: ReportsProductMarginsMetrics;
+}
+
+export interface ReportsProductMarginsTableResponse {
+  period: {
+    startDate: string;
+    endDate: string;
+  };
+  filters: {
+    branchId?: string | null;
+    categoryId?: string | null;
+    search?: string | null;
+  };
+  total: number;
+  page: number;
+  limit: number;
+  items: ReportsProductMarginsTableItem[];
+}
+
 export interface ReportsSalesPriceTypesSummaryQuery {
   branchId?: string;
   from: string;

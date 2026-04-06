@@ -62,6 +62,8 @@ import type {
   ReportsInventoryLowStockResponse,
   ReportsInventoryOverviewQuery,
   ReportsInventoryOverviewResponse,
+  ReportsProductMarginsTableQuery,
+  ReportsProductMarginsTableResponse,
   ReportsInventorySummaryQuery,
   ReportsInventorySummaryResponse,
   ReportsSalesPricingSourcesSummaryQuery,
@@ -2660,6 +2662,55 @@ export const backendApi = {
         },
       },
     },
+    products: {
+      margins: {
+        table: async (
+          query: ReportsProductMarginsTableQuery,
+          branchIdOverride?: string | null,
+          options?: { signal?: AbortSignal }
+        ) => {
+          const effectiveBranchId =
+            branchIdOverride ?? getApiSession().branchId;
+          if (!effectiveBranchId) {
+            throw new Error("Missing branch context. Send x-branch-id header.");
+          }
+
+          const { branchId: ignoredBranchId, ...tableQuery } = query;
+          void ignoredBranchId;
+          const normalizedQuery = {
+            ...tableQuery,
+            startDate: toTrimmedOrUndefined(tableQuery.startDate),
+            endDate: toTrimmedOrUndefined(tableQuery.endDate),
+            page: Math.max(1, Math.floor(toFiniteNumber(tableQuery.page, 1))),
+            limit: Math.min(
+              100,
+              Math.max(1, Math.floor(toFiniteNumber(tableQuery.limit, 25)))
+            ),
+            search: toTrimmedOrUndefined(tableQuery.search),
+            categoryId: toTrimmedOrUndefined(tableQuery.categoryId),
+          };
+
+          return withRateLimitRetry(
+            () =>
+              apiClientFetch.get<ReportsProductMarginsTableResponse>(
+                `/reporting/products/margins/table${buildQuery(
+                  normalizedQuery,
+                  {
+                    preserveLimitAndOffset: true,
+                  }
+                )}`,
+                {
+                  headers: {
+                    "x-branch-id": effectiveBranchId,
+                  },
+                  signal: options?.signal,
+                }
+              ),
+            options?.signal
+          );
+        },
+      },
+    },
     inventory: {
       overview: async (
         query: ReportsInventoryOverviewQuery = {},
@@ -3397,6 +3448,18 @@ export const backendApi = {
       backendApi.reporting.sales.history(query),
   },
   reports: {
+    products: {
+      marginsTable: async (
+        query: ReportsProductMarginsTableQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) =>
+        backendApi.reporting.products.margins.table(
+          query,
+          branchIdOverride,
+          options
+        ),
+    },
     sales: {
       priceTypes: async (
         query: ReportsSalesPriceTypesSummaryQuery,
