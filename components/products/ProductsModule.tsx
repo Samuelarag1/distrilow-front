@@ -53,8 +53,6 @@ function getMarginPercentForPrice(costPrice: unknown, sellPrice: unknown) {
 }
 
 function getRetailMarginPercent(product: Product) {
-  const explicitMargin = Number(product.marginPercent ?? NaN);
-  if (Number.isFinite(explicitMargin)) return explicitMargin;
   return getMarginPercentForPrice(product.costPrice, product.retailPrice);
 }
 
