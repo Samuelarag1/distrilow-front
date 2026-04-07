@@ -1390,7 +1390,8 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                             Margen segun Ventas
                           </p>
                           <p className="font-medium">
-                            {formatPercent(marginBreakdown.totalPct)}
+                            en desarrollo
+                            {/* {formatPercent(marginBreakdown.totalPct)} */}
                           </p>
                           {/* <p className="text-muted-foreground mt-1">
                             Margen % Min / May
