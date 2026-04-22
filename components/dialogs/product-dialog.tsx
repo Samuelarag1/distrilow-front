@@ -137,7 +137,7 @@ export function ProductDialog({
     costReviewPending: false,
     categoryId: "",
     brand: "",
-    trackStock: false,
+    trackStock: true,
     useSharedStock: false,
     stockBaseProductId: "__self__",
     stockConsumptionQuantity: 1,
@@ -188,7 +188,7 @@ export function ProductDialog({
         costReviewPending: Boolean((product as any).costReviewPending ?? false),
         categoryId: productCategoryId,
         brand: (product as any).brand ?? "",
-        trackStock: Boolean((product as any).trackStock ?? false),
+        trackStock: true,
         useSharedStock: Boolean(
           currentProductId &&
             currentBaseId &&
@@ -229,7 +229,7 @@ export function ProductDialog({
         costReviewPending: false,
         categoryId: "",
         brand: "",
-        trackStock: false,
+        trackStock: true,
         useSharedStock: false,
         stockBaseProductId: "__self__",
         stockConsumptionQuantity: 1,
@@ -339,7 +339,7 @@ export function ProductDialog({
       costReviewPending: formData.costReviewPending,
       categoryId: formData.categoryId?.trim() || undefined,
       brand: formData.brand?.trim() || undefined,
-      trackStock: stockPayload.trackStock,
+      trackStock: true,
       stockBaseProductId: stockPayload.stockBaseProductId,
       stockConsumptionQuantity: stockPayload.stockConsumptionQuantity,
       stockBaseUnit: stockPayload.stockBaseUnit as MeasurementType | undefined,
@@ -573,17 +573,8 @@ export function ProductDialog({
             </div>
 
             <ProductStockLinkForm
-              trackStock={formData.trackStock}
-              onTrackStockChange={(checked) =>
-                setFormData((previous) => ({
-                  ...previous,
-                  trackStock: checked,
-                  useSharedStock: checked ? previous.useSharedStock : false,
-                  stockBaseProductId: checked
-                    ? previous.stockBaseProductId
-                    : "__self__",
-                }))
-              }
+              trackStock
+              onTrackStockChange={() => undefined}
               useSharedStock={formData.useSharedStock}
               onUseSharedStockChange={(checked) => {
                 setFormData((previous) => {
@@ -668,15 +659,12 @@ export function ProductDialog({
                 <div className="flex flex-col gap-1">
                   <Label className="font-bold">Control de stock</Label>
                   <span className="text-xs text-muted-foreground">
-                    Activa control de inventario para este producto
+                    Siempre activo para este producto
                   </span>
                 </div>
                 <Switch
-                  checked={formData.trackStock}
-                  onCheckedChange={(checked) =>
-                    setFormData((p) => ({ ...p, trackStock: checked }))
-                  }
-                  disabled={disableForm}
+                  checked
+                  disabled
                 />
               </div>
               <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">

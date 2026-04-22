@@ -73,13 +73,12 @@ export function ProductStockLinkForm(props: {
         <div className="space-y-1">
           <Label className="font-bold">Modelo de stock</Label>
           <p className="text-xs text-muted-foreground">
-            Configura si el producto usa stock propio o compartido.
+            El control de stock permanece activo para todos los productos.
           </p>
         </div>
         <Switch
-          checked={props.trackStock}
-          onCheckedChange={props.onTrackStockChange}
-          disabled={props.disabled}
+          checked
+          disabled
         />
       </div>
 

@@ -200,9 +200,9 @@ export function getSalesAnalysisConfig(period: SalesAnalysisPeriod) {
     },
     groupBy: "month" as const,
     comparisonLabel: "ano",
-    evolutionTitle: "Evolucion del Ano",
-    revenueDescription: "Tendencia de ingresos por mes del ano actual",
-    volumeDescription: "Volumen de operaciones por mes del ano actual",
+    evolutionTitle: "Evolucion del Año",
+    revenueDescription: "Tendencia de ingresos por mes del año actual",
+    volumeDescription: "Volumen de operaciones por mes del año actual",
     bestPointLabel: "Mejor mes",
   };
 }

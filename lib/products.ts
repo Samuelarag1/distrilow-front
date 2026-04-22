@@ -135,7 +135,7 @@ export const productsApi = {
       categoryId: normalizeOptionalString(data.categoryId),
       branchId: (data.branchId ?? branchId ?? undefined) as string | undefined,
       brand: normalizeOptionalString(data.brand),
-      trackStock: data.trackStock ?? true,
+      trackStock: true,
       stockBaseProductId: normalizeOptionalString(data.stockBaseProductId),
       stockConsumptionQuantity: normalizePositiveNumber(
         data.stockConsumptionQuantity
@@ -167,7 +167,7 @@ export const productsApi = {
       categoryId: normalizeOptionalString(data.categoryId),
       branchId: data.branchId ?? undefined,
       brand: normalizeOptionalString(data.brand),
-      trackStock: data.trackStock,
+      trackStock: true,
       stockBaseProductId: normalizeOptionalString(data.stockBaseProductId),
       stockConsumptionQuantity: normalizePositiveNumber(
         data.stockConsumptionQuantity
