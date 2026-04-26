@@ -8,16 +8,13 @@ import { QuickActions } from "./quick-actions";
 import { useBranch } from "../providers/business-provider";
 import { useUser } from "../providers/user-provider";
 import { subscribeCashSync } from "@/lib/cash-live-sync";
-import type { DashboardMetrics } from "@/lib/data-service";
+import { parseDashboardMetrics, type DashboardMetrics } from "@/lib/data-service";
 import useSWR from "swr";
 import { backendApi } from "@/lib/backend-api";
 import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
 import { subscribeSalesSync } from "@/lib/sales-live-sync";
-import {
-  formatSnapshotRangeLabel,
-  normalizeSnapshotMetrics,
-  SNAPSHOT_REPORTING_TIME_ZONE,
-} from "@/lib/snapshot-metrics";
+import { formatSnapshotRangeLabel } from "@/lib/snapshot-metrics";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 
 interface DashboardProps {
   retailData: DashboardMetrics;
@@ -34,14 +31,19 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
   const fallbackData =
     businessType === "wholesale" ? wholesaleData : retailData;
 
-  const { data: branchMetrics, mutate: mutateBranchMetrics } = useSWR<DashboardMetrics>(
+  const {
+    data: branchMetrics,
+    error: summaryError,
+    isLoading: isSummaryLoading,
+    mutate: mutateBranchMetrics,
+  } = useSWR<DashboardMetrics>(
     branchId ? ["reporting-dashboard-summary", branchId] : null,
     async () => {
       const snapshot = await backendApi.reporting.dashboard.summary({
         period: "monthly",
         scope: "active",
       }, branchId);
-      return normalizeSnapshotMetrics(snapshot);
+      return parseDashboardMetrics(snapshot);
     },
     {
       revalidateOnFocus: false,
@@ -107,8 +109,12 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
   const currentData = branchMetrics ?? fallbackData;
   const rangeLabel = formatSnapshotRangeLabel(currentData.range);
   const summaryCaption = rangeLabel
-    ? `Mes en curso real (${SNAPSHOT_REPORTING_TIME_ZONE}): ${rangeLabel}`
+    ? `${rangeLabel}`
     : "Resumen de tu negocio";
+  const contractErrorMessage =
+    summaryError instanceof Error
+      ? summaryError.message
+      : currentData.contractError;
 
   return (
     <div className="space-y-6">
@@ -120,6 +126,15 @@ export function Dashboard({ retailData, wholesaleData }: DashboardProps) {
           <p className="text-muted-foreground">{summaryCaption}</p>
         </div>
       </div>
+      {isSummaryLoading && (
+        <p className="text-sm text-muted-foreground">Cargando resumen...</p>
+      )}
+      {contractErrorMessage && (
+        <Alert variant="destructive">
+          <AlertTitle>Error de contrato del dashboard</AlertTitle>
+          <AlertDescription>{contractErrorMessage}</AlertDescription>
+        </Alert>
+      )}
       <MetricsCards metrics={currentData} type={businessType} />
 
       <div className="space-y-6">

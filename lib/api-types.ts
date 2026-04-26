@@ -699,6 +699,7 @@ export interface SaleListQuery {
   offset?: number;
   limit?: number;
   search?: string;
+  status?: string;
   chargeStatus?: SaleChargeStatus;
   from?: string;
   to?: string;

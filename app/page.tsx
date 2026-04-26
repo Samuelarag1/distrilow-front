@@ -2,9 +2,13 @@ import { AppSidebar } from "@/components/layout/app-sidebar";
 import { SidebarProvider, SidebarInset } from "@/components/ui/sidebar";
 import { Header } from "@/components/layout/header";
 import { Dashboard } from "@/components/dashboard/dashboard";
-import type { DashboardMetrics } from "@/lib/data-service";
+import {
+  EMPTY_DASHBOARD_METRICS,
+  DashboardContractError,
+  parseDashboardMetrics,
+  type DashboardMetrics,
+} from "@/lib/data-service";
 import { serverApi } from "@/lib/server-api";
-import { normalizeSnapshotMetrics } from "@/lib/snapshot-metrics";
 
 export const dynamic = "force-dynamic";
 
@@ -13,9 +17,15 @@ async function getMetrics(): Promise<DashboardMetrics> {
     const snapshot = await serverApi.get(
       "/reporting/dashboard/summary?period=monthly&scope=active"
     );
-    return normalizeSnapshotMetrics(snapshot);
-  } catch {
-    return normalizeSnapshotMetrics({});
+    return parseDashboardMetrics(snapshot);
+  } catch (error) {
+    return {
+      ...EMPTY_DASHBOARD_METRICS,
+      contractError:
+        error instanceof DashboardContractError
+          ? error.message
+          : "No se pudo cargar el resumen del dashboard.",
+    };
   }
 }
 

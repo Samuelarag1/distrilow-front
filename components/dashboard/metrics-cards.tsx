@@ -37,24 +37,7 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
   const totalRevenue = Number(metrics?.totalRevenue ?? 0);
   const totalExpenses = Number(metrics.operationalExpenses ?? 0);
   const netProfit = Number(metrics.netProfit ?? 0);
-
   const dailyCash = Number(metrics.dailyCashbox ?? 0);
-  const dailyCashBreakdown = metrics.dailyCashBreakdown;
-  const hasDailyCashBreakdown =
-    Boolean(dailyCashBreakdown) &&
-    Number.isFinite(Number(dailyCashBreakdown?.openingFloat)) &&
-    Number.isFinite(Number(dailyCashBreakdown?.cashFromPayments)) &&
-    Number.isFinite(Number(dailyCashBreakdown?.movementIn)) &&
-    Number.isFinite(Number(dailyCashBreakdown?.movementOut));
-  const formulaDailyCash = hasDailyCashBreakdown
-    ? Number(dailyCashBreakdown?.openingFloat ?? 0) +
-      Number(dailyCashBreakdown?.cashFromPayments ?? 0) +
-      Number(dailyCashBreakdown?.movementIn ?? 0) -
-      Number(dailyCashBreakdown?.movementOut ?? 0)
-    : dailyCash;
-  const effectiveDailyCash = hasDailyCashBreakdown
-    ? formulaDailyCash
-    : dailyCash;
 
   const commonMetrics: MetricCard[] = [
     {
@@ -83,7 +66,7 @@ export function MetricsCards({ metrics, type }: MetricsCardsProps) {
   const retailMetrics: MetricCard[] = [
     {
       title: "Caja Diaria",
-      value: currencyFormatter.format(effectiveDailyCash),
+      value: currencyFormatter.format(dailyCash),
       icon: Wallet,
       color: "text-purple-500",
       bg: "bg-purple-500/10",

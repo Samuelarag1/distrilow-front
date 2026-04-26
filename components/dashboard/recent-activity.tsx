@@ -27,28 +27,35 @@ type RecentSale = {
 
 export function RecentActivity() {
   const { branchId } = useUser();
-  const { data: recentSales = [], isLoading } = useSWR<RecentSale[]>(
+  const {
+    data: recentSales = [],
+    error,
+    isLoading,
+  } = useSWR<RecentSale[]>(
     branchId ? ["dashboard-recent-sales", branchId] : null,
     async () => {
       const payload = await backendApi.sales.list(
         {
           limit: 5,
+          status: "COMPLETED",
         },
         branchId
       );
 
-      return payload.items
-        .map((sale) => ({
+      return payload.items.map((sale) => {
+        if (typeof sale.totalAmount !== "number") {
+          throw new Error("Invalid sales contract: totalAmount");
+        }
+        if (!sale.createdAt) {
+          throw new Error("Invalid sales contract: createdAt");
+        }
+
+        return {
           id: String(sale.id),
-          amount: Number(sale.totalAmount ?? sale.total ?? 0),
-          date: String(
-            sale.createdAt ?? sale.updatedAt ?? new Date().toISOString()
-          ),
-        }))
-        .sort((left, right) => {
-          return new Date(right.date).getTime() - new Date(left.date).getTime();
-        })
-        .slice(0, 5);
+          amount: sale.totalAmount,
+          date: sale.createdAt,
+        };
+      });
     },
     {
       keepPreviousData: true,
@@ -69,6 +76,12 @@ export function RecentActivity() {
             <p className="text-sm text-muted-foreground">
               Cargando actividad reciente...
             </p>
+          </div>
+        )}
+
+        {error && (
+          <div className="rounded-md border border-destructive/50 p-3 text-sm text-destructive">
+            No se pudo cargar la actividad reciente.
           </div>
         )}
 

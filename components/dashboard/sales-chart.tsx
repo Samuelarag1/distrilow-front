@@ -17,17 +17,11 @@ import { Area, AreaChart, ResponsiveContainer, XAxis, YAxis } from "recharts";
 
 import { useUser } from "@/components/providers/user-provider";
 import {
-  fillAnalyticsSeries,
   formatReportingPeriodLabel,
-  getReportingTimeZone,
 } from "@/lib/reports/reporting-sales-history";
 import { backendApi } from "@/lib/backend-api";
-import {
-  snapshotDateKeyToStableDate,
-} from "@/lib/snapshot-metrics";
 
 const reportingDateFormatter = new Intl.DateTimeFormat("en-CA", {
-  timeZone: getReportingTimeZone(),
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
@@ -35,8 +29,8 @@ const reportingDateFormatter = new Intl.DateTimeFormat("en-CA", {
 
 function shiftDateKey(dateKey: string, deltaDays: number) {
   const [year, month, day] = dateKey.split("-").map(Number);
-  const base = new Date(Date.UTC(year, (month || 1) - 1, day || 1, 12, 0, 0, 0));
-  base.setUTCDate(base.getUTCDate() + deltaDays);
+  const base = new Date(year, (month || 1) - 1, day || 1);
+  base.setDate(base.getDate() + deltaDays);
   return reportingDateFormatter.format(base);
 }
 
@@ -44,7 +38,7 @@ export function SalesChart() {
   const { branchId } = useUser();
   const toKey = reportingDateFormatter.format(new Date());
   const fromKey = shiftDateKey(toKey, -6);
-  const { data, isLoading } = useSWR(
+  const { data, error, isLoading } = useSWR(
     branchId
       ? [
           "dashboard-sales-chart",
@@ -69,27 +63,9 @@ export function SalesChart() {
         }),
       ]);
 
-      const rangeFrom = snapshotDateKeyToStableDate(fromKey);
-      const rangeTo = snapshotDateKeyToStableDate(toKey);
-
-      if (!rangeFrom || !rangeTo) {
-        return {
-          revenuePoints: revenue.points ?? [],
-          countPoints: count.points ?? [],
-        };
-      }
-
       return {
-        revenuePoints: fillAnalyticsSeries(
-          { from: rangeFrom, to: rangeTo },
-          "day",
-          revenue.points ?? []
-        ),
-        countPoints: fillAnalyticsSeries(
-          { from: rangeFrom, to: rangeTo },
-          "day",
-          count.points ?? []
-        ),
+        revenuePoints: revenue.points ?? [],
+        countPoints: count.points ?? [],
       };
     },
     {
@@ -119,10 +95,10 @@ export function SalesChart() {
     <Card className="w-full overflow-hidden">
       <CardHeader>
         <CardTitle className="text-base sm:text-lg">
-          Desempeno de Ventas (7 dias)
+          Desempeño de Ventas (7 dias)
         </CardTitle>
         <CardDescription className="text-sm">
-          Ultima semana comercial: {weekLabel}
+          {weekLabel}
         </CardDescription>
       </CardHeader>
 
@@ -130,6 +106,16 @@ export function SalesChart() {
         {isLoading && (
           <p className="mb-3 text-sm text-muted-foreground">
             Cargando rendimiento de ventas...
+          </p>
+        )}
+        {error && (
+          <p className="mb-3 rounded-md border border-destructive/50 p-3 text-sm text-destructive">
+            No se pudo cargar el rendimiento de ventas.
+          </p>
+        )}
+        {!isLoading && !error && chartData.length === 0 && (
+          <p className="mb-3 text-sm text-muted-foreground">
+            No hay ventas para el rango seleccionado.
           </p>
         )}
         <div className="w-full h-[250px] sm:h-[300px]">
