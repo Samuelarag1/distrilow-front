@@ -1533,6 +1533,9 @@ export function InventoryModule() {
                 <p className="text-3xl font-bold mt-1">
                   ${inventoryValueKpi.toLocaleString()}
                 </p>
+                <span className="text-xs text-muted-foreground">
+                  Valor en Precio de Venta Mayorista
+                </span>
               </div>
               <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
                 <TrendingUp className="h-6 w-6 text-green-500" />

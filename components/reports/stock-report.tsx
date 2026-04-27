@@ -155,7 +155,7 @@ function readInventoryValue(
   if (!summary) return 0;
   if (mode === "cost") return Number(summary.inventoryValueCost ?? 0);
   if (mode === "wholesale") return Number(summary.inventoryValueWholesale ?? 0);
-  return Number(summary.inventoryValueRetail ?? 0);
+  return Number(summary.inventoryValueWholesale ?? 0);
 }
 
 export function StockReport() {
@@ -315,7 +315,7 @@ export function StockReport() {
             ? Number(item.inventoryValueCost ?? 0)
             : priceMode === "wholesale"
             ? Number(item.inventoryValueWholesale ?? 0)
-            : Number(item.inventoryValueRetail ?? 0),
+            : Number(item.inventoryValueWholesale ?? 0),
       })),
     [summary?.byCategory, priceMode]
   );
@@ -667,6 +667,9 @@ export function StockReport() {
             <div className="text-2xl font-bold">
               {formatMoney(readInventoryValue(summary, priceMode))}
             </div>
+              <span className="text-xs text-muted-foreground">
+                  Valor en Precio de Venta Mayorista
+                </span>
           </CardContent>
         </Card>
 
