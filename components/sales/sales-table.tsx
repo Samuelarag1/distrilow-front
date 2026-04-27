@@ -27,15 +27,16 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  useTransactions,
-  type Sale,
-} from "@/components/providers/transactions-provider";
+import { useTransactions, type Sale } from "@/components/providers/transactions-provider";
 import { SalesDetailModal } from "./sales-detail-modal";
 import { useBusiness } from "@/components/providers/business-provider";
+import { useUser } from "@/components/providers/user-provider";
 import { useToast } from "@/hooks/use-toast";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import type { PaymentMethod } from "@/lib/api-types";
+import { backendApi } from "@/lib/backend-api";
+import { normalizeSale } from "@/lib/adapters/sales";
+import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import {
   getPaymentMethodLabel,
   formatWholeAmountInput,
@@ -77,18 +78,12 @@ function toFiniteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-type SalesPaymentMethodFilter = "CASH" | "TRANSFER" | "MIXTO";
-type SalesPaymentFilter = "all" | SalesPaymentMethodFilter;
-
-function matchesSalePaymentFilter(
-  sale: Sale,
-  filter: SalesPaymentMethodFilter | null
-) {
-  if (!filter) return true;
-  if (filter === "CASH") return sale.paymentType === "CASH";
-  if (filter === "TRANSFER") return sale.paymentType === "TRANSFER";
-  return sale.paymentType === "MIXED";
-}
+type SalesSort =
+  | "createdAt:desc"
+  | "createdAt:asc"
+  | "totalAmount:desc"
+  | "totalAmount:asc";
+type SalesPaymentTypeFilter = "all" | "CASH" | "TRANSFER" | "MIXED" | "OTHER";
 
 function getSalePaymentDisplayLabel(sale: Sale) {
   if (sale.paidAmount <= Number.EPSILON) {
@@ -103,14 +98,15 @@ function getSalePendingReasonDisplay(sale: Sale | null | undefined) {
 }
 
 export function SalesTable() {
-  const { sales, isLoading, registerSalePayment, cancelSale, getSaleDetail } =
-    useTransactions();
+  const { registerSalePayment, cancelSale, getSaleDetail } = useTransactions();
   const { businessType } = useBusiness();
+  const { branchId } = useUser();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("all");
-  const [selectedPaymentMethod, setSelectedPaymentMethod] =
-    useState<SalesPaymentFilter>("all");
+  const [selectedPaymentType, setSelectedPaymentType] =
+    useState<SalesPaymentTypeFilter>("all");
+  const sort: SalesSort = "createdAt:desc";
   const [currentPage, setCurrentPage] = useState(1);
   const [detailSaleId, setDetailSaleId] = useState<string | null>(null);
   const [saleToPay, setSaleToPay] = useState<Sale | null>(null);
@@ -123,8 +119,56 @@ export function SalesTable() {
   const [cancelTarget, setCancelTarget] = useState<Sale | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const pageSize = 10;
-  const paymentMethodFilter =
-    selectedPaymentMethod === "all" ? null : selectedPaymentMethod;
+  const debouncedSearch = useDebouncedValue(searchQuery, 350);
+
+  const salesQuery = useMemo(() => {
+    const query = {
+      page: currentPage,
+      limit: pageSize,
+      status: "COMPLETED" as const,
+      search: debouncedSearch.trim() || undefined,
+      paymentType:
+        selectedPaymentType !== "all" ? selectedPaymentType : undefined,
+      sort,
+      chargeStatus: undefined as "PENDING" | "PARTIALLY_PAID" | "PAID" | undefined,
+    };
+
+    if (
+      selectedStatus === "PENDING" ||
+      selectedStatus === "PARTIALLY_PAID" ||
+      selectedStatus === "PAID"
+    ) {
+      query.chargeStatus = selectedStatus;
+    }
+
+    if (selectedStatus === "CANCELLED") {
+      return {
+        page: currentPage,
+        limit: pageSize,
+        status: "CANCELLED" as const,
+        search: debouncedSearch.trim() || undefined,
+        paymentType:
+          selectedPaymentType !== "all" ? selectedPaymentType : undefined,
+        sort,
+      };
+    }
+
+    return query;
+  }, [currentPage, debouncedSearch, selectedPaymentType, selectedStatus, sort]);
+
+  const {
+    data: salesPage,
+    error: salesError,
+    isLoading: isSalesPageLoading,
+    mutate: mutateSalesPage,
+  } = useSWR(
+    branchId ? ["sales-table", branchId, salesQuery] : null,
+    () => backendApi.sales.list(salesQuery, branchId),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
 
   const { data: detailSale } = useSWR(
     detailSaleId ? (["/sales", detailSaleId] as const) : null,
@@ -142,50 +186,23 @@ export function SalesTable() {
       keepPreviousData: true,
     }
   );
-  const isTableLoading = isLoading;
+  const isTableLoading = isSalesPageLoading;
   const saleForPayment =
     saleToPay && payDialogDetail?.id === saleToPay.id
       ? payDialogDetail
       : saleToPay;
 
-  const filteredSales = useMemo(
+  const paginatedSales = useMemo(
     () =>
-      sales.filter((sale) => {
-        if (sale.businessType !== businessType) return false;
-        const status = getSaleRowStatus(sale);
-        const query = searchQuery.trim().toLowerCase();
-        const matchesSearch =
-          query.length === 0 ||
-          sale.id.toLowerCase().includes(query) ||
-          String(sale.note ?? "")
-            .toLowerCase()
-            .includes(query) ||
-          String(getSalePendingReasonDisplay(sale) ?? "")
-            .toLowerCase()
-            .includes(query) ||
-          String(sale.pendingReason ?? "")
-            .toLowerCase()
-            .includes(query) ||
-          String(sale.originalNotes ?? "")
-            .toLowerCase()
-            .includes(query);
-        const matchesStatus =
-          selectedStatus === "all" || selectedStatus === status;
-        const matchesPaymentMethod = matchesSalePaymentFilter(
-          sale,
-          paymentMethodFilter
-        );
-        return matchesSearch && matchesStatus && matchesPaymentMethod;
-      }),
-    [sales, businessType, searchQuery, selectedStatus, paymentMethodFilter]
+      (salesPage?.items ?? []).map((sale) =>
+        normalizeSale(sale, { businessType })
+      ),
+    [businessType, salesPage?.items]
   );
-
-  const totalPages = Math.max(1, Math.ceil(filteredSales.length / pageSize));
-  const currentPageSafe = Math.min(currentPage, totalPages);
-  const paginatedSales = useMemo(() => {
-    const start = (currentPageSafe - 1) * pageSize;
-    return filteredSales.slice(start, start + pageSize);
-  }, [filteredSales, currentPageSafe]);
+  const meta = salesPage?.meta;
+  const totalPages = Math.max(1, Number(meta?.totalPages ?? 1));
+  const currentPageSafe = Math.max(1, Number(meta?.page ?? currentPage));
+  const totalRows = Math.max(0, Number(meta?.total ?? 0));
 
   const openPayDialog = (sale: Sale) => {
     setSaleToPay(sale);
@@ -226,6 +243,7 @@ export function SalesTable() {
       });
       setIsPayDialogOpen(false);
       setSaleToPay(null);
+      void mutateSalesPage();
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -250,6 +268,7 @@ export function SalesTable() {
         description: "La venta fue anulada correctamente.",
       });
       setCancelTarget(null);
+      void mutateSalesPage();
     } catch (error: any) {
       toast({
         variant: "destructive",
@@ -305,10 +324,10 @@ export function SalesTable() {
               <option value="CANCELLED">Cancelada</option>
             </select>
             <select
-              value={selectedPaymentMethod}
+              value={selectedPaymentType}
               onChange={(event) => {
-                setSelectedPaymentMethod(
-                  event.target.value as SalesPaymentFilter
+                setSelectedPaymentType(
+                  event.target.value as SalesPaymentTypeFilter
                 );
                 setCurrentPage(1);
               }}
@@ -317,9 +336,17 @@ export function SalesTable() {
               <option value="all">Todos los pagos</option>
               <option value="CASH">Solo efectivo</option>
               <option value="TRANSFER">Solo transferencia</option>
-              <option value="MIXTO">Mixto</option>
+              <option value="MIXED">Mixto</option>
             </select>
           </div>
+
+          {salesError && (
+            <p className="text-sm text-destructive">
+              {salesError instanceof Error
+                ? salesError.message
+                : "No se pudieron cargar las ventas."}
+            </p>
+          )}
 
           <div className="border rounded-lg overflow-hidden">
             <div className="overflow-x-auto">
@@ -475,16 +502,16 @@ export function SalesTable() {
             </div>
           </div>
 
-          {!isTableLoading && filteredSales.length === 0 && (
+          {!isTableLoading && !salesError && paginatedSales.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               No se encontraron ventas.
             </div>
           )}
 
-          {!isTableLoading && filteredSales.length > 0 && (
+          {!isTableLoading && !salesError && totalRows > 0 && (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted-foreground">
-                Pagina {currentPageSafe} de {totalPages} ({filteredSales.length}{" "}
+                Pagina {currentPageSafe} de {totalPages} ({totalRows}{" "}
                 registros)
               </p>
               <div className="flex items-center gap-2">

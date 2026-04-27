@@ -151,7 +151,10 @@ export async function fetchReportingSalesSeries(
       const response = responses[index];
       acc[metric] = {
         metric,
-        points: fillAnalyticsSeries(range, groupBy, response.points),
+        points: (response.points ?? []).map((point) => ({
+          period: String(point.period),
+          value: Number(point.value ?? 0),
+        })),
         total: Number(response.totals?.value ?? 0),
       };
       return acc;

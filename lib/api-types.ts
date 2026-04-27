@@ -696,13 +696,22 @@ export type Sale = SaleSummary | SaleDetail;
 export interface SaleListQuery {
   // skip?: number;
   // take?: number;
+  page?: number;
   offset?: number;
   limit?: number;
   search?: string;
   status?: string;
+  paymentType?: SalePaymentType;
+  paymentStatus?: SaleChargeStatus;
   chargeStatus?: SaleChargeStatus;
+  lifecycleStatus?: SaleLifecycleStatus;
   from?: string;
   to?: string;
+  sort?:
+    | "createdAt:desc"
+    | "createdAt:asc"
+    | "totalAmount:desc"
+    | "totalAmount:asc";
 }
 
 export interface SalePaymentsListQuery {
@@ -955,6 +964,25 @@ export interface AnalyticsSalesQuery {
   to: string;
   groupBy: AnalyticsGroupBy;
   metric: AnalyticsMetric;
+}
+
+export interface ReportingSalesSummaryBucket {
+  revenue: number;
+  orders: number;
+  avgTicket: number;
+  revenueGrowthPct?: number;
+  ordersGrowthPct?: number;
+  avgTicketGrowthPct?: number;
+  cashIncome?: number;
+  transferIncome?: number;
+}
+
+export interface ReportingSalesSummaryResponse {
+  timezone?: string;
+  today: ReportingSalesSummaryBucket;
+  yesterday?: ReportingSalesSummaryBucket;
+  rollingMonth: ReportingSalesSummaryBucket;
+  previousRollingMonth?: ReportingSalesSummaryBucket;
 }
 
 export interface ReportingGlobalMetricsByPaymentMethod {

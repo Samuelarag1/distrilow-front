@@ -6,6 +6,7 @@ import { emitSalesSync } from "@/lib/sales-live-sync";
 import type {
   AnalyticsSalesQuery,
   AnalyticsSalesResponse,
+  ReportingSalesSummaryResponse,
   AuditLog,
   AuditQuery,
   AuthResponse,
@@ -2522,6 +2523,10 @@ export const backendApi = {
         ),
     },
     sales: {
+      summary: () =>
+        apiClientFetch.get<ReportingSalesSummaryResponse>(
+          "/reporting/sales/summary"
+        ),
       history: (query: AnalyticsSalesQuery) =>
         apiClientFetch.get<AnalyticsSalesResponse>(
           `/reporting/sales/history${buildQuery(query)}`

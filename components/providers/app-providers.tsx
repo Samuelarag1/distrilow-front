@@ -15,8 +15,6 @@ import { BranchProvider } from "./branch-provider";
 export function AppProviders({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isPosRoute = pathname === "/pos" || pathname.startsWith("/pos/");
-  const shouldHydrateSales =
-    pathname === "/sales" || pathname.startsWith("/sales/");
 
   if (isPosRoute) {
     return (
@@ -49,7 +47,7 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           <BusinessProvider>
             <AuditProvider>
               <BranchProvider>
-                <TransactionsProvider autoLoadSales={shouldHydrateSales}>
+                <TransactionsProvider autoLoadSales={false}>
                   <ProductProvider>{children}</ProductProvider>
                 </TransactionsProvider>
               </BranchProvider>
