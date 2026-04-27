@@ -17,12 +17,12 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
-import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import {
   formatReportingPeriodLabel,
   fetchReportingSalesSeries,
 } from "@/lib/reports/reporting-sales-history";
+import { backendApi } from "@/lib/backend-api";
 
 const chartConfig = {
   ventas: {
@@ -31,14 +31,6 @@ const chartConfig = {
   },
 };
 
-function isSameCalendarDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
-
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
     maximumFractionDigits: 0,
@@ -46,7 +38,6 @@ function formatMoney(value: number) {
 }
 
 export function DailySales() {
-  const { sales, isLoading } = useTransactions();
   const { branchId } = useUser();
   const dailyRange = useMemo(() => {
     const to = new Date();
@@ -73,6 +64,14 @@ export function DailySales() {
       keepPreviousData: true,
     }
   );
+  const { data: salesSummary, isLoading: isSummaryLoading } = useSWR(
+    branchId ? ["daily-sales-summary", branchId] : null,
+    () => backendApi.reporting.sales.summary(),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
 
   const dailyTrend = useMemo(
     () =>
@@ -85,32 +84,12 @@ export function DailySales() {
     [dailyReporting]
   );
 
-  const todaySales = useMemo(() => {
-    const today = new Date();
-    return sales
-      .filter((sale) => {
-        if (branchId && sale.branchId && sale.branchId !== branchId) return false;
-        if (sale.lifecycleStatus === "CANCELLED") return false;
-        const date = new Date(sale.date);
-        return isSameCalendarDay(date, today);
-      })
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [sales, branchId]);
-
-  const totalSales = todaySales.reduce(
-    (sum, sale) => sum + Number(sale.totalAmount ?? sale.amount ?? 0),
-    0
-  );
-  const completedOrders = todaySales.length;
+  const todaySummary = salesSummary?.today;
+  const totalSales = Number(todaySummary?.revenue ?? 0);
+  const completedOrders = Number(todaySummary?.orders ?? 0);
   const avgOrder = completedOrders > 0 ? totalSales / completedOrders : 0;
-
-  const cashIncome = todaySales.reduce((sum, sale) => {
-    return sum + Number(sale.paymentBreakdownByMethod.cash ?? 0);
-  }, 0);
-
-  const transferIncome = todaySales.reduce((sum, sale) => {
-    return sum + Number(sale.paymentBreakdownByMethod.transfer ?? 0);
-  }, 0);
+  const cashIncome = Number(todaySummary?.cashIncome ?? 0);
+  const transferIncome = Number(todaySummary?.transferIncome ?? 0);
 
   return (
     <div className="space-y-6">
@@ -154,7 +133,7 @@ export function DailySales() {
           <CardTitle>Analisis diario</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading && (
+          {isSummaryLoading && (
             <div className="text-sm text-muted-foreground">
               Cargando metricas de hoy...
             </div>

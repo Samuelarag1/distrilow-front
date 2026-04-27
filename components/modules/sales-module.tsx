@@ -25,21 +25,13 @@ import { DailySales } from "@/components/sales/daily-sales";
 import { SalesTable } from "@/components/sales/sales-table";
 import { GrowthAnalysis } from "@/components/sales/growth-analysis";
 import { useToast } from "@/hooks/use-toast";
-import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
+import { backendApi } from "@/lib/backend-api";
 import { fetchReportingSalesSeries } from "@/lib/reports/reporting-sales-history";
 import {
   getPreviousRollingMonthRange,
   getRollingMonthRange,
 } from "@/lib/reports/rolling-month";
-
-function sameDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
-}
 
 function pct(current: number, previous: number) {
   if (previous === 0) return current > 0 ? 100 : 0;
@@ -50,7 +42,6 @@ export function SalesModule() {
   const [selectedPeriod, setSelectedPeriod] = useState("monthly");
   const [selectedYear, setSelectedYear] = useState(String(new Date().getFullYear()));
   const { toast } = useToast();
-  const { sales, isLoading } = useTransactions();
   const { branchId } = useUser();
   const monthlyConfig = useMemo(() => {
     const now = new Date();
@@ -91,68 +82,64 @@ export function SalesModule() {
       keepPreviousData: true,
     }
   );
+  const { data: salesSummary, isLoading: isSummaryLoading } = useSWR(
+    branchId ? ["sales-module-summary", branchId] : null,
+    () => backendApi.reporting.sales.summary(),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
 
   const metrics = useMemo(() => {
-    const activeSales = sales.filter((sale) => sale.lifecycleStatus !== "CANCELLED");
-    const now = new Date();
-    const yesterday = new Date(now);
-    yesterday.setDate(now.getDate() - 1);
-    const currentMonthlyRange = getRollingMonthRange(now);
-    const previousMonthlyRange = getPreviousRollingMonthRange(now);
-
-    const todaySales = activeSales.filter((sale) => sameDay(new Date(sale.date), now));
-    const yesterdaySales = activeSales.filter((sale) => sameDay(new Date(sale.date), yesterday));
-
-    const monthSales = activeSales.filter((sale) => {
-      const date = new Date(sale.date);
-      return date >= currentMonthlyRange.from && date <= currentMonthlyRange.to;
-    });
-
-    const prevMonthSales = activeSales.filter((sale) => {
-      const date = new Date(sale.date);
-      return date >= previousMonthlyRange.from && date <= previousMonthlyRange.to;
-    });
-
-    const todayRevenue = todaySales.reduce((sum, sale) => sum + sale.totalAmount, 0);
-    const yesterdayRevenue = yesterdaySales.reduce((sum, sale) => sum + sale.totalAmount, 0);
-
-    const monthRevenue = monthSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
-    const prevMonthRevenue = prevMonthSales.reduce((sum, sale) => sum + sale.totalAmount, 0);
-
-    const todayAvgOrder = todaySales.length > 0 ? todayRevenue / todaySales.length : 0;
-    const monthAvgOrder = monthSales.length > 0 ? monthRevenue / monthSales.length : 0;
-
-    const yesterdayAvgOrder =
-      yesterdaySales.length > 0 ? yesterdayRevenue / yesterdaySales.length : 0;
-    const prevMonthAvgOrder =
-      prevMonthSales.length > 0 ? prevMonthRevenue / prevMonthSales.length : 0;
+    const todayRevenue = Number(salesSummary?.today.revenue ?? 0);
+    const yesterdayRevenue = Number(salesSummary?.yesterday?.revenue ?? 0);
+    const todayOrders = Number(salesSummary?.today.orders ?? 0);
+    const yesterdayOrders = Number(salesSummary?.yesterday?.orders ?? 0);
+    const todayAvgOrder = Number(salesSummary?.today.avgTicket ?? 0);
+    const yesterdayAvgOrder = Number(salesSummary?.yesterday?.avgTicket ?? 0);
     const reportingMonthRevenue = Number(
-      monthlyReporting?.currentSeries.revenue.total ?? monthRevenue
+      monthlyReporting?.currentSeries.revenue.total ??
+        salesSummary?.rollingMonth.revenue ??
+        0
     );
     const reportingPrevMonthRevenue = Number(
-      monthlyReporting?.previousSeries.revenue.total ?? prevMonthRevenue
+      monthlyReporting?.previousSeries.revenue.total ??
+        salesSummary?.previousRollingMonth?.revenue ??
+        0
     );
     const reportingMonthOrders = Number(
-      monthlyReporting?.currentSeries.count.total ?? monthSales.length
+      monthlyReporting?.currentSeries.count.total ??
+        salesSummary?.rollingMonth.orders ??
+        0
     );
     const reportingPrevMonthOrders = Number(
-      monthlyReporting?.previousSeries.count.total ?? prevMonthSales.length
+      monthlyReporting?.previousSeries.count.total ??
+        salesSummary?.previousRollingMonth?.orders ??
+        0
     );
     const reportingMonthAvgOrder = Number(
-      monthlyReporting?.currentSeries.avgTicket.total ?? monthAvgOrder
+      monthlyReporting?.currentSeries.avgTicket.total ??
+        salesSummary?.rollingMonth.avgTicket ??
+        0
     );
     const reportingPrevMonthAvgOrder = Number(
-      monthlyReporting?.previousSeries.avgTicket.total ?? prevMonthAvgOrder
+      monthlyReporting?.previousSeries.avgTicket.total ??
+        salesSummary?.previousRollingMonth?.avgTicket ??
+        0
     );
 
     return {
       today: {
         sales: todayRevenue,
-        orders: todaySales.length,
+        orders: todayOrders,
         avgOrder: todayAvgOrder,
-        growth: pct(todayRevenue, yesterdayRevenue),
-        ordersGrowth: pct(todaySales.length, yesterdaySales.length),
-        avgOrderGrowth: pct(todayAvgOrder, yesterdayAvgOrder),
+        growth: salesSummary?.today.revenueGrowthPct ?? pct(todayRevenue, yesterdayRevenue),
+        ordersGrowth:
+          salesSummary?.today.ordersGrowthPct ?? pct(todayOrders, yesterdayOrders),
+        avgOrderGrowth:
+          salesSummary?.today.avgTicketGrowthPct ??
+          pct(todayAvgOrder, yesterdayAvgOrder),
       },
       monthly: {
         sales: reportingMonthRevenue,
@@ -163,7 +150,7 @@ export function SalesModule() {
         avgOrderGrowth: pct(reportingMonthAvgOrder, reportingPrevMonthAvgOrder),
       },
     };
-  }, [sales, monthlyReporting]);
+  }, [monthlyReporting, salesSummary]);
 
   const handleExport = (format: string) => {
     toast({
@@ -197,7 +184,7 @@ export function SalesModule() {
         </div>
       </div>
 
-      {isLoading && <p className="text-sm text-muted-foreground">Cargando ventas...</p>}
+      {isSummaryLoading && <p className="text-sm text-muted-foreground">Cargando ventas...</p>}
 
       <Tabs value={selectedPeriod} onValueChange={setSelectedPeriod} className="space-y-6">
         <TabsList className="grid w-full grid-cols-4">
