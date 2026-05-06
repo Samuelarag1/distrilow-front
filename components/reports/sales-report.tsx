@@ -49,19 +49,10 @@ const PIE_COLORS = [
   "#14b8a6",
 ];
 const DETAIL_PAGE_SIZE = 10;
-const TOP_PRODUCTS_FETCH_LIMIT = 300;
-const PRODUCT_LOOKUP_PAGE_SIZE = 100;
-const PRODUCT_PRICING_BATCH_SIZE = 20;
 
 type DateRange = {
   from?: Date;
   to?: Date;
-};
-
-type ProductPricingSnapshot = {
-  costPrice: number;
-  retailPrice: number;
-  wholesalePrice: number;
 };
 
 function formatMoney(value: number) {
@@ -166,11 +157,12 @@ function buildSalesExportRows(
     const unitsTotal = Number(item.unitsTotal ?? 0);
     const revenueTotal = Number(item.revenueTotal ?? 0);
     const costTotal = Number(item.costTotal ?? 0);
-    const marginTotal = Number(item.marginTotal ?? 0);
+    const marginTotal = Number(item.profitTotal ?? item.marginTotal ?? 0);
+    const marginPct = Number(item.marginTotalPct ?? item.marginPct ?? 0);
 
     return {
       posicion: index + 1,
-      producto: item.productName,
+      producto: item.productName ?? "Sin nombre",
       categoria: item.categoryName ?? "Sin categoria",
       medida: formatMeasurementLabel(measurementType),
       cantidadTotal: formatProductQuantity(unitsTotal, measurementType),
@@ -179,7 +171,7 @@ function buildSalesExportRows(
       participacionIngresos: formatRevenueShare(revenueTotal, totalRevenue),
       costoTotal: formatMoney(costTotal),
       gananciaTotal: formatMoney(marginTotal),
-      margenPct: formatPercent(Number(item.marginPct ?? 0)),
+      margenPct: formatPercent(marginPct),
       cantidadMinorista: formatProductQuantity(
         Number(item.unitsRetail ?? 0),
         measurementType
@@ -192,62 +184,6 @@ function buildSalesExportRows(
       ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
     };
   });
-}
-
-function calculateMarginPctFromConfiguredPrice(
-  sellPrice: number,
-  costPrice: number
-) {
-  if (!Number.isFinite(sellPrice) || sellPrice <= 0) return 0;
-  if (!Number.isFinite(costPrice) || costPrice < 0) return 0;
-
-  return ((sellPrice - costPrice) / sellPrice) * 100;
-}
-
-function getTopProductMarginBreakdown(
-  item: ReportsTopProductItem,
-  pricing?: ProductPricingSnapshot | null
-) {
-  if (!pricing) {
-    return {
-      totalPct: Number(item.marginPct ?? 0),
-      retailPct: 0,
-      wholesalePct: 0,
-      hasConfiguredPricing: false,
-    };
-  }
-
-  const unitsRetail = Number(item.unitsRetail ?? 0);
-  const unitsWholesale = Number(item.unitsWholesale ?? 0);
-  const unitsTotal = Number(item.unitsTotal ?? 0);
-
-  const retailPct = calculateMarginPctFromConfiguredPrice(
-    Number(pricing.retailPrice ?? 0),
-    Number(pricing.costPrice ?? 0)
-  );
-  const wholesalePct = calculateMarginPctFromConfiguredPrice(
-    Number(pricing.wholesalePrice ?? 0),
-    Number(pricing.costPrice ?? 0)
-  );
-
-  const estimatedRetailRevenue = unitsRetail * Number(pricing.retailPrice ?? 0);
-  const estimatedWholesaleRevenue =
-    unitsWholesale * Number(pricing.wholesalePrice ?? 0);
-  const estimatedTotalRevenue =
-    estimatedRetailRevenue + estimatedWholesaleRevenue;
-  const estimatedTotalCost = unitsTotal * Number(pricing.costPrice ?? 0);
-  const totalPct =
-    estimatedTotalRevenue > 0
-      ? ((estimatedTotalRevenue - estimatedTotalCost) / estimatedTotalRevenue) *
-        100
-      : 0;
-
-  return {
-    totalPct,
-    retailPct,
-    wholesalePct,
-    hasConfiguredPricing: true,
-  };
 }
 
 export function SalesReport({ dateRange }: { dateRange: DateRange }) {
@@ -291,78 +227,31 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     branchId
       ? ["reporting-sales-overview", branchId, range.fromYmd, range.toYmd]
       : null,
-    async () => {
-      const [
-        salesTrend,
-        globalMetrics,
-        topProducts,
-        priceTypesSummary,
-        pricingSourcesSummary,
-      ] = await Promise.all([
-        backendApi.reporting.sales.history({
+    () =>
+      backendApi.reporting.sales.overview(
+        {
           from: range.fromYmd,
           to: range.toYmd,
-          groupBy: "day",
-          metric: "revenue",
-        }),
-        backendApi.reporting.global.metrics(
-          {
-            from: range.fromYmd,
-            to: range.toYmd,
-          },
-          branchId
-        ),
-        backendApi.reporting.sales.topProducts.report(
-          {
-            from: range.fromYmd,
-            to: range.toYmd,
-            limit: DETAIL_PAGE_SIZE,
-            branchId: branchId ?? undefined,
-          },
-          branchId
-        ),
-        backendApi.reporting.sales.priceTypes
-          .summary(
-            {
-              from: range.fromYmd,
-              to: range.toYmd,
-              branchId: branchId ?? undefined,
-            },
-            branchId
-          )
-          .catch(() => null),
-        backendApi.reporting.sales.pricingSources
-          .summary(
-            {
-              from: range.fromYmd,
-              to: range.toYmd,
-              branchId: branchId ?? undefined,
-            },
-            branchId
-          )
-          .catch(() => null),
-      ]);
-
-      return {
-        salesTrend,
-        globalMetrics,
-        topProducts,
-        priceTypesSummary,
-        pricingSourcesSummary,
-      };
-    },
+          topProductsLimit: DETAIL_PAGE_SIZE,
+          branchId: branchId ?? undefined,
+        },
+        branchId
+      ),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
     }
   );
 
+  const shouldFetchDetailProducts =
+    Boolean(normalizedDetailSearch) || detailPage !== 1;
+
   const {
     data: detailTopProducts,
     isLoading: isDetailLoading,
     error: detailError,
   } = useSWR(
-    branchId
+    branchId && shouldFetchDetailProducts
       ? [
           "reporting-sales-top-products-detail",
           branchId,
@@ -405,133 +294,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     }
   );
 
-  const {
-    data: soldQuantityBreakdown,
-    isLoading: isSoldQuantityBreakdownLoading,
-    error: soldQuantityBreakdownError,
-  } = useSWR(
-    branchId
-      ? [
-          "reporting-sales-quantity-breakdown",
-          branchId,
-          range.fromYmd,
-          range.toYmd,
-        ]
-      : null,
-    async () => {
-      const report = await backendApi.reporting.sales.topProducts.report(
-        {
-          from: range.fromYmd,
-          to: range.toYmd,
-          branchId: branchId ?? undefined,
-          limit: TOP_PRODUCTS_FETCH_LIMIT,
-        },
-        branchId
-      );
-      const items = Array.isArray(report?.items) ? report.items : [];
-      const productTotals = new Map<
-        string,
-        { quantity: number; measurementType: MeasurementType | null }
-      >();
-
-      for (const item of items) {
-        const productId = String(item.productId ?? "").trim();
-        if (!productId) continue;
-
-        const quantity = Number(item.unitsTotal ?? 0);
-        if (!Number.isFinite(quantity) || quantity <= 0) continue;
-
-        const existing = productTotals.get(productId);
-        if (existing) {
-          existing.quantity += quantity;
-          existing.measurementType =
-            existing.measurementType ?? getTopProductMeasurementType(item);
-          continue;
-        }
-
-        productTotals.set(productId, {
-          quantity,
-          measurementType: getTopProductMeasurementType(item),
-        });
-      }
-
-      const unresolvedProductIds = [...productTotals.entries()]
-        .filter(([, value]) => !value.measurementType)
-        .map(([productId]) => productId);
-
-      if (unresolvedProductIds.length > 0) {
-        const unresolvedSet = new Set(unresolvedProductIds);
-        let skip = 0;
-
-        while (unresolvedSet.size > 0) {
-          const productsPage = await backendApi.products.list(
-            {
-              skip,
-              take: PRODUCT_LOOKUP_PAGE_SIZE,
-            },
-            branchId
-          );
-          const rows = Array.isArray(productsPage.items)
-            ? productsPage.items
-            : [];
-
-          for (const product of rows) {
-            const productId = String(product.id ?? "").trim();
-            if (!productId || !unresolvedSet.has(productId)) continue;
-
-            const measurementType =
-              normalizeMeasurementType(product.measurementType) ??
-              (product.isWeighable ? "kg" : "unit");
-            const existing = productTotals.get(productId);
-            if (!existing) continue;
-
-            existing.measurementType = measurementType;
-            unresolvedSet.delete(productId);
-          }
-
-          const pageMeta = productsPage.meta;
-          const pageLimit = Math.max(
-            1,
-            Number(pageMeta?.limit ?? rows.length ?? PRODUCT_LOOKUP_PAGE_SIZE)
-          );
-          const pageOffset = Math.max(0, Number(pageMeta?.offset ?? skip));
-          const hasMore =
-            typeof pageMeta?.hasMore === "boolean"
-              ? pageMeta.hasMore
-              : rows.length >= pageLimit;
-
-          if (!hasMore || rows.length === 0) break;
-          skip = pageOffset + pageLimit;
-        }
-      }
-
-      return [...productTotals.values()].reduce(
-        (acc, product) => {
-          const measurementType = product.measurementType;
-          if (measurementType === "kg") {
-            acc.kilosTotal += product.quantity;
-            return acc;
-          }
-          if (measurementType === "gram") {
-            acc.kilosTotal += product.quantity / 1000;
-            return acc;
-          }
-          acc.unitsTotal += product.quantity;
-          return acc;
-        },
-        {
-          unitsTotal: 0,
-          kilosTotal: 0,
-          isCapped: items.length >= TOP_PRODUCTS_FETCH_LIMIT,
-        }
-      );
-    },
-    {
-      revalidateOnFocus: false,
-      keepPreviousData: true,
-    }
-  );
-
   const isLoading = isOverviewLoading;
   const error = overviewError;
 
@@ -547,196 +309,89 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   );
 
   const priceTypesSummaryItems = useMemo<ReportsSalesPriceTypesSummaryItem[]>(
-    () => overviewData?.priceTypesSummary?.items ?? [],
-    [overviewData?.priceTypesSummary?.items]
+    () => overviewData?.priceTypes?.items ?? [],
+    [overviewData?.priceTypes?.items]
   );
-
-  const priceTypesSummaryTotals = useMemo(() => {
-    const totals = overviewData?.priceTypesSummary?.totals;
-    if (totals) return totals;
-    if (priceTypesSummaryItems.length === 0) return null;
-
-    return priceTypesSummaryItems.reduce(
-      (acc, item) => {
-        acc.unitsTotal += Number(item.unitsTotal ?? 0);
-        acc.revenueTotal += Number(item.revenueTotal ?? 0);
-        acc.costTotal += Number(item.costTotal ?? 0);
-        acc.profitTotal += Number(item.profitTotal ?? 0);
-        acc.itemCount += Number(item.itemCount ?? 0);
-        acc.saleCount += Number(item.saleCount ?? item.salesCount ?? 0);
-        return acc;
-      },
-      {
-        unitsTotal: 0,
-        revenueTotal: 0,
-        costTotal: 0,
-        profitTotal: 0,
-        marginPercent: 0,
-        itemCount: 0,
-        saleCount: 0,
-      }
-    );
-  }, [overviewData?.priceTypesSummary?.totals, priceTypesSummaryItems]);
 
   const pricingSourcesSummaryItems = useMemo<
     ReportsSalesPricingSourcesSummaryItem[]
   >(
-    () => overviewData?.pricingSourcesSummary?.items ?? [],
-    [overviewData?.pricingSourcesSummary?.items]
+    () => overviewData?.pricingSources?.items ?? [],
+    [overviewData?.pricingSources?.items]
   );
 
-  const totals = useMemo(() => {
+  const effectiveTotals = useMemo(() => {
+    const overviewTotals = overviewData?.totals;
     const seed = {
-      revenueTotal: 0,
-      unitsTotal: 0,
+      revenueTotal: Number(overviewTotals?.revenueTotal ?? 0),
+      unitsTotal: Number(overviewData?.soldQuantity?.unitsTotal ?? 0),
       revenueRetail: 0,
       revenueWholesale: 0,
+      costTotal: Number(overviewTotals?.costTotal ?? 0),
+      grossMarginTotal: Number(overviewTotals?.grossMarginTotal ?? 0),
+      grossMarginPercent: Number(overviewTotals?.grossMarginPercent ?? 0),
     };
 
     return topProductsItems.reduce((acc, item) => {
-      acc.revenueTotal += Number(item.revenueTotal ?? 0);
-      acc.unitsTotal += Number(item.unitsTotal ?? 0);
       acc.revenueRetail += Number(item.revenueRetail ?? 0);
       acc.revenueWholesale += Number(item.revenueWholesale ?? 0);
       return acc;
     }, seed);
-  }, [topProductsItems]);
+  }, [overviewData?.soldQuantity?.unitsTotal, overviewData?.totals, topProductsItems]);
 
-  const salesByPaymentMethod = useMemo(
-    () => overviewData?.globalMetrics?.sales?.byPaymentMethod ?? null,
-    [overviewData?.globalMetrics]
-  );
-  const cashSalesTotal = Number(salesByPaymentMethod?.cashTotal ?? 0);
-  const transferSalesTotal = Number(salesByPaymentMethod?.transferTotal ?? 0);
-
-  const effectiveTotals = useMemo(() => {
-    if (!priceTypesSummaryTotals) return totals;
-    return {
-      ...totals,
-      revenueTotal: Number(
-        priceTypesSummaryTotals.revenueTotal ?? totals.revenueTotal
-      ),
-      unitsTotal: Number(
-        priceTypesSummaryTotals.unitsTotal ?? totals.unitsTotal
-      ),
-    };
-  }, [priceTypesSummaryTotals, totals]);
+  const cashSalesTotal = Number(overviewData?.payments?.cashTotal ?? 0);
+  const transferSalesTotal = Number(overviewData?.payments?.transferTotal ?? 0);
 
   const profitabilitySummary = useMemo(() => {
-    if (!priceTypesSummaryTotals) return null;
-
-    const marginTotal = Number(priceTypesSummaryTotals.profitTotal ?? 0);
-    const revenueTotal = Number(
-      priceTypesSummaryTotals.revenueTotal ?? effectiveTotals.revenueTotal
-    );
-    const marginPct = Number.isFinite(priceTypesSummaryTotals.marginPercent)
-      ? Number(priceTypesSummaryTotals.marginPercent)
-      : revenueTotal > 0
-      ? (marginTotal / revenueTotal) * 100
-      : 0;
-
     return {
-      marginTotal,
-      marginPct,
+      marginTotal: effectiveTotals.grossMarginTotal,
+      marginPct: effectiveTotals.grossMarginPercent,
+      costTotal: effectiveTotals.costTotal,
     };
-  }, [effectiveTotals.revenueTotal, priceTypesSummaryTotals]);
+  }, [effectiveTotals]);
 
-  const displayedSoldUnits = Number(
-    soldQuantityBreakdown?.unitsTotal ?? effectiveTotals.unitsTotal
-  );
-  const displayedSoldKilos = Number(soldQuantityBreakdown?.kilosTotal ?? 0);
+  const displayedSoldUnits = Number(overviewData?.soldQuantity?.unitsTotal ?? 0);
+  const displayedSoldKilos = Number(overviewData?.soldQuantity?.kilosTotal ?? 0);
 
   const salesTrendData = useMemo(
     () =>
-      (overviewData?.salesTrend.points ?? []).map((point) => ({
+      (overviewData?.dailyRevenue.points ?? []).map((point) => ({
         name: formatReportingPeriodLabel(point.period, "day"),
         total: Number(point.value ?? 0),
       })),
-    [overviewData?.salesTrend.points]
+    [overviewData?.dailyRevenue.points]
   );
 
   const topProductsByPriceType = useMemo(
     () =>
       topProductsItems.map((item) => ({
-        name: shortLabel(item.productName, 16),
+        name: shortLabel(item.productName ?? "Sin nombre", 16),
         minorista: Number(item.revenueRetail ?? 0),
         mayorista: Number(item.revenueWholesale ?? 0),
       })),
     [topProductsItems]
   );
 
+  const detailReport = shouldFetchDetailProducts
+    ? detailTopProducts
+    : overviewData?.topProducts;
   const detailProductsItems = useMemo(
-    () => detailTopProducts?.items ?? [],
-    [detailTopProducts?.items]
-  );
-  const visibleTopProductIds = useMemo(
-    () => [
-      ...new Set(
-        [...topProductsItems, ...detailProductsItems]
-          .map((item) => String(item.productId ?? "").trim())
-          .filter(Boolean)
-      ),
-    ],
-    [detailProductsItems, topProductsItems]
-  );
-  const { data: productPricingById } = useSWR(
-    branchId && visibleTopProductIds.length > 0
-      ? [
-          "reporting-sales-top-products-pricing",
-          branchId,
-          visibleTopProductIds.join("|"),
-        ]
-      : null,
-    async () => {
-      const pricingEntries: Record<string, ProductPricingSnapshot> = {};
-
-      for (
-        let index = 0;
-        index < visibleTopProductIds.length;
-        index += PRODUCT_PRICING_BATCH_SIZE
-      ) {
-        const chunk = visibleTopProductIds.slice(
-          index,
-          index + PRODUCT_PRICING_BATCH_SIZE
-        );
-        const results = await Promise.allSettled(
-          chunk.map((productId) => backendApi.products.getById(productId))
-        );
-
-        results.forEach((result, chunkIndex) => {
-          if (result.status !== "fulfilled") return;
-          const productId = chunk[chunkIndex];
-          pricingEntries[productId] = {
-            costPrice: Number(result.value.costPrice ?? 0),
-            retailPrice: Number(result.value.retailPrice ?? 0),
-            wholesalePrice: Number(result.value.wholesalePrice ?? 0),
-          };
-        });
-      }
-
-      return pricingEntries;
-    },
-    {
-      revalidateOnFocus: false,
-      keepPreviousData: true,
-    }
+    () => detailReport?.items ?? [],
+    [detailReport?.items]
   );
   const detailTotalItems = useMemo(() => {
-    const totalFromMeta = Number(
-      detailTopProducts?.meta?.total ?? detailTopProducts?.total ?? Number.NaN
-    );
+    const totalFromMeta = Number(detailReport?.meta?.total ?? Number.NaN);
     if (Number.isFinite(totalFromMeta) && totalFromMeta >= 0) {
       return totalFromMeta;
     }
     return detailProductsItems.length;
   }, [
+    detailReport?.meta?.total,
     detailProductsItems.length,
-    detailTopProducts?.meta?.total,
-    detailTopProducts?.total,
   ]);
   const detailTotalPages = Math.max(
     1,
-    Math.ceil(detailTotalItems / DETAIL_PAGE_SIZE)
+    Number(detailReport?.meta?.totalPages ?? Math.ceil(detailTotalItems / DETAIL_PAGE_SIZE))
   );
   const detailPageSafe = Math.min(detailPage, detailTotalPages);
 
@@ -745,18 +400,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       hasKnownTotal: Number.isFinite(detailTotalItems),
       totalItems: detailTotalItems,
       totalPages: detailTotalPages,
-      hasMore:
-        typeof detailTopProducts?.meta?.hasMore === "boolean"
-          ? detailTopProducts.meta.hasMore
-          : typeof detailTopProducts?.hasMore === "boolean"
-          ? detailTopProducts.hasMore
-          : detailPageSafe < detailTotalPages,
+      hasMore: detailReport?.meta?.hasMore ?? false,
       isCapped: false,
     }),
     [
-      detailPageSafe,
-      detailTopProducts?.hasMore,
-      detailTopProducts?.meta?.hasMore,
+      detailReport?.meta?.hasMore,
       detailTotalItems,
       detailTotalPages,
     ]
@@ -766,10 +414,10 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     if (priceTypesSummaryItems.length > 0) {
       const summaryByKey = new Map(
         priceTypesSummaryItems.map((item) => [
-          String(item.key ?? "")
+          String(item.key ?? item.priceType ?? "")
             .trim()
             .toUpperCase(),
-          Number(item.revenueTotal ?? 0),
+          Number(item.revenueTotal ?? item.revenue ?? 0),
         ])
       );
 
@@ -797,7 +445,8 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     const topSources = [...pricingSourcesSummaryItems]
       .sort(
         (left, right) =>
-          Number(right.revenueTotal ?? 0) - Number(left.revenueTotal ?? 0)
+          Number(right.revenueTotal ?? right.revenue ?? 0) -
+          Number(left.revenueTotal ?? left.revenue ?? 0)
       )
       .slice(0, 2);
 
@@ -806,8 +455,8 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     return topSources
       .map(
         (item) =>
-          `${getPricingSourceLabel(String(item.key ?? ""))}: ${formatMoney(
-            Number(item.revenueTotal ?? 0)
+          `${getPricingSourceLabel(String(item.key ?? item.pricingSource ?? ""))}: ${formatMoney(
+            Number(item.revenueTotal ?? item.revenue ?? 0)
           )}`
       )
       .join(" | ");
@@ -816,14 +465,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
   const tableRows = useMemo(
     () =>
       topProductsItems.map((item, index) => {
-        const marginBreakdown = getTopProductMarginBreakdown(
-          item,
-          productPricingById?.[item.productId]
-        );
+        const marginPct = Number(item.marginTotalPct ?? item.marginPct ?? 0);
 
         return {
           posicion: index + 1,
-          producto: item.productName,
+          producto: item.productName ?? "Sin nombre",
           categoria: item.categoryName ?? "Sin categoria",
           unidadesTotal: Number(item.unitsTotal ?? 0).toLocaleString("es-AR"),
           ingresosTotal: formatMoney(Number(item.revenueTotal ?? 0)),
@@ -835,15 +481,13 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
             "es-AR"
           ),
           ingresosMayorista: formatMoney(Number(item.revenueWholesale ?? 0)),
-          margenPct: formatPercent(marginBreakdown.totalPct),
-          margenPctMinMay: marginBreakdown.hasConfiguredPricing
-            ? `${formatPercent(marginBreakdown.retailPct)} / ${formatPercent(
-                marginBreakdown.wholesalePct
-              )}`
-            : "No disponible",
+          margenPct: formatPercent(marginPct),
+          margenPctMinMay: `${formatPercent(
+            Number(item.marginRetailPct ?? 0)
+          )} / ${formatPercent(Number(item.marginWholesalePct ?? 0))}`,
         };
       }),
-    [productPricingById, topProductsItems]
+    [topProductsItems]
   );
 
   const exportColumns = [
@@ -894,15 +538,13 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       const exportPageSize = 100;
       let page = 1;
       let hasMore = true;
-      let exportWasCapped = false;
 
-      while (hasMore && exportItems.length < TOP_PRODUCTS_FETCH_LIMIT) {
-        const remaining = TOP_PRODUCTS_FETCH_LIMIT - exportItems.length;
+      while (hasMore) {
         const response = await backendApi.reporting.sales.topProducts.report(
           {
             from: range.fromYmd,
             to: range.toYmd,
-            limit: Math.min(exportPageSize, remaining),
+            limit: exportPageSize,
             page,
             branchId: branchId ?? undefined,
           },
@@ -912,18 +554,11 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
         const pageItems = Array.isArray(response?.items) ? response.items : [];
         exportItems.push(...pageItems);
 
-        const pageHasMore =
-          typeof response?.meta?.hasMore === "boolean"
-            ? response.meta.hasMore
-            : typeof response?.hasMore === "boolean"
-            ? response.hasMore
-            : pageItems.length >= Math.min(exportPageSize, remaining);
-
-        if (pageHasMore && exportItems.length >= TOP_PRODUCTS_FETCH_LIMIT) {
-          exportWasCapped = true;
-        }
-
-        hasMore = pageHasMore && pageItems.length > 0;
+        const meta = response.meta;
+        hasMore =
+          Boolean(meta?.hasMore) &&
+          pageItems.length > 0 &&
+          page < Number(meta?.totalPages ?? page);
         page += 1;
       }
 
@@ -975,7 +610,7 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
       const payload = {
         filename: `reporte-ventas-${selectedMonth}`,
         title: "Reporte de Ventas",
-        subtitle: `Mes ${formatMonthLabel(selectedMonth)}. Periodo ${range.fromYmd} a ${range.toYmd}.${exportWasCapped ? ` Export limitado a ${TOP_PRODUCTS_FETCH_LIMIT} productos.` : ""}`,
+        subtitle: `Mes ${formatMonthLabel(selectedMonth)}. Periodo ${range.fromYmd} a ${range.toYmd}.`,
         columns: exportColumns,
         rows: exportRows,
         summary: exportSummary,
@@ -1087,22 +722,6 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                 {formatQuantity(displayedSoldKilos)}
               </span>
             </div>
-            {isSoldQuantityBreakdownLoading && (
-              <p className="text-xs text-muted-foreground">
-                Calculando desglose por medida...
-              </p>
-            )}
-            {soldQuantityBreakdown?.isCapped && (
-              <p className="text-xs text-muted-foreground">
-                Desglose calculado sobre hasta {TOP_PRODUCTS_FETCH_LIMIT}{" "}
-                productos.
-              </p>
-            )}
-            {soldQuantityBreakdownError && (
-              <p className="text-xs text-destructive">
-                No se pudo separar unidades y kilos para este periodo.
-              </p>
-            )}
           </CardContent>
         </Card>
 
@@ -1352,9 +971,8 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
               ) : (
                 <div className="space-y-2">
                   {detailProductsItems.map((item: ReportsTopProductItem) => {
-                    const marginBreakdown = getTopProductMarginBreakdown(
-                      item,
-                      productPricingById?.[item.productId]
+                    const marginPct = Number(
+                      item.marginTotalPct ?? item.marginPct ?? 0
                     );
 
                     return (
@@ -1363,7 +981,9 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                         className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-5"
                       >
                         <div className="sm:col-span-2">
-                          <p className="font-semibold">{item.productName}</p>
+                          <p className="font-semibold">
+                            {item.productName ?? "Sin nombre"}
+                          </p>
                           <p className="text-muted-foreground">
                             {item.categoryName ?? "Sin categoria"}
                           </p>
@@ -1390,31 +1010,14 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                             Margen segun Ventas
                           </p>
                           <p className="font-medium">
-                            en desarrollo
-                            {/* {formatPercent(marginBreakdown.totalPct)} */}
+                            {/* {formatPercent(marginPct)} */}
+                            En Desarrollo
                           </p>
-                          {/* <p className="text-muted-foreground mt-1">
-                            Margen % Min / May
-                          </p>
-                          <p className="font-medium">
-                            {marginBreakdown.hasConfiguredPricing
-                              ? `${formatPercent(
-                                  marginBreakdown.retailPct
-                                )} / ${formatPercent(
-                                  marginBreakdown.wholesalePct
-                                )}`
-                              : "No disponible"}
-                          </p> */}
                         </div>
                       </div>
                     );
                   })}
                   <div className="flex items-center gap-2 text-xs text-muted-foreground justify-end">
-                    {detailMeta.isCapped && (
-                      <span className="mr-auto">
-                        Mostrando hasta {TOP_PRODUCTS_FETCH_LIMIT} productos.
-                      </span>
-                    )}
                     <span>
                       {detailMeta.hasKnownTotal && detailMeta.totalPages
                         ? `Pagina ${detailPageSafe} de ${detailMeta.totalPages}`

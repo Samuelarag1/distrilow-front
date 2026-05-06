@@ -69,6 +69,8 @@ import type {
   ReportsInventorySummaryResponse,
   ReportsSalesPricingSourcesSummaryQuery,
   ReportsSalesPricingSourcesSummaryResponse,
+  ReportsSalesOverviewQuery,
+  ReportsSalesOverviewResponse,
   ReportsSalesPriceTypesSummaryQuery,
   ReportsSalesPriceTypesSummaryResponse,
   ReportsTopProductsQuery,
@@ -2531,6 +2533,35 @@ export const backendApi = {
         apiClientFetch.get<AnalyticsSalesResponse>(
           `/reporting/sales/history${buildQuery(query)}`
         ),
+      overview: async (
+        query: ReportsSalesOverviewQuery,
+        branchIdOverride?: string | null,
+        options?: { signal?: AbortSignal }
+      ) => {
+        const effectiveBranchId = branchIdOverride ?? getApiSession().branchId;
+        if (!effectiveBranchId) {
+          throw new Error("Missing branch context. Send x-branch-id header.");
+        }
+
+        const { branchId: ignoredBranchId, ...overviewQuery } = query;
+        void ignoredBranchId;
+
+        return withRateLimitRetry(
+          () =>
+            apiClientFetch.get<ReportsSalesOverviewResponse>(
+              `/reporting/sales/overview${buildQuery(overviewQuery, {
+                preserveLimitAndOffset: true,
+              })}`,
+              {
+                headers: {
+                  "x-branch-id": effectiveBranchId,
+                },
+                signal: options?.signal,
+              }
+            ),
+          options?.signal
+        );
+      },
       priceTypes: {
         summary: async (
           query: ReportsSalesPriceTypesSummaryQuery,

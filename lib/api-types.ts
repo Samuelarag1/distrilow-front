@@ -1017,22 +1017,43 @@ export interface ReportsTopProductsQuery {
   categoryId?: string;
 }
 
+export interface ReportsSalesOverviewQuery {
+  branchId?: string;
+  from: string;
+  to: string;
+  topProductsLimit?: number;
+}
+
+export interface ReportsSoldQuantitySummary {
+  unitsTotal: number;
+  kilosTotal: number;
+}
+
 export interface ReportsTopProductItem {
   productId: string;
-  productName: string;
+  productName: string | null;
   categoryId?: string | null;
   categoryName?: string | null;
-  measurementType?: MeasurementType;
+  measurementType?: MeasurementType | null;
   isWeighable?: boolean;
+  soldQuantity?: ReportsSoldQuantitySummary;
   unitsTotal: number;
   revenueTotal: number;
   unitsRetail: number;
   revenueRetail: number;
+  costRetail?: number;
+  profitRetail?: number;
+  marginRetailPct?: number;
   unitsWholesale: number;
   revenueWholesale: number;
+  costWholesale?: number;
+  profitWholesale?: number;
+  marginWholesalePct?: number;
   costTotal: number;
-  marginTotal: number;
-  marginPct: number;
+  profitTotal?: number;
+  marginTotal?: number;
+  marginTotalPct?: number;
+  marginPct?: number;
 }
 
 export interface ReportsTopProductsResponse {
@@ -1105,11 +1126,16 @@ export interface ReportsSalesPriceTypesSummaryQuery {
 
 export interface ReportsSalesPriceTypesSummaryItem {
   key: PriceType | string;
+  priceType?: PriceType | string;
   label?: string | null;
+  quantity?: number;
   unitsTotal: number;
+  revenue?: number;
   revenueTotal: number;
   costTotal?: number;
+  cost?: number;
   profitTotal?: number;
+  profit?: number;
   marginPercent?: number;
   itemCount?: number;
   saleCount?: number;
@@ -1146,9 +1172,17 @@ export interface ReportsSalesPricingSourcesSummaryQuery {
 
 export interface ReportsSalesPricingSourcesSummaryItem {
   key: PricingMode | string;
+  pricingSource?: PricingMode | string;
   label?: string | null;
+  quantity?: number;
   unitsTotal: number;
+  revenue?: number;
   revenueTotal: number;
+  cost?: number;
+  profit?: number;
+  marginPercent?: number;
+  itemCount?: number;
+  saleCount?: number;
   salesCount?: number;
 }
 
@@ -1162,6 +1196,59 @@ export interface ReportsSalesPricingSourcesSummaryResponse {
     categoryId?: string | null;
   };
   items: ReportsSalesPricingSourcesSummaryItem[];
+}
+
+export interface ReportsSalesOverviewResponse {
+  range: {
+    from: string;
+    to: string;
+    timezone?: string;
+  };
+  totals: {
+    revenueTotal: number;
+    costTotal: number;
+    grossMarginTotal: number;
+    grossMarginPercent: number;
+    salesTotal: number;
+    saleItemsTotal: number;
+    distinctProductsSold: number;
+    weightedKgTotal: number;
+    unitItemsTotal: number;
+    byPriceType?: Record<string, unknown>;
+    byPaymentMethod?: Record<string, unknown>;
+  };
+  payments: {
+    cashTotal: number;
+    transferTotal: number;
+    appliedTotal: number;
+    receivedCashTotal: number;
+    receivedTransferTotal: number;
+    receivedTotal: number;
+  };
+  soldQuantity: ReportsSoldQuantitySummary;
+  dailyRevenue: {
+    points: Array<{
+      period: string;
+      value: number;
+    }>;
+    totals: {
+      value: number;
+    };
+  };
+  priceTypes: ReportsSalesPriceTypesSummaryResponse;
+  pricingSources: ReportsSalesPricingSourcesSummaryResponse & {
+    totals?: {
+      unitsTotal: number;
+      revenueTotal: number;
+      costTotal: number;
+      profitTotal: number;
+      marginPercent: number;
+      itemCount: number;
+      saleCount: number;
+    };
+  };
+  topProducts: ReportsTopProductsResponse;
+  warnings: unknown[];
 }
 
 export interface ReportsInventorySummaryQuery {
