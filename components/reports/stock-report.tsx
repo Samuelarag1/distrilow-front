@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Card,
   CardContent,
@@ -50,6 +50,8 @@ const CATEGORY_COLORS = [
 const STOCK_MOVEMENTS_PAGE_SIZE = 100;
 const STOCK_MOVEMENTS_MAX_PAGES = 60;
 const PRODUCT_COST_BATCH_SIZE = 25;
+const LOW_STOCK_PAGE_SIZE = 10;
+const LOW_STOCK_THRESHOLD = 5;
 
 type Category = {
   id: string;
@@ -160,6 +162,7 @@ function readInventoryValue(
 
 export function StockReport() {
   const { branchId } = useUser();
+  const lowStockListRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
@@ -184,7 +187,18 @@ export function StockReport() {
 
   const debouncedSearch = useDebouncedValue(searchQuery, 350);
   const normalizedSearch = debouncedSearch.trim();
-  const limit = 20;
+  const limit = LOW_STOCK_PAGE_SIZE;
+
+  useEffect(() => {
+    if (window.location.hash !== "#low-stock-list") return;
+
+    window.requestAnimationFrame(() => {
+      lowStockListRef.current?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    });
+  }, []);
 
   const { data: categoriesData } = useSWR<Category[]>(
     "/categories",
@@ -246,7 +260,7 @@ export function StockReport() {
               search: normalizedSearch || undefined,
               categoryId:
                 selectedCategory !== "all" ? selectedCategory : undefined,
-              lowStockThreshold: 5,
+              lowStockThreshold: LOW_STOCK_THRESHOLD,
             },
             branchId,
             { signal: controller.signal }
@@ -259,7 +273,7 @@ export function StockReport() {
                 selectedCategory !== "all" ? selectedCategory : undefined,
               page: currentPage,
               limit,
-              lowStockThreshold: 5,
+              lowStockThreshold: LOW_STOCK_THRESHOLD,
             },
             branchId,
             { signal: controller.signal }
@@ -291,7 +305,7 @@ export function StockReport() {
     return () => {
       controller.abort();
     };
-  }, [branchId, normalizedSearch, selectedCategory, currentPage]);
+  }, [branchId, normalizedSearch, selectedCategory, currentPage, limit]);
 
   const categories = useMemo(
     () =>
@@ -322,7 +336,15 @@ export function StockReport() {
 
   const lowStockItems = useMemo(() => lowStock?.items ?? [], [lowStock?.items]);
   const totalItems = Number(lowStock?.total ?? 0);
-  const totalPages = Math.max(1, Math.ceil(totalItems / Math.max(limit, 1)));
+  const pageLimit = Number(lowStock?.limit ?? limit);
+  const totalPages = Math.max(1, Math.ceil(totalItems / Math.max(pageLimit, 1)));
+  const lowStockCurrentPage = Number(lowStock?.page ?? currentPage);
+  const visibleLowStockItems = useMemo(() => {
+    if (lowStockItems.length <= pageLimit) return lowStockItems;
+
+    const start = (Math.max(1, lowStockCurrentPage) - 1) * pageLimit;
+    return lowStockItems.slice(start, start + pageLimit);
+  }, [lowStockCurrentPage, lowStockItems, pageLimit]);
   const discountTypes = useMemo(
     () => getDiscountTypes(discountPreset),
     [discountPreset]
@@ -687,6 +709,74 @@ export function StockReport() {
         </Card>
       </div>
 
+          <Card id="low-stock-list" ref={lowStockListRef}>
+            <CardHeader>
+              <CardTitle>Lista de stock bajo</CardTitle>
+              <CardDescription>
+                Productos con stock bajo para el filtro actual.
+              </CardDescription>
+            </CardHeader>
+            <CardContent className="space-y-4">
+              <Input
+                value={searchQuery}
+                onChange={(event) => setSearchQuery(event.target.value)}
+                placeholder="Buscar producto en stock bajo..."
+                className="max-w-md"
+              />
+
+              {visibleLowStockItems.length === 0 ? (
+                <p className="text-sm text-muted-foreground">
+                  No hay productos con stock bajo para el filtro actual.
+                </p>
+              ) : (
+                <div className="space-y-2">
+                  {visibleLowStockItems.map((item) => (
+                    <div
+                      key={item.productId}
+                      className="flex flex-row gap-2 rounded-md border p-3 text-xs justify-between"
+                    >
+                      <div className="sm:col-span-2">
+                        <p className="font-semibold">{item.productName}</p>
+                        <p className="text-muted-foreground">
+                          {item.category?.name ?? "Sin categoria"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-muted-foreground">Stock</p>
+                        <p className="font-medium">
+                          {Number(item.stock ?? 0).toLocaleString("es-AR")}
+                        </p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              
+                <div className="flex items-center gap-2">
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      setCurrentPage((prev) => Math.max(1, prev - 1))
+                    }
+                    disabled={lowStockCurrentPage <= 1}
+                  >
+                    Anterior
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => setCurrentPage((prev) => prev + 1)}
+                    disabled={lowStockCurrentPage >= totalPages}
+                  >
+                    Siguiente
+                  </Button>
+                </div>
+              </div>
+            </CardContent>
+          </Card>
       <Card>
         <CardHeader>
           <CardTitle>Perdidas por ajustes de stock</CardTitle> 
@@ -983,94 +1073,6 @@ export function StockReport() {
             </Card>
           </div>
 
-          <Card>
-            <CardHeader>
-              <CardTitle>Lista paginada de stock bajo</CardTitle>
-              <CardDescription>
-                Fuente principal: response.summary para KPIs globales,
-                response.items para tabla.
-              </CardDescription>
-            </CardHeader>
-            <CardContent>
-              {lowStockItems.length === 0 ? (
-                <p className="text-sm text-muted-foreground">
-                  No hay productos con stock bajo para el filtro actual.
-                </p>
-              ) : (
-                <div className="space-y-2">
-                  {lowStockItems.map((item) => (
-                    <div
-                      key={item.productId}
-                      className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-6"
-                    >
-                      <div className="sm:col-span-2">
-                        <p className="font-semibold">{item.productName}</p>
-                        <p className="text-muted-foreground">
-                          {item.category?.name ?? "Sin categoria"}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">Stock</p>
-                        <p className="font-medium">
-                          {Number(item.stock ?? 0).toLocaleString("es-AR")}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">Minimo</p>
-                        <p className="font-medium">
-                          {Number(item.minStock ?? 0).toLocaleString("es-AR")}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">Faltante</p>
-                        <p className="font-medium text-red-600">
-                          {Number(item.shortageQty ?? 0).toLocaleString(
-                            "es-AR"
-                          )}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-muted-foreground">
-                          Precio minorista
-                        </p>
-                        <p className="font-medium">
-                          {formatMoney(Number(item.retailPrice ?? 0))}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <p className="text-xs text-muted-foreground">
-                  Pagina {lowStock?.page ?? currentPage} de {totalPages} - total
-                  low stock:{" "}
-                  {Number(summary?.lowStockTotal ?? 0).toLocaleString("es-AR")}
-                </p>
-                <div className="flex items-center gap-2">
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() =>
-                      setCurrentPage((prev) => Math.max(1, prev - 1))
-                    }
-                    disabled={(lowStock?.page ?? currentPage) <= 1}
-                  >
-                    Anterior
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    onClick={() => setCurrentPage((prev) => prev + 1)}
-                    disabled={(lowStock?.page ?? currentPage) >= totalPages}
-                  >
-                    Siguiente
-                  </Button>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
         </>
       )}
     </div>

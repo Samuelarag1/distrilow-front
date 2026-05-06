@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -1564,7 +1565,7 @@ export function InventoryModule() {
       </div>
 
       {lowStockCountKpi > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-500 sm:flex-row sm:items-start">
           <div className="bg-red-500 p-2 rounded-lg">
             <AlertTriangle className="h-5 w-5 text-white" />
           </div>
@@ -1583,6 +1584,14 @@ export function InventoryModule() {
               </span>
             </p>
           </div>
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="border-red-200 bg-white text-red-700 hover:bg-red-100 hover:text-red-900 sm:self-center"
+          >
+            <Link href="/reports?tab=stock#low-stock-list">Ver más</Link>
+          </Button>
         </div>
       )}
 

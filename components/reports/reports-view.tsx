@@ -1,6 +1,7 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SalesReport } from "./sales-report";
 import { StockReport } from "./stock-report";
@@ -9,8 +10,21 @@ import { ExpensesProjectionReport } from "./expenses-projection-report";
 import { StockMovementsReport } from "./stock-movements-report";
 import { getRollingMonthRange } from "@/lib/reports/rolling-month";
 
+const REPORT_TABS = new Set([
+  "cashCalendar",
+  "sales",
+  "stock",
+  "stockMovements",
+  "expenses",
+]);
+
 export function ReportsView() {
+  const searchParams = useSearchParams();
   const dateRange = useMemo<DateRange>(() => getRollingMonthRange(), []);
+  const tabParam = searchParams.get("tab");
+  const [activeTab, setActiveTab] = useState(
+    tabParam && REPORT_TABS.has(tabParam) ? tabParam : "cashCalendar"
+  );
 
   return (
     <div className="flex-1 space-y-4 p-4 pt-4 sm:p-6 sm:pt-6 lg:p-8">
@@ -20,7 +34,11 @@ export function ReportsView() {
         </h2>
       </div>
 
-      <Tabs defaultValue="cashCalendar" className="space-y-4">
+      <Tabs
+        value={activeTab}
+        onValueChange={setActiveTab}
+        className="space-y-4"
+      >
         <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto bg-muted p-1">
           <TabsTrigger className="shrink-0" value="cashCalendar">
             Cajas del mes
