@@ -345,6 +345,15 @@ export function StockReport() {
     const start = (Math.max(1, lowStockCurrentPage) - 1) * pageLimit;
     return lowStockItems.slice(start, start + pageLimit);
   }, [lowStockCurrentPage, lowStockItems, pageLimit]);
+  const lowStockShowingFrom =
+    totalItems === 0 ? 0 : (Math.max(1, lowStockCurrentPage) - 1) * pageLimit + 1;
+  const lowStockShowingTo =
+    totalItems === 0
+      ? 0
+      : Math.min(
+          lowStockShowingFrom + visibleLowStockItems.length - 1,
+          totalItems
+        );
   const discountTypes = useMemo(
     () => getDiscountTypes(discountPreset),
     [discountPreset]
@@ -753,7 +762,12 @@ export function StockReport() {
               )}
 
               <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              
+                <p className="text-xs text-muted-foreground">
+                  Pagina {lowStockCurrentPage.toLocaleString("es-AR")} de{" "}
+                  {totalPages.toLocaleString("es-AR")} - Mostrando{" "}
+                  {lowStockShowingTo.toLocaleString("es-AR")} de{" "}
+                  {totalItems.toLocaleString("es-AR")} articulos
+                </p>
                 <div className="flex items-center gap-2">
                   <Button
                     size="sm"

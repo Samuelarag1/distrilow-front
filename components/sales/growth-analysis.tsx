@@ -18,6 +18,14 @@ import {
 
 interface GrowthAnalysisProps {
   period: SalesAnalysisPeriod;
+  dateRange?: {
+    from: Date;
+    to: Date;
+  };
+  previousDateRange?: {
+    from: Date;
+    to: Date;
+  };
 }
 
 function growth(current: number, previous: number) {
@@ -25,16 +33,25 @@ function growth(current: number, previous: number) {
   return ((current - previous) / previous) * 100;
 }
 
-export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
+export function GrowthAnalysis({
+  period,
+  dateRange,
+  previousDateRange,
+}: GrowthAnalysisProps) {
   const { branchId } = useUser();
   const config = useMemo(() => getSalesAnalysisConfig(period), [period]);
-  const { current, previous, groupBy } = config;
+  const current = dateRange ?? config.current;
+  const previous = previousDateRange ?? config.previous;
+  const groupBy = dateRange ? ("day" as const) : config.groupBy;
+  const comparisonLabel = dateRange ? "periodo" : config.comparisonLabel;
+  const bestPointLabel = dateRange ? "Mejor dia" : config.bestPointLabel;
   const { data, isLoading } = useSWR(
     branchId
       ? [
           "reporting-growth-analysis",
           branchId,
           period,
+          dateRange ? "custom" : "default",
           current.from.toISOString(),
           current.to.toISOString(),
           previous.from.toISOString(),
@@ -112,7 +129,7 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
                 </div>
                 <Progress value={Math.min(100, Math.abs(salesGrowth))} className="h-2" />
                 <p className="text-xs text-muted-foreground">
-                  vs {config.comparisonLabel} anterior
+                  vs {comparisonLabel} anterior
                 </p>
               </div>
 
@@ -133,7 +150,7 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
                 </div>
                 <Progress value={Math.min(100, Math.abs(ordersGrowth))} className="h-2" />
                 <p className="text-xs text-muted-foreground">
-                  vs {config.comparisonLabel} anterior
+                  vs {comparisonLabel} anterior
                 </p>
               </div>
 
@@ -154,7 +171,7 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
                 </div>
                 <Progress value={Math.min(100, Math.abs(avgOrderGrowth))} className="h-2" />
                 <p className="text-xs text-muted-foreground">
-                  vs {config.comparisonLabel} anterior
+                  vs {comparisonLabel} anterior
                 </p>
               </div>
             </div>
@@ -198,7 +215,7 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
             <div className="text-center space-y-3">
               <Award className="h-8 w-8 mx-auto text-yellow-500" />
               <div>
-                <p className="text-sm text-muted-foreground">{config.bestPointLabel}</p>
+                <p className="text-sm text-muted-foreground">{bestPointLabel}</p>
                 <p className="font-bold">
                   {bestPoint
                     ? formatReportingPeriodLabel(bestPoint.period, groupBy, "long")

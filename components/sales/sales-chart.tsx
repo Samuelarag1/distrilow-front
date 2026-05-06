@@ -36,6 +36,10 @@ import {
 
 interface SalesChartProps {
   period: SalesAnalysisPeriod;
+  dateRange?: {
+    from: Date;
+    to: Date;
+  };
 }
 
 const chartConfig = {
@@ -49,16 +53,27 @@ const chartConfig = {
   },
 };
 
-export function SalesChart({ period }: SalesChartProps) {
+export function SalesChart({ period, dateRange }: SalesChartProps) {
   const { branchId } = useUser();
   const config = useMemo(() => getSalesAnalysisConfig(period), [period]);
-  const { current, groupBy } = config;
+  const current = dateRange ?? config.current;
+  const groupBy = dateRange ? ("day" as const) : config.groupBy;
+  const evolutionTitle = dateRange
+    ? "Evolucion del Periodo"
+    : config.evolutionTitle;
+  const revenueDescription = dateRange
+    ? "Tendencia de ingresos por dia del periodo seleccionado"
+    : config.revenueDescription;
+  const volumeDescription = dateRange
+    ? "Volumen de operaciones por dia del periodo seleccionado"
+    : config.volumeDescription;
   const { data, isLoading } = useSWR(
     branchId
       ? [
           "reporting-sales-chart",
           branchId,
           period,
+          dateRange ? "custom" : "default",
           current.from.toISOString(),
           current.to.toISOString(),
           groupBy,
@@ -91,8 +106,8 @@ export function SalesChart({ period }: SalesChartProps) {
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader>
-          <CardTitle>{config.evolutionTitle} - Ventas</CardTitle>
-          <CardDescription>{config.revenueDescription}</CardDescription>
+          <CardTitle>{evolutionTitle} - Ventas</CardTitle>
+          <CardDescription>{revenueDescription}</CardDescription>
         </CardHeader>
         <CardContent>
           {isLoading && <p className="text-sm text-muted-foreground">Cargando datos...</p>}
@@ -123,8 +138,8 @@ export function SalesChart({ period }: SalesChartProps) {
 
       <Card>
         <CardHeader>
-          <CardTitle>{config.evolutionTitle} - Pedidos</CardTitle>
-          <CardDescription>{config.volumeDescription}</CardDescription>
+          <CardTitle>{evolutionTitle} - Pedidos</CardTitle>
+          <CardDescription>{volumeDescription}</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="w-full h-[300px]">
