@@ -1,0 +1,18 @@
+{
+  "entry": [
+    "app/**/*.{ts,tsx}",
+    "components/**/*.{ts,tsx}",
+    "hooks/**/*.{ts,tsx}",
+    "lib/**/*.{ts,tsx}",
+    "middleware.ts",
+    "next.config.mjs",
+    "postcss.config.mjs",
+    "tailwind.config.ts"
+  ],
+  "project": ["**/*.{ts,tsx,mjs}"],
+  "ignore": [
+    ".next/**",
+    "node_modules/**",
+    "public/**"
+  ]
+}
