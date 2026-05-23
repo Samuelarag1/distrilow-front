@@ -20,14 +20,20 @@ import type {
   PaymentMethod,
   PriceType,
   PricingMode,
-  SaleDetail as ApiSaleDetail,
-  SaleSummary as ApiSaleSummary,
-  SaleChargeStatus,
-  SaleLifecycleStatus,
   SalePaymentInput,
 } from "@/lib/api-types";
 import type { BusinessType } from "@/lib/data-service";
-import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
+import {
+  ensureSaleDetail,
+  normalizeSale,
+  type SaleDetailViewModel,
+  type SaleLineItemViewModel,
+  type SalePaymentViewModel,
+  type SaleViewModel,
+} from "@/lib/adapters/sales";
+import {
+  parseWholeAmount,
+} from "@/lib/sales-payments";
 
 export interface Expense {
   id: string;
@@ -41,57 +47,10 @@ export interface Expense {
   userId?: string;
 }
 
-export interface SalePayment {
-  id?: string;
-  amount: number;
-  method: string;
-  reference?: string;
-  notes?: string;
-  date: string;
-}
-
-export interface SaleLineItem {
-  productId: string;
-  productName?: string;
-  quantity: number;
-  price: number;
-  subtotal?: number;
-  linkedProductId?: string;
-  pricingMode?: PricingMode;
-  requestedPriceType?: PriceType;
-  priceType?: PriceType;
-  pricingSource?: PricingMode;
-  baseRetailPrice?: number;
-  baseWholesalePrice?: number;
-  pricingRuleSnapshot?: unknown;
-  manualOverrideReason?: string | null;
-}
-
-export interface Sale {
-  id: string;
-  amount: number;
-  totalAmount: number;
-  totalCost: number;
-  profit: number;
-  paidAmount: number;
-  outstandingAmount: number;
-  chargeStatus: SaleChargeStatus;
-  lifecycleStatus: SaleLifecycleStatus;
-  customerName: string;
-  items: number;
-  itemsCount: number;
-  itemsQuantity: number;
-  paymentBreakdown: Record<string, number>;
-  paymentMethods: string[];
-  lineItems?: SaleLineItem[];
-  payments?: SalePayment[];
-  date: string;
-  businessType: BusinessType;
-  userId: string;
-  userName: string;
-  branchId: string;
-  status?: "PENDING" | "COMPLETED";
-}
+export type SalePayment = SalePaymentViewModel;
+export type SaleLineItem = SaleLineItemViewModel;
+export type Sale = SaleViewModel;
+export type SaleDetail = SaleDetailViewModel;
 
 export interface AddExpenseInput {
   branchId?: string;
@@ -155,11 +114,6 @@ function toFiniteNumber(value: unknown, fallback = 0) {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function toOptionalFiniteNumber(value: unknown): number | undefined {
-  const parsed = toFiniteNumber(value, Number.NaN);
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
 function normalizeQuantity(value: unknown) {
   const rounded = Math.round(toFiniteNumber(value, NaN) * 1_000) / 1_000;
   if (!Number.isFinite(rounded) || rounded < 0) return null;
@@ -208,178 +162,6 @@ function normalizeExpense(
   };
 }
 
-function normalizePaymentBreakdown(value: unknown): Record<string, number> {
-  if (!value || typeof value !== "object") return {};
-  const source = value as Record<string, unknown>;
-  const normalized: Record<string, number> = {};
-
-  Object.entries(source).forEach(([method, amount]) => {
-    const cleanMethod = String(method ?? "")
-      .trim()
-      .toUpperCase();
-    if (!cleanMethod) return;
-    const parsedAmount = toFiniteNumber(amount, Number.NaN);
-    if (!Number.isFinite(parsedAmount)) return;
-    normalized[cleanMethod] = parsedAmount;
-  });
-
-  return normalized;
-}
-
-function normalizeSale(
-  row: ApiSaleSummary | ApiSaleDetail,
-  businessType: BusinessType
-): Sale {
-  const lineItems: SaleLineItem[] = Array.isArray((row as ApiSaleDetail).items)
-    ? (row as ApiSaleDetail).items.map((item) => {
-        const productName =
-          (item as any).name ??
-          (item as any).productName ??
-          (item as any).product?.name ??
-          "Producto";
-        return {
-          productId: item.productId,
-          productName,
-          quantity: toFiniteNumber(item.quantity, 0),
-          price: toFiniteNumber(item.unitPrice, 0),
-          subtotal: toOptionalFiniteNumber(item.subtotal),
-          linkedProductId: item.linkedProductId,
-          pricingMode: item.pricingMode,
-          requestedPriceType: item.requestedPriceType,
-          priceType: item.priceType,
-          pricingSource: item.pricingSource,
-          baseRetailPrice: toOptionalFiniteNumber(item.baseRetailPrice),
-          baseWholesalePrice: toOptionalFiniteNumber(item.baseWholesalePrice),
-          pricingRuleSnapshot: item.pricingRuleSnapshot,
-          manualOverrideReason: item.manualOverrideReason ?? null,
-        };
-      })
-    : [];
-
-  const paymentBreakdownFromSummary = normalizePaymentBreakdown(
-    (row as ApiSaleSummary).paymentBreakdown
-  );
-  const computedTotal = lineItems.reduce(
-    (sum, item) =>
-      sum +
-      (Number.isFinite(item.subtotal ?? NaN)
-        ? Number(item.subtotal)
-        : item.quantity * item.price),
-    0
-  );
-  const totalAmount = toFiniteNumber(
-    row.totalAmount ?? row.total,
-    computedTotal
-  );
-  const detailPayments = (row as ApiSaleDetail).payments;
-  const payments = Array.isArray(detailPayments)
-    ? detailPayments.map((payment) => ({
-        id: payment.id,
-        amount: toFiniteNumber(payment.amount, 0),
-        method: String(payment.method ?? "OTHER"),
-        reference: payment.reference ?? undefined,
-        notes: payment.notes ?? undefined,
-        date: String(
-          payment.createdAt ??
-            payment.updatedAt ??
-            row.createdAt ??
-            new Date().toISOString()
-        ),
-      }))
-    : [];
-  const paymentBreakdown =
-    Object.keys(paymentBreakdownFromSummary).length > 0
-      ? paymentBreakdownFromSummary
-      : payments.reduce<Record<string, number>>((acc, payment) => {
-          const method = String(payment.method ?? "OTHER")
-            .trim()
-            .toUpperCase();
-          if (!method) return acc;
-          acc[method] =
-            toFiniteNumber(acc[method], 0) + toFiniteNumber(payment.amount, 0);
-          return acc;
-        }, {});
-  const paidAmount = toFiniteNumber(
-    row.paidAmount,
-    Object.values(paymentBreakdown).reduce((sum, value) => sum + value, 0)
-  );
-  const outstandingAmount = Math.max(
-    0,
-    toFiniteNumber(row.outstandingAmount, totalAmount - paidAmount)
-  );
-  const chargeStatus =
-    (row.paymentStatus as SaleChargeStatus | undefined) ??
-    (row.chargeStatus as SaleChargeStatus | undefined) ??
-    (outstandingAmount <= 0
-      ? "PAID"
-      : paidAmount > 0
-      ? "PARTIALLY_PAID"
-      : "PENDING");
-  const lifecycleStatus =
-    (row.lifecycleStatus as SaleLifecycleStatus | undefined) ??
-    (String(row.status ?? "").toUpperCase() === "CANCELLED"
-      ? "CANCELLED"
-      : "ACTIVE");
-  const itemsFromDetail = lineItems.reduce(
-    (sum, item) => sum + item.quantity,
-    0
-  );
-  const itemsCount = Math.max(
-    0,
-    Math.round(
-      toFiniteNumber((row as ApiSaleSummary).itemsCount, lineItems.length)
-    )
-  );
-  const itemsQuantity = Math.max(
-    0,
-    toFiniteNumber((row as ApiSaleSummary).itemsQuantity, itemsFromDetail)
-  );
-  const paymentMethods = Object.keys(paymentBreakdown);
-  const hasDetailItems = Array.isArray((row as ApiSaleDetail).items);
-  const hasDetailPayments = Array.isArray((row as ApiSaleDetail).payments);
-
-  const normalized: Sale = {
-    id: String(row.id),
-    amount: totalAmount,
-    totalAmount,
-    totalCost: toFiniteNumber((row as ApiSaleSummary).totalCost, 0),
-    profit: toFiniteNumber((row as ApiSaleSummary).profit, 0),
-    paidAmount,
-    outstandingAmount,
-    chargeStatus,
-    lifecycleStatus,
-    customerName: row.clientId ? `Cliente ${row.clientId}` : "Consumidor Final",
-    items: itemsQuantity,
-    itemsCount,
-    itemsQuantity,
-    paymentBreakdown,
-    paymentMethods,
-    date: String(row.createdAt ?? row.updatedAt ?? new Date().toISOString()),
-    businessType,
-    userId: String((row as any).userId ?? "unknown"),
-    userName: String(
-      (row as any).user?.email ?? (row as any).userName ?? "Usuario"
-    ),
-    branchId: String(row.branchId ?? ""),
-    status: chargeStatus === "PENDING" ? "PENDING" : "COMPLETED",
-  };
-
-  if (hasDetailItems || hasDetailPayments) {
-    normalized.lineItems = lineItems;
-    normalized.payments = payments;
-  }
-
-  return normalized;
-}
-
-function ensureDetailSale(sale: Sale): Sale {
-  return {
-    ...sale,
-    lineItems: sale.lineItems ?? [],
-    payments: sale.payments ?? [],
-  };
-}
-
 async function collectAllPages<T>(
   fetchPage: (
     skip: number,
@@ -420,15 +202,15 @@ async function collectAllPages<T>(
 
 export function TransactionsProvider({
   children,
+  autoLoadSales = false,
 }: {
   children: React.ReactNode;
+  autoLoadSales?: boolean;
 }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [sales, setSales] = useState<Sale[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(autoLoadSales);
   const refreshRequestIdRef = useRef(0);
-  const expenseRefreshRequestIdRef = useRef(0);
-  const lastExpensesSyncAtRef = useRef(0);
   const { logEvent } = useAudit();
   const { token, branchId } = useUser();
   const { businessType } = useBusiness();
@@ -440,14 +222,16 @@ export function TransactionsProvider({
     [branchId]
   );
   const { data: salesSummaryData, mutate: mutateSalesSummary } = useSWR<Sale[]>(
-    token && branchId ? (["/sales", salesListFilters] as const) : null,
+    autoLoadSales && token && branchId
+      ? (["/sales", salesListFilters] as const)
+      : null,
     async () => {
       const apiSales = await collectAllPages((skip, take) =>
         backendApi.sales.list({ offset: skip, limit: take }, branchId)
       );
-      return dedupeById(
-        apiSales
-          .map((sale) => normalizeSale(sale, businessType))
+        return dedupeById(
+          apiSales
+          .map((sale) => normalizeSale(sale, { businessType }))
           .sort(
             (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
           )
@@ -455,9 +239,10 @@ export function TransactionsProvider({
     },
     {
       revalidateOnFocus: false,
-      revalidateOnReconnect: true,
+      revalidateOnReconnect: false,
       revalidateOnMount: false,
       keepPreviousData: true,
+      dedupingInterval: 60_000,
     }
   );
 
@@ -490,91 +275,42 @@ export function TransactionsProvider({
   const refreshTransactions = useCallback(async () => {
     const requestId = ++refreshRequestIdRef.current;
 
-    if (!token || !branchId) {
+    if (!autoLoadSales || !token || !branchId) {
       if (requestId !== refreshRequestIdRef.current) return;
       setSales([]);
-      setExpenses([]);
       setIsLoading(false);
       return;
     }
 
     setIsLoading(true);
     try {
-      const [, apiExpenses] = await Promise.all([
-        mutateSalesSummary(),
-        collectAllPages((skip, take) =>
-          backendApi.expenses.list({ skip, take }, branchId)
-        ),
-      ]);
-
+      await mutateSalesSummary();
       if (requestId !== refreshRequestIdRef.current) return;
-
-      setExpenses(
-        dedupeById(
-          apiExpenses
-            .map((expense) => normalizeExpense(expense, businessType))
-            .sort(
-              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-            )
-        )
-      );
     } catch (e) {
       if (requestId !== refreshRequestIdRef.current) return;
     } finally {
       if (requestId !== refreshRequestIdRef.current) return;
       setIsLoading(false);
     }
-  }, [token, branchId, businessType, mutateSalesSummary]);
+  }, [autoLoadSales, token, branchId, mutateSalesSummary]);
 
   useEffect(() => {
-    if (!token || !branchId) {
+    if (!autoLoadSales || !token || !branchId) {
       setSales([]);
       return;
     }
     if (!salesSummaryData) return;
     setSales(salesSummaryData);
-  }, [token, branchId, salesSummaryData]);
+  }, [autoLoadSales, token, branchId, salesSummaryData]);
 
-  const refreshExpensesOnly = useCallback(async () => {
-    const requestId = ++expenseRefreshRequestIdRef.current;
-    if (!token || !branchId) return;
-
-    try {
-      const apiExpenses = await collectAllPages((skip, take) =>
-        backendApi.expenses.list({ skip, take }, branchId)
-      );
-      if (requestId !== expenseRefreshRequestIdRef.current) return;
-
-      setExpenses(
-        dedupeById(
-          apiExpenses
-            .map((expense) => normalizeExpense(expense, businessType))
-            .sort(
-              (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
-            )
-        )
-      );
-    } catch (e) {
-      if (requestId !== expenseRefreshRequestIdRef.current) return;
-      console.error("Error refreshing expenses data", e);
+  useEffect(() => {
+    if (!autoLoadSales) {
+      setIsLoading(false);
+      setSales([]);
+      return;
     }
-  }, [token, branchId, businessType]);
-
-  useEffect(() => {
     void refreshTransactions();
-  }, [refreshTransactions]);
-
-  useEffect(() => {
-    if (!branchId) return;
-
-    return subscribeExpensesSync((payload) => {
-      if (payload.branchId && payload.branchId !== branchId) return;
-      const now = Date.now();
-      if (now - lastExpensesSyncAtRef.current < 1_500) return;
-      lastExpensesSyncAtRef.current = now;
-      void refreshExpensesOnly();
-    });
-  }, [branchId, refreshExpensesOnly]);
+  }, [autoLoadSales, refreshTransactions]);
 
   const addExpense = useCallback(
     async (newExpense: AddExpenseInput) => {
@@ -675,7 +411,7 @@ export function TransactionsProvider({
 
       const payments = (newSale.payments ?? [])
         .map((payment) => ({
-          amount: toFiniteNumber(payment.amount, 0),
+          amount: parseWholeAmount(payment.amount),
           method: payment.method,
           reference: payment.reference?.trim() || undefined,
           notes: payment.notes?.trim() || undefined,
@@ -688,7 +424,7 @@ export function TransactionsProvider({
         payments: payments.length > 0 ? payments : undefined,
       });
 
-      const normalized = normalizeSale(savedSale, businessType);
+      const normalized = normalizeSale(savedSale, { businessType });
       upsertSale(normalized);
 
       logEvent(
@@ -715,7 +451,7 @@ export function TransactionsProvider({
         notes?: string;
       }
     ) => {
-      const amount = toFiniteNumber(payment.amount, 0);
+      const amount = parseWholeAmount(payment.amount);
       if (amount <= 0) {
         throw new Error("El monto del pago debe ser mayor a 0.");
       }
@@ -727,8 +463,8 @@ export function TransactionsProvider({
         notes: payment.notes?.trim() || undefined,
       });
       const updatedSale = await backendApi.sales.getById(saleId);
-      const normalized = ensureDetailSale(
-        normalizeSale(updatedSale, businessType)
+      const normalized = ensureSaleDetail(
+        normalizeSale(updatedSale, { businessType })
       );
       upsertSale(normalized);
       return normalized;
@@ -739,7 +475,9 @@ export function TransactionsProvider({
   const getSaleDetail = useCallback(
     async (saleId: string) => {
       const sale = await backendApi.sales.getById(saleId);
-      const normalized = ensureDetailSale(normalizeSale(sale, businessType));
+      const normalized = ensureSaleDetail(
+        normalizeSale(sale, { businessType })
+      );
       upsertSale(normalized);
       return normalized;
     },
@@ -751,7 +489,9 @@ export function TransactionsProvider({
       await backendApi.sales.cancel(saleId);
       try {
         const updatedSale = await backendApi.sales.getById(saleId);
-        upsertSale(ensureDetailSale(normalizeSale(updatedSale, businessType)));
+        upsertSale(
+          ensureSaleDetail(normalizeSale(updatedSale, { businessType }))
+        );
       } catch {
         setSales((prev) =>
           prev.map((sale) =>

@@ -103,16 +103,29 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   const invalidateProducts = () =>
     mutate(
       (key) => {
+        const isProductOrStockKey = (value: string) => {
+          const normalized = value.toLowerCase();
+          return (
+            normalized === "products" ||
+            normalized === "product" ||
+            normalized === "productdetail" ||
+            normalized === "stockbyproduct" ||
+            normalized === "stockmovements" ||
+            normalized === "reporting-stock-discounts" ||
+            normalized.startsWith("products") ||
+            normalized.startsWith("stock") ||
+            normalized.startsWith("stock-") ||
+            normalized.includes("/products") ||
+            normalized.includes("/stocks") ||
+            normalized.includes("/stock-movements")
+          );
+        };
+
         if (typeof key === "string") {
-          return key === "products" || key.startsWith("products") || key.includes("/products");
+          return isProductOrStockKey(key);
         }
         if (Array.isArray(key) && typeof key[0] === "string") {
-          return (
-            key[0] === "products" ||
-            key[0] === "product" ||
-            key[0].startsWith("products") ||
-            key[0].includes("/products")
-          );
+          return isProductOrStockKey(key[0]);
         }
         return false;
       },

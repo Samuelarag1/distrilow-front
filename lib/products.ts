@@ -16,6 +16,29 @@ export type Product = ApiProduct & {
   unit?: string;
 };
 
+function extractProductStock(value: unknown) {
+  const direct = Number(value);
+  if (Number.isFinite(direct)) {
+    return direct;
+  }
+
+  if (!value || typeof value !== "object") {
+    return 0;
+  }
+
+  const source = value as {
+    quantity?: unknown;
+    availableQuantity?: unknown;
+    baseQuantity?: unknown;
+  };
+
+  const nestedStock = Number(
+    source.quantity ?? source.availableQuantity ?? source.baseQuantity ?? 0
+  );
+
+  return Number.isFinite(nestedStock) ? nestedStock : 0;
+}
+
 function normalizeProduct(item: ApiProduct): Product {
   const measurement = item.measurementType as MeasurementType;
   return {
@@ -23,7 +46,7 @@ function normalizeProduct(item: ApiProduct): Product {
     isWeighable:
       item.isWeighable ??
       (item.measurementType === "kg" || item.measurementType === "gram"),
-    stock: Number(item.stock ?? 0),
+    stock: extractProductStock(item.stock),
     price: Number(item.retailPrice ?? item.costPrice ?? 0),
     category: item.categoryId ?? "Sin categoria",
     unit: measurement,
@@ -40,6 +63,13 @@ function normalizePluCode(value: unknown) {
   const normalized = normalizeOptionalString(value);
   if (!normalized) return undefined;
   return /^\d{5}$/.test(normalized) ? normalized : undefined;
+}
+
+function normalizePositiveNumber(value: unknown) {
+  if (value === null || value === undefined || value === "") return undefined;
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
+  return parsed;
 }
 
 async function attachStock(item: ApiProduct): Promise<Product> {
@@ -99,12 +129,20 @@ export const productsApi = {
       pluCode: normalizePluCode(data.pluCode),
       isWeighable: data.isWeighable ?? undefined,
       description: normalizeOptionalString(data.description),
+      wholesaleMinQuantity: normalizePositiveNumber(data.wholesaleMinQuantity),
       marginPercent: data.marginPercent ?? undefined,
       isActive: data.isActive ?? true,
       categoryId: normalizeOptionalString(data.categoryId),
       branchId: (data.branchId ?? branchId ?? undefined) as string | undefined,
       brand: normalizeOptionalString(data.brand),
-      trackStock: data.trackStock ?? true,
+      trackStock: true,
+      stockBaseProductId: normalizeOptionalString(data.stockBaseProductId),
+      stockConsumptionQuantity: normalizePositiveNumber(
+        data.stockConsumptionQuantity
+      ),
+      stockBaseUnit: (data.stockBaseUnit ?? undefined) as
+        | MeasurementType
+        | undefined,
       allowNegativeStock: data.allowNegativeStock ?? false,
       imageUrl: normalizeOptionalString(data.imageUrl),
     });
@@ -123,12 +161,20 @@ export const productsApi = {
       pluCode: normalizePluCode(data.pluCode),
       isWeighable: data.isWeighable,
       description: normalizeOptionalString(data.description),
+      wholesaleMinQuantity: normalizePositiveNumber(data.wholesaleMinQuantity),
       marginPercent: data.marginPercent ?? undefined,
       isActive: data.isActive,
       categoryId: normalizeOptionalString(data.categoryId),
       branchId: data.branchId ?? undefined,
       brand: normalizeOptionalString(data.brand),
-      trackStock: data.trackStock,
+      trackStock: true,
+      stockBaseProductId: normalizeOptionalString(data.stockBaseProductId),
+      stockConsumptionQuantity: normalizePositiveNumber(
+        data.stockConsumptionQuantity
+      ),
+      stockBaseUnit: (data.stockBaseUnit ?? undefined) as
+        | MeasurementType
+        | undefined,
       allowNegativeStock: data.allowNegativeStock,
       imageUrl: normalizeOptionalString(data.imageUrl),
       measurementType: data.measurementType as MeasurementType | undefined,

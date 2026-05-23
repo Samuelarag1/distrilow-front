@@ -23,6 +23,7 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { backendApi } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import type { StockLot } from "@/lib/api-types";
 
 type CategoryOption = {
@@ -191,6 +192,28 @@ export function InventoryLotsSection({
 
   const safeDays = Math.max(0, Math.trunc(Number(days)) || 0);
   const normalizedSearch = debouncedSearch.trim();
+  const lotsFilters = useMemo(
+    () => ({
+      search: normalizedSearch || undefined,
+      productId: filterProductId || undefined,
+      categoryId: categoryId !== "all" ? categoryId : undefined,
+      days: safeDays,
+      includeExpired,
+      onlyPositive,
+      page,
+      limit,
+    }),
+    [
+      normalizedSearch,
+      filterProductId,
+      categoryId,
+      safeDays,
+      includeExpired,
+      onlyPositive,
+      page,
+      limit,
+    ]
+  );
 
   const {
     data: lotsResponse,
@@ -200,31 +223,11 @@ export function InventoryLotsSection({
     isValidating,
   } = useSWR(
     branchId
-      ? [
-          "stock-lots",
-          branchId,
-          normalizedSearch,
-          filterProductId,
-          categoryId,
-          safeDays,
-          includeExpired,
-          onlyPositive,
-          page,
-          limit,
-        ]
+      ? ["stock-lots", branchId, lotsFilters]
       : null,
     () =>
       backendApi.stocks.lots.list(
-        {
-          search: normalizedSearch || undefined,
-          productId: filterProductId || undefined,
-          categoryId: categoryId !== "all" ? categoryId : undefined,
-          days: safeDays,
-          includeExpired,
-          onlyPositive,
-          page,
-          limit,
-        },
+        lotsFilters,
         branchId
       ),
     {
@@ -343,7 +346,7 @@ export function InventoryLotsSection({
 
       toast({
         title: "Lote guardado",
-        description: "Se registro/actualizo el lote correctamente.",
+        description: "El lote quedo guardado correctamente.",
       });
 
       resetForm();
@@ -352,10 +355,10 @@ export function InventoryLotsSection({
       toast({
         variant: "destructive",
         title: "No se pudo guardar el lote",
-        description:
-          saveError instanceof Error
-            ? saveError.message
-            : "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          saveError,
+          "Revisa los datos del lote e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSaving(false);

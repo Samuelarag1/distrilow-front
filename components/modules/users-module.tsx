@@ -54,6 +54,7 @@ import { useBranches } from "@/components/providers/branch-provider";
 import { backendApi } from "@/lib/backend-api";
 import type { UserRole } from "@/lib/api-types";
 import { useToast } from "@/hooks/use-toast";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 
 type UserRow = {
   id: string;
@@ -250,8 +251,11 @@ export function UsersModule() {
     } catch (err: any) {
       toast({
         variant: "destructive",
-        title: "Error al guardar",
-        description: err?.message || "No se pudo guardar el usuario.",
+        title: "No pudimos guardar el usuario",
+        description: getUserFacingErrorMessage(
+          err,
+          "Revisa los datos del usuario e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSaving(false);
@@ -273,8 +277,11 @@ export function UsersModule() {
     } catch (err: any) {
       toast({
         variant: "destructive",
-        title: "Error al eliminar",
-        description: err?.message || "No se pudo eliminar el usuario.",
+        title: "No pudimos eliminar el usuario",
+        description: getUserFacingErrorMessage(
+          err,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       setIsDeleting(false);

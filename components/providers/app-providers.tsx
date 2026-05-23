@@ -2,6 +2,7 @@
 
 import React from "react";
 import { usePathname } from "next/navigation";
+import { SWRConfig } from "swr";
 
 import { BusinessProvider } from "./business-provider";
 import { TransactionsProvider } from "./transactions-provider";
@@ -17,25 +18,43 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
 
   if (isPosRoute) {
     return (
-      <OfflineProvider>
-        <UserProvider>{children}</UserProvider>
-      </OfflineProvider>
+      <SWRConfig
+        value={{
+          revalidateOnFocus: false,
+          revalidateOnReconnect: false,
+          shouldRetryOnError: false,
+          dedupingInterval: 30_000,
+        }}
+      >
+        <OfflineProvider>
+          <UserProvider>{children}</UserProvider>
+        </OfflineProvider>
+      </SWRConfig>
     );
   }
 
   return (
-    <OfflineProvider>
-      <UserProvider>
-        <BusinessProvider>
-          <AuditProvider>
-            <BranchProvider>
-              <TransactionsProvider>
-                <ProductProvider>{children}</ProductProvider>
-              </TransactionsProvider>
-            </BranchProvider>
-          </AuditProvider>
-        </BusinessProvider>
-      </UserProvider>
-    </OfflineProvider>
+    <SWRConfig
+      value={{
+        revalidateOnFocus: false,
+        revalidateOnReconnect: false,
+        shouldRetryOnError: false,
+        dedupingInterval: 30_000,
+      }}
+    >
+      <OfflineProvider>
+        <UserProvider>
+          <BusinessProvider>
+            <AuditProvider>
+              <BranchProvider>
+                <TransactionsProvider autoLoadSales={false}>
+                  <ProductProvider>{children}</ProductProvider>
+                </TransactionsProvider>
+              </BranchProvider>
+            </AuditProvider>
+          </BusinessProvider>
+        </UserProvider>
+      </OfflineProvider>
+    </SWRConfig>
   );
 }

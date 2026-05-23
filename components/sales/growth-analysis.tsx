@@ -5,59 +5,27 @@ import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
-import { TrendingUp, TrendingDown, Target, Award, Calendar, Users } from "lucide-react";
-import { backendApi } from "@/lib/backend-api";
+import { TrendingUp, TrendingDown, Target, Award, Calendar } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
-import { useTransactions } from "@/components/providers/transactions-provider";
+import {
+  getSalesAnalysisConfig,
+  type SalesAnalysisPeriod,
+} from "@/lib/reports/sales-trends";
+import {
+  formatReportingPeriodLabel,
+  fetchReportingSalesSeries,
+  type ReportingSalesMetricSeries,
+} from "@/lib/reports/reporting-sales-history";
+import type { AnalyticsMetric } from "@/lib/api-types";
+
+type SeriesMap = Record<AnalyticsMetric, ReportingSalesMetricSeries>;
 
 interface GrowthAnalysisProps {
-  period: "monthly" | "quarterly" | "yearly";
-}
-
-function toDateString(date: Date) {
-  return date.toISOString().slice(0, 10);
-}
-
-function getPeriodRanges(period: "monthly" | "quarterly" | "yearly") {
-  const now = new Date();
-
-  if (period === "monthly") {
-    const currentFrom = new Date(now.getFullYear(), now.getMonth(), 1);
-    const previousFrom = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const previousTo = new Date(now.getFullYear(), now.getMonth(), 0);
-
-    return {
-      groupBy: "day" as const,
-      current: { from: toDateString(currentFrom), to: toDateString(now) },
-      previous: { from: toDateString(previousFrom), to: toDateString(previousTo) },
-      label: "mes",
-    };
-  }
-
-  if (period === "quarterly") {
-    const quarter = Math.floor(now.getMonth() / 3);
-    const currentFrom = new Date(now.getFullYear(), quarter * 3, 1);
-    const previousFrom = new Date(now.getFullYear(), quarter * 3 - 3, 1);
-    const previousTo = new Date(now.getFullYear(), quarter * 3, 0);
-
-    return {
-      groupBy: "month" as const,
-      current: { from: toDateString(currentFrom), to: toDateString(now) },
-      previous: { from: toDateString(previousFrom), to: toDateString(previousTo) },
-      label: "trimestre",
-    };
-  }
-
-  const currentFrom = new Date(now.getFullYear(), 0, 1);
-  const previousFrom = new Date(now.getFullYear() - 1, 0, 1);
-  const previousTo = new Date(now.getFullYear() - 1, 11, 31);
-
-  return {
-    groupBy: "month" as const,
-    current: { from: toDateString(currentFrom), to: toDateString(now) },
-    previous: { from: toDateString(previousFrom), to: toDateString(previousTo) },
-    label: "ano",
-  };
+  period: SalesAnalysisPeriod;
+  dateRange?: { from: Date; to: Date };
+  previousDateRange?: { from: Date; to: Date };
+  preloadedCurrent?: SeriesMap;
+  preloadedPrevious?: SeriesMap;
 }
 
 function growth(current: number, previous: number) {
@@ -65,143 +33,83 @@ function growth(current: number, previous: number) {
   return ((current - previous) / previous) * 100;
 }
 
-export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
+export function GrowthAnalysis({
+  period,
+  dateRange,
+  previousDateRange,
+  preloadedCurrent,
+  preloadedPrevious,
+}: GrowthAnalysisProps) {
   const { branchId } = useUser();
-  const { sales } = useTransactions();
-  const ranges = useMemo(() => getPeriodRanges(period), [period]);
+  const config = useMemo(() => getSalesAnalysisConfig(period), [period]);
+  const current = dateRange ?? config.current;
+  const previous = previousDateRange ?? config.previous;
+  const groupBy = dateRange ? ("day" as const) : config.groupBy;
+  const comparisonLabel = dateRange ? "periodo" : config.comparisonLabel;
+  const bestPointLabel = dateRange ? "Mejor dia" : config.bestPointLabel;
+
+  const hasPreloaded = preloadedCurrent !== undefined && preloadedPrevious !== undefined;
 
   const { data, isLoading } = useSWR(
-    branchId
+    !hasPreloaded && branchId
       ? [
-          "reporting-sales-growth",
+          "reporting-growth-analysis",
           branchId,
           period,
-          ranges.current.from,
-          ranges.current.to,
+          dateRange ? "custom" : "default",
+          current.from.toISOString(),
+          current.to.toISOString(),
+          previous.from.toISOString(),
+          previous.to.toISOString(),
+          groupBy,
         ]
       : null,
     async () => {
-      const [
-        revenueCurrent,
-        revenuePrev,
-        countCurrent,
-        countPrev,
-        avgTicketCurrent,
-        avgTicketPrev,
-      ] = await Promise.all([
-        backendApi.reporting.sales.history({
-          ...ranges.current,
-          groupBy: ranges.groupBy,
-          metric: "revenue",
-        }),
-        backendApi.reporting.sales.history({
-          ...ranges.previous,
-          groupBy: ranges.groupBy,
-          metric: "revenue",
-        }),
-        backendApi.reporting.sales.history({
-          ...ranges.current,
-          groupBy: ranges.groupBy,
-          metric: "count",
-        }),
-        backendApi.reporting.sales.history({
-          ...ranges.previous,
-          groupBy: ranges.groupBy,
-          metric: "count",
-        }),
-        backendApi.reporting.sales.history({
-          ...ranges.current,
-          groupBy: ranges.groupBy,
-          metric: "avgTicket",
-        }),
-        backendApi.reporting.sales.history({
-          ...ranges.previous,
-          groupBy: ranges.groupBy,
-          metric: "avgTicket",
-        }),
+      const [currentSeries, previousSeries] = await Promise.all([
+        fetchReportingSalesSeries(current, groupBy, ["revenue", "count", "avgTicket"]),
+        fetchReportingSalesSeries(previous, groupBy, ["revenue", "count", "avgTicket"]),
       ]);
-
-      return {
-        revenueCurrent,
-        revenuePrev,
-        countCurrent,
-        countPrev,
-        avgTicketCurrent,
-        avgTicketPrev,
-      };
+      return { currentSeries, previousSeries };
     },
-    { revalidateOnFocus: false }
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
   );
 
-  const customersGrowth = useMemo(() => {
-    const from = new Date(ranges.current.from).getTime();
-    const to = new Date(ranges.current.to).getTime();
-    const prevFrom = new Date(ranges.previous.from).getTime();
-    const prevTo = new Date(ranges.previous.to).getTime();
+  const resolvedData = hasPreloaded
+    ? { currentSeries: preloadedCurrent, previousSeries: preloadedPrevious }
+    : data;
 
-    const currentCustomers = new Set(
-      sales
-        .filter((sale) => {
-          const t = new Date(sale.date).getTime();
-          return t >= from && t <= to;
-        })
-        .map((sale) => sale.customerName || "Consumidor Final")
+  const bestPoint = useMemo(() => {
+    const points = resolvedData?.currentSeries.revenue.points ?? [];
+    const nonZeroPoints = points.filter((point) => point.value > 0);
+    if (nonZeroPoints.length === 0) return null;
+
+    return nonZeroPoints.reduce((acc, point) =>
+      point.value > acc.value ? point : acc
     );
+  }, [resolvedData]);
 
-    const prevCustomers = new Set(
-      sales
-        .filter((sale) => {
-          const t = new Date(sale.date).getTime();
-          return t >= prevFrom && t <= prevTo;
-        })
-        .map((sale) => sale.customerName || "Consumidor Final")
-    );
-
-    return growth(currentCustomers.size, prevCustomers.size);
-  }, [sales, ranges]);
-
-  const retention = useMemo(() => {
-    const from = new Date(ranges.current.from).getTime();
-    const to = new Date(ranges.current.to).getTime();
-    const counts = new Map<string, number>();
-
-    sales
-      .filter((sale) => {
-        const t = new Date(sale.date).getTime();
-        return t >= from && t <= to;
-      })
-      .forEach((sale) => {
-        const key = sale.customerName || "Consumidor Final";
-        counts.set(key, (counts.get(key) ?? 0) + 1);
-      });
-
-    const total = counts.size;
-    const recurring = Array.from(counts.values()).filter((value) => value > 1).length;
-    if (total === 0) return 0;
-    return (recurring / total) * 100;
-  }, [sales, ranges]);
-
-  const points = data?.revenueCurrent.points ?? [];
-  const bestPoint = points.reduce(
-    (acc, point) => (point.value > acc.value ? point : acc),
-    { period: "-", value: 0 }
-  );
-
-  const currentRevenue = Number(data?.revenueCurrent.totals.value ?? 0);
-  const previousRevenue = Number(data?.revenuePrev.totals.value ?? 0);
-  const currentCount = Number(data?.countCurrent.totals.value ?? 0);
-  const previousCount = Number(data?.countPrev.totals.value ?? 0);
-  const currentAvgTicket = Number(data?.avgTicketCurrent.totals.value ?? 0);
-  const previousAvgTicket = Number(data?.avgTicketPrev.totals.value ?? 0);
+  const currentRevenue = Number(resolvedData?.currentSeries.revenue.total ?? 0);
+  const previousRevenue = Number(resolvedData?.previousSeries.revenue.total ?? 0);
+  const currentCount = Number(resolvedData?.currentSeries.count.total ?? 0);
+  const previousCount = Number(resolvedData?.previousSeries.count.total ?? 0);
+  const currentAvgTicket = Number(resolvedData?.currentSeries.avgTicket.total ?? 0);
+  const previousAvgTicket = Number(resolvedData?.previousSeries.avgTicket.total ?? 0);
 
   const salesGrowth = growth(currentRevenue, previousRevenue);
   const ordersGrowth = growth(currentCount, previousCount);
   const avgOrderGrowth = growth(currentAvgTicket, previousAvgTicket);
 
-  const target = Math.max(currentRevenue * 1.1, 1);
-  const targetProgress = Math.min(100, (currentRevenue / target) * 100);
+  const targetProgress =
+    previousRevenue > 0
+      ? Math.min(100, (currentRevenue / previousRevenue) * 100)
+      : currentRevenue > 0
+      ? 100
+      : 0;
 
-  if (isLoading) {
+  if (!hasPreloaded && isLoading) {
     return <div className="text-sm text-muted-foreground">Cargando analisis...</div>;
   }
 
@@ -233,7 +141,9 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
                   </div>
                 </div>
                 <Progress value={Math.min(100, Math.abs(salesGrowth))} className="h-2" />
-                <p className="text-xs text-muted-foreground">vs {ranges.label} anterior</p>
+                <p className="text-xs text-muted-foreground">
+                  vs {comparisonLabel} anterior
+                </p>
               </div>
 
               <div className="space-y-3">
@@ -252,26 +162,9 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
                   </div>
                 </div>
                 <Progress value={Math.min(100, Math.abs(ordersGrowth))} className="h-2" />
-                <p className="text-xs text-muted-foreground">vs {ranges.label} anterior</p>
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-medium">Crecimiento en Clientes</span>
-                  <div className="flex items-center gap-1">
-                    {customersGrowth >= 0 ? (
-                      <TrendingUp className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <TrendingDown className="h-4 w-4 text-red-500" />
-                    )}
-                    <Badge variant={customersGrowth >= 0 ? "default" : "destructive"}>
-                      {customersGrowth >= 0 ? "+" : ""}
-                      {customersGrowth.toFixed(1)}%
-                    </Badge>
-                  </div>
-                </div>
-                <Progress value={Math.min(100, Math.abs(customersGrowth))} className="h-2" />
-                <p className="text-xs text-muted-foreground">vs {ranges.label} anterior</p>
+                <p className="text-xs text-muted-foreground">
+                  vs {comparisonLabel} anterior
+                </p>
               </div>
 
               <div className="space-y-3">
@@ -290,7 +183,9 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
                   </div>
                 </div>
                 <Progress value={Math.min(100, Math.abs(avgOrderGrowth))} className="h-2" />
-                <p className="text-xs text-muted-foreground">vs {ranges.label} anterior</p>
+                <p className="text-xs text-muted-foreground">
+                  vs {comparisonLabel} anterior
+                </p>
               </div>
             </div>
           </CardContent>
@@ -306,20 +201,20 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
           <CardContent>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="font-medium">Meta de Ventas</span>
+                <span className="font-medium">Vs. {comparisonLabel} anterior</span>
                 <span className="text-sm text-muted-foreground">
-                  ${currentRevenue.toLocaleString()} / ${target.toLocaleString()}
+                  ${currentRevenue.toLocaleString()} / ${previousRevenue.toLocaleString()}
                 </span>
               </div>
               <Progress value={targetProgress} className="h-3" />
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{targetProgress.toFixed(1)}% completado</span>
+                <span className="text-muted-foreground">{targetProgress.toFixed(1)}% del periodo anterior</span>
                 <span
                   className={
-                    targetProgress >= 90 ? "text-green-600" : targetProgress >= 70 ? "text-yellow-600" : "text-red-600"
+                    targetProgress >= 100 ? "text-green-600" : targetProgress >= 80 ? "text-yellow-600" : "text-red-600"
                   }
                 >
-                  {targetProgress >= 90 ? "Excelente" : targetProgress >= 70 ? "Buen progreso" : "Necesita atencion"}
+                  {targetProgress >= 100 ? "Supero el periodo" : targetProgress >= 80 ? "Cerca del objetivo" : "Por debajo"}
                 </span>
               </div>
             </div>
@@ -333,9 +228,15 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
             <div className="text-center space-y-3">
               <Award className="h-8 w-8 mx-auto text-yellow-500" />
               <div>
-                <p className="text-sm text-muted-foreground">Mejor {ranges.label}</p>
-                <p className="font-bold">{bestPoint.period}</p>
-                <p className="text-lg font-bold text-yellow-600">${Number(bestPoint.value).toLocaleString()}</p>
+                <p className="text-sm text-muted-foreground">{bestPointLabel}</p>
+                <p className="font-bold">
+                  {bestPoint
+                    ? formatReportingPeriodLabel(bestPoint.period, groupBy, "long")
+                    : "Sin ventas"}
+                </p>
+                <p className="text-lg font-bold text-yellow-600">
+                  ${Number(bestPoint?.value ?? 0).toLocaleString()}
+                </p>
               </div>
             </div>
           </CardContent>
@@ -356,18 +257,6 @@ export function GrowthAnalysis({ period }: GrowthAnalysisProps) {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardContent className="p-6">
-            <div className="text-center space-y-3">
-              <Users className="h-8 w-8 mx-auto text-purple-500" />
-              <div>
-                <p className="text-sm text-muted-foreground">Retencion de Clientes</p>
-                <p className="font-bold">{retention.toFixed(1)}%</p>
-                <p className="text-xs text-muted-foreground mt-1">Clientes recurrentes</p>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );

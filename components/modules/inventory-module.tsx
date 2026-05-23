@@ -1,8 +1,9 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
@@ -18,6 +19,8 @@ import {
   ArrowUp,
   ArrowDown,
   History,
+  Link2,
+  Info,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -33,13 +36,38 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { Product } from "@/lib/products";
-import { useProducts } from "@/components/providers/product-provider";
+import { useProductActions } from "@/components/providers/product-provider";
 import useSWR from "swr";
 import { swrFetcher } from "@/lib/swr-fetcher";
-import type { MovementType, Stock } from "@/lib/api-types";
+import type {
+  MeasurementType,
+  MovementType,
+  ReportsInventoryLowStockResponse,
+  ReportsInventorySummaryResponse,
+  StockDetail,
+  StockSharedProduct,
+} from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import { backendApi } from "@/lib/backend-api";
+import {
+  buildInventoryOverviewRowFromLegacy,
+  normalizeInventoryOverviewPage,
+  type InventoryOverviewRow,
+  type NormalizedInventoryOverviewPage,
+} from "@/lib/adapters/inventory-overview";
 import { InventoryLotsSection } from "@/components/modules/inventory-lots-section";
+import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
+import {
+  formatWholeAmountInput,
+  normalizeWholeAmountInput,
+  parseWholeAmount,
+} from "@/lib/sales-payments";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 type SortKey = "name" | "stock" | "category" | "price";
 type SortOrder = "asc" | "desc";
@@ -75,10 +103,7 @@ type Category = {
   isActive: boolean;
 };
 
-type LowStockRow = Stock & {
-  name?: string;
-  product?: Partial<Product> & { id?: string; name?: string };
-};
+type InventoryRow = InventoryOverviewRow;
 
 function getLooseCategoryLabel(category: unknown): string {
   if (typeof category === "string" && category.trim()) return category.trim();
@@ -89,15 +114,179 @@ function getLooseCategoryLabel(category: unknown): string {
   return "Sin categoria";
 }
 
-function getWholesaleUnitPrice(item: Product): number {
-  const wholesale = Number(item.wholesalePrice ?? NaN);
-  if (Number.isFinite(wholesale) && wholesale > 0) return wholesale;
+function toDisplayMeasurementUnit(value: unknown) {
+  if (value === "kg") return "kg";
+  if (value === "gram") return "gr";
+  if (value === "ml") return "ml";
+  if (value === "liter") return "lt";
+  return "unidades";
+}
 
-  const retail = Number(item.retailPrice ?? NaN);
-  if (Number.isFinite(retail) && retail > 0) return retail;
+function normalizeMeasurementType(value: unknown): MeasurementType | null {
+  if (
+    value === "unit" ||
+    value === "gram" ||
+    value === "kg" ||
+    value === "ml" ||
+    value === "liter"
+  ) {
+    return value;
+  }
+  return null;
+}
 
-  const fallback = Number(item.price ?? item.costPrice ?? 0);
-  return Number.isFinite(fallback) ? fallback : 0;
+function resolveMeasurementTypeFromItem(
+  item:
+    | InventoryRow
+    | StockDetail
+    | (Partial<Product> & { product?: Partial<Product> | null })
+    | null
+    | undefined
+) {
+  const direct = normalizeMeasurementType(
+    (item as { measurementType?: unknown } | null | undefined)?.measurementType
+  );
+  if (direct) return direct;
+
+  const nested = normalizeMeasurementType(
+    (
+      item as
+        | { product?: { measurementType?: unknown; isWeighable?: unknown } | null }
+        | null
+        | undefined
+    )?.product?.measurementType
+  );
+  if (nested) return nested;
+
+  const isWeighable =
+    Boolean(
+      (item as { isWeighable?: unknown } | null | undefined)?.isWeighable
+    ) ||
+    Boolean(
+      (
+        item as
+          | { product?: { isWeighable?: unknown } | null }
+          | null
+          | undefined
+      )?.product?.isWeighable
+    );
+
+  return isWeighable ? "kg" : "unit";
+}
+
+function formatInventoryQuantity(
+  value: unknown,
+  measurementType: unknown,
+  options?: { precise?: boolean }
+) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue)) return "0";
+
+  const normalizedMeasurementType = normalizeMeasurementType(measurementType);
+  const precise = options?.precise ?? false;
+  const hasFraction = Math.abs(numericValue - Math.trunc(numericValue)) > 0.000001;
+
+  let maximumFractionDigits = 0;
+
+  if (
+    normalizedMeasurementType === "kg" ||
+    normalizedMeasurementType === "liter"
+  ) {
+    maximumFractionDigits = precise ? 4 : 3;
+  } else if (
+    normalizedMeasurementType === "gram" ||
+    normalizedMeasurementType === "ml"
+  ) {
+    maximumFractionDigits = hasFraction ? (precise ? 3 : 2) : 0;
+  } else if (normalizedMeasurementType === "unit") {
+    maximumFractionDigits = hasFraction ? (precise ? 3 : 2) : 0;
+  } else {
+    maximumFractionDigits = hasFraction ? (precise ? 3 : 2) : 0;
+  }
+
+  return numericValue.toLocaleString("es-AR", {
+    minimumFractionDigits: 0,
+    maximumFractionDigits,
+  });
+}
+
+function formatInventoryQuantityWithUnit(
+  value: unknown,
+  measurementType: unknown,
+  options?: { precise?: boolean }
+) {
+  return `${formatInventoryQuantity(value, measurementType, options)} ${toDisplayMeasurementUnit(
+    measurementType
+  )}`;
+}
+
+function resolveInventoryRowName(item: InventoryRow) {
+  const directName = String(item.productName ?? item.name ?? "").trim();
+  if (directName) return directName;
+  const nestedName = String(item.product?.name ?? "").trim();
+  if (nestedName) return nestedName;
+  return item.productId;
+}
+
+function resolveInventoryRowPrices(item: InventoryRow) {
+  const product = item.product ?? {};
+  const costPrice = Number(item.averageCost ?? (product as any).costPrice ?? 0);
+  const wholesalePrice = Number(
+    item.wholesalePrice ?? (product as any).wholesalePrice ?? Number.NaN
+  );
+  const retailPrice = Number(
+    item.retailPrice ?? (product as any).retailPrice ?? Number.NaN
+  );
+  const wholesale =
+    Number.isFinite(wholesalePrice) && wholesalePrice > 0
+      ? wholesalePrice
+      : Number.isFinite(retailPrice) && retailPrice > 0
+      ? retailPrice
+      : Number.isFinite(costPrice)
+      ? costPrice
+      : 0;
+
+  return {
+    costPrice: Number.isFinite(costPrice) ? costPrice : 0,
+    wholesaleUnitPrice: wholesale,
+  };
+}
+
+function resolveInventoryRowCategoryId(item: InventoryRow) {
+  const categoryId = String(
+    item.categoryId ?? (item.product as any)?.categoryId ?? ""
+  ).trim();
+  return categoryId || null;
+}
+
+function resolveInventoryRowImage(item: InventoryRow) {
+  return resolveProductImageUrl(
+    (item.product ?? (item as unknown as Product)) as Product
+  );
+}
+
+function resolveLinkedProducts(item: InventoryRow): StockSharedProduct[] {
+  const linked = item.sharedStock?.linkedProducts;
+  return Array.isArray(linked) ? linked : [];
+}
+
+function toTrimmedText(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
+function toFiniteQuantity(value: unknown, fallback = 0) {
+  const numeric = Number(value);
+  return Number.isFinite(numeric) ? numeric : fallback;
+}
+
+function buildStockDetailFromInventoryRow(item: InventoryRow): StockDetail {
+  return {
+    ...item,
+    stockProductId:
+      toTrimmedText(item.stockProductId) || toTrimmedText(item.productId) || null,
+    baseQuantity: item.baseQuantity ?? toFiniteQuantity(item.quantity, 0),
+    updatedAt: item.updatedAt ?? undefined,
+  };
 }
 
 function AdjustStockDialog({
@@ -105,7 +294,13 @@ function AdjustStockDialog({
   branches,
   onSubmitMovement,
 }: {
-  item: Product;
+  item: {
+    id: string;
+    name: string;
+    stock: number;
+    unit: string;
+    branchId?: string | null;
+  };
   branches: Array<{ id: string; name: string }>;
   onSubmitMovement: (input: {
     type: MovementType;
@@ -127,7 +322,7 @@ function AdjustStockDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
-    const quantity = Math.abs(Math.trunc(Number(amount)));
+    const quantity = Math.abs(parseWholeAmount(amount));
     if (!quantity || quantity < 1) return;
 
     if (operation === "transfer" && !toBranchId) return;
@@ -169,8 +364,8 @@ function AdjustStockDialog({
     operation === "expired" ||
     operation === "transfer";
   const currentTotal = outgoing
-    ? Math.max(0, item.stock - (parseInt(amount) || 0))
-    : item.stock + (parseInt(amount) || 0);
+    ? Math.max(0, item.stock - parseWholeAmount(amount))
+    : item.stock + parseWholeAmount(amount);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -274,10 +469,13 @@ function AdjustStockDialog({
               <div className="relative">
                 <Input
                   id="amount"
-                  type="number"
+                  type="text"
+                  inputMode="numeric"
                   placeholder="0"
-                  value={amount}
-                  onChange={(e) => setAmount(e.target.value)}
+                  value={formatWholeAmountInput(amount)}
+                  onChange={(e) =>
+                    setAmount(normalizeWholeAmountInput(e.target.value))
+                  }
                   autoFocus
                   className="text-2xl font-black h-14 pl-12 focus-visible:ring-primary/20"
                   disabled={isSubmitting}
@@ -370,84 +568,378 @@ function SortButton({
   );
 }
 
+function StockDetailDialog({
+  branchId,
+  productId,
+  productName,
+  fallbackItem,
+  open,
+  onOpenChange,
+}: {
+  branchId: string | null;
+  productId: string | null;
+  productName: string | null;
+  fallbackItem: InventoryRow | null;
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+}) {
+  const { data, isLoading, error } = useSWR<StockDetail>(
+    open && branchId && productId
+      ? ["stock-detail", branchId, productId]
+      : null,
+    () =>
+      backendApi.stocks.getByBranchAndProduct(
+        branchId as string,
+        productId as string
+      ),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+      shouldRetryOnError: false,
+    }
+  );
+
+  const fallbackDetail = useMemo(
+    () => (fallbackItem ? buildStockDetailFromInventoryRow(fallbackItem) : null),
+    [fallbackItem]
+  );
+  const detail = data ?? fallbackDetail;
+  const detailMeasurementType = resolveMeasurementTypeFromItem(detail ?? undefined);
+  const baseMeasurementType =
+    normalizeMeasurementType(detail?.stockBaseUnit) ?? detailMeasurementType;
+  const baseUnit = toDisplayMeasurementUnit(baseMeasurementType);
+  const linkedProducts = Array.isArray(detail?.sharedStock?.linkedProducts)
+    ? detail?.sharedStock?.linkedProducts ?? []
+    : [];
+  const detailConsumptionQuantity = Number(
+    detail?.stockConsumptionQuantity ?? Number.NaN
+  );
+  const detailBaseQuantity = Number(detail?.baseQuantity ?? Number.NaN);
+  const detailRelativeStock =
+    Number.isFinite(detailBaseQuantity) &&
+    Number.isFinite(detailConsumptionQuantity) &&
+    detailConsumptionQuantity > 0
+      ? Math.max(0, detailBaseQuantity / detailConsumptionQuantity)
+      : null;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="sm:max-w-[560px]">
+        <DialogHeader>
+          <DialogTitle>Detalle de stock</DialogTitle>
+          <DialogDescription>
+            {productName || productId || "Producto"} - referencia real de stock.
+          </DialogDescription>
+        </DialogHeader>
+
+        {isLoading && (
+          <p className="text-sm text-muted-foreground">Cargando detalle...</p>
+        )}
+
+        {!isLoading && error && !detail && (
+          <p className="text-sm text-destructive">
+            {error instanceof Error
+              ? error.message
+              : "No se pudo cargar el detalle del stock."}
+          </p>
+        )}
+
+        {!isLoading && error && detail && (
+          <p className="text-xs text-muted-foreground">
+            No existe una fila de stock creada para este producto. Se muestra el
+            detalle calculado desde el catalogo actual.
+          </p>
+        )}
+
+        {!isLoading && detail && (
+          <div className="space-y-4">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">
+                  Producto consultado
+                </p>
+                <p className="font-semibold">{detail.productId || "-"}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Stock base real</p>
+                <p className="font-semibold">{detail.stockProductId || "-"}</p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">
+                  Cantidad comercial
+                </p>
+                <p className="font-semibold">
+                  {formatInventoryQuantityWithUnit(
+                    detail.quantity ?? 0,
+                    detailMeasurementType,
+                    { precise: Boolean(detail.sharedStock?.isShared) }
+                  )}
+                </p>
+              </div>
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground">Stock real base</p>
+                <p className="font-semibold">
+                  {formatInventoryQuantityWithUnit(
+                    detail.baseQuantity ?? 0,
+                    baseMeasurementType,
+                    { precise: true }
+                  )}
+                </p>
+              </div>
+            </div>
+
+            {detail.sharedStock?.isShared && detailRelativeStock !== null && (
+              <div className="rounded-md border border-dashed p-3 text-xs text-muted-foreground">
+                Calculo compartido:{" "}
+                <span className="font-semibold text-foreground">
+                  {formatInventoryQuantity(detailBaseQuantity, baseMeasurementType, {
+                    precise: true,
+                  })}{" "}
+                  {baseUnit}
+                </span>{" "}
+                /{" "}
+                <span className="font-semibold text-foreground">
+                  {formatInventoryQuantity(detailConsumptionQuantity, baseMeasurementType, {
+                    precise: true,
+                  })}{" "}
+                  {baseUnit}
+                </span>{" "}
+                por producto ={" "}
+                <span className="font-semibold text-foreground">
+                  {formatInventoryQuantity(detailRelativeStock, detailMeasurementType, {
+                    precise: true,
+                  })}{" "}
+                  {toDisplayMeasurementUnit(detailMeasurementType)}
+                </span>
+                .
+              </div>
+            )}
+
+            {detail.sharedStock?.isShared && (
+              <div className="rounded-md border p-3">
+                <p className="text-xs text-muted-foreground mb-2">
+                  Productos vinculados:{" "}
+                  {Number(detail.sharedStock.linkedProductsCount ?? 0)}
+                </p>
+                <div className="space-y-2">
+                  {linkedProducts.map((linked) => (
+                    <div
+                      key={linked.id}
+                      className="flex items-center justify-between rounded-md border p-2 text-xs"
+                    >
+                      <div>
+                        <p className="font-medium">{linked.name}</p>
+                        <p className="text-muted-foreground">
+                          {linked.sku ? `SKU ${linked.sku}` : linked.id}
+                        </p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {linked.isBase && (
+                          <Badge variant="outline" className="text-[10px]">
+                            Base
+                          </Badge>
+                        )}
+                        <div className="text-right text-muted-foreground">
+                          <span>
+                            {formatInventoryQuantity(
+                              linked.stockConsumptionQuantity ?? 0,
+                              linked.stockBaseUnit,
+                              {
+                                precise: true,
+                              }
+                            )}{" "}
+                            {toDisplayMeasurementUnit(linked.stockBaseUnit)}
+                          </span>
+                          {Number(detail.baseQuantity ?? Number.NaN) > 0 &&
+                            Number(
+                              linked.stockConsumptionQuantity ?? Number.NaN
+                            ) > 0 && (
+                              <p className="text-[10px]">
+                                ~{" "}
+                                {formatInventoryQuantity(
+                                  Number(detail.baseQuantity ?? 0) /
+                                    Number(linked.stockConsumptionQuantity ?? 1),
+                                  detailMeasurementType,
+                                  { precise: true }
+                                )}
+                              </p>
+                            )}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 export function InventoryModule() {
   const { branches, branchId } = useUser();
+  const { registerStockMovement } = useProductActions();
   const effectiveBranchId = normalizeBranchContextId(branchId);
+  const criticalTableRef = useRef<HTMLDivElement | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
+  const debouncedSearch = useDebouncedValue(searchQuery, 350);
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortKey, setSortKey] = useState<SortKey>("name");
   const [sortOrder, setSortOrder] = useState<SortOrder>("asc");
   const [currentPage, setCurrentPage] = useState(1);
+  const [stockDetailTarget, setStockDetailTarget] = useState<{
+    productId: string;
+    productName: string;
+    item: InventoryRow;
+  } | null>(null);
   const pageSize = 20;
   const { toast } = useToast();
-  const stockSummaryFilters = useMemo(
-    () => ({
-      branchId: effectiveBranchId,
-      lowStockThreshold: LOW_STOCK_THRESHOLD,
-    }),
-    [effectiveBranchId]
-  );
+  const productsAbortControllerRef = useRef<AbortController | null>(null);
   const { data: categoriesData } = useSWR<Category[]>(
     "/categories",
     swrFetcher
   );
-  const { data: inventorySummary, mutate: mutateInventorySummary } = useSWR(
-    effectiveBranchId
-      ? ["/stocks/summary", stockSummaryFilters]
-      : null,
-    () =>
-      backendApi.stocks.summary(
-        { lowStockThreshold: LOW_STOCK_THRESHOLD },
-        effectiveBranchId
-      )
-  );
-  const {
-    data: inventorySummaryCategories,
-    mutate: mutateInventorySummaryCategories,
-  } = useSWR(
-    effectiveBranchId
-      ? ["/stocks/summary/categories", stockSummaryFilters]
-      : null,
-    () =>
-      backendApi.stocks.summaryCategories(
-        { lowStockThreshold: LOW_STOCK_THRESHOLD },
-        effectiveBranchId
-      )
-  );
-  const { data: lowStockRows, mutate: mutateLowStockRows } = useSWR<
-    LowStockRow[]
-  >(
-    effectiveBranchId
-      ? ["stocks-low-list", effectiveBranchId, LOW_STOCK_THRESHOLD]
-      : null,
-    async () => {
-      const payload = await backendApi.stocks.list({
-        stockStatus: "low_stock",
-        lowStockThreshold: LOW_STOCK_THRESHOLD,
-      }, effectiveBranchId);
-      return payload.items as LowStockRow[];
-    }
+
+  const inventoryQuery = useMemo(
+    () => ({
+      skip: Math.max(0, (currentPage - 1) * pageSize),
+      take: pageSize,
+      search: debouncedSearch.trim() || undefined,
+      categoryId: selectedCategory !== "all" ? selectedCategory : undefined,
+    }),
+    [currentPage, pageSize, debouncedSearch, selectedCategory]
   );
 
   const {
-    products: inventory,
-    total: inventoryTotal,
-    hasMore,
-    skip,
-    take,
-    isLoading,
-    registerStockMovement,
-    mutateProducts,
-  } = useProducts({
-    skip: (currentPage - 1) * pageSize,
-    take: pageSize,
-    search: searchQuery.trim() || undefined,
-    categoryId: selectedCategory === "all" ? null : selectedCategory,
-    branchId: effectiveBranchId,
-    sortBy:
-      sortKey === "name" ? "name" : sortKey === "price" ? "price" : undefined,
-    sortOrder,
-  });
+    data: inventoryPage,
+    mutate: mutateInventoryPage,
+    isLoading: isLoadingInventoryPage,
+    error: inventoryPageError,
+  } = useSWR<NormalizedInventoryOverviewPage>(
+    effectiveBranchId ? ["inventory-products", effectiveBranchId, inventoryQuery] : null,
+    async () => {
+      productsAbortControllerRef.current?.abort();
+      const controller = new AbortController();
+      productsAbortControllerRef.current = controller;
+
+      try {
+        try {
+          const overviewPayload = await backendApi.reporting.inventory.overview(
+            {
+              ...inventoryQuery,
+              page: currentPage,
+              limit: pageSize,
+            },
+            effectiveBranchId,
+            {
+              signal: controller.signal,
+            }
+          );
+
+          return normalizeInventoryOverviewPage(overviewPayload, {
+            offset: inventoryQuery.skip,
+            limit: pageSize,
+          });
+        } catch (overviewError) {
+          if (
+            overviewError instanceof DOMException &&
+            overviewError.name === "AbortError"
+          ) {
+            throw overviewError;
+          }
+
+          const [productsPage, stockRows] = await Promise.all([
+            backendApi.productsWithStock(
+              {
+                ...inventoryQuery,
+                name: inventoryQuery.search,
+                q: inventoryQuery.search,
+              },
+              effectiveBranchId,
+              {
+                signal: controller.signal,
+              }
+            ),
+            backendApi.stocks.listByBranch(effectiveBranchId as string),
+          ]);
+          const stockByProductId = new Map<string, Partial<StockDetail>>();
+          stockRows.forEach((row) => {
+            const productId = String(row.productId ?? "").trim();
+            if (!productId || stockByProductId.has(productId)) return;
+            stockByProductId.set(productId, row);
+          });
+
+          return {
+            items: (productsPage.items ?? []).map((product) =>
+              buildInventoryOverviewRowFromLegacy({
+                product,
+                stockRow: stockByProductId.get(String(product.id ?? "")) ?? null,
+                branchId: effectiveBranchId,
+              })
+            ),
+            total: Number(productsPage.total ?? 0),
+            skip: Number(productsPage.skip ?? inventoryQuery.skip ?? 0),
+            take: Number(productsPage.take ?? pageSize),
+            nextSkip: productsPage.nextSkip ?? null,
+            hasMore: Boolean(productsPage.hasMore),
+          } satisfies NormalizedInventoryOverviewPage;
+        }
+      } finally {
+        if (productsAbortControllerRef.current === controller) {
+          productsAbortControllerRef.current = null;
+        }
+      }
+    },
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+      shouldRetryOnError: false,
+    }
+  );
+  const inventory = inventoryPage?.items ?? [];
+  const inventoryTotal = Number(inventoryPage?.total ?? inventory.length);
+  const hasMore = Boolean(inventoryPage?.hasMore);
+  const skip = Number(
+    inventoryPage?.skip ?? Math.max(0, (currentPage - 1) * pageSize)
+  );
+  const take = Number(inventoryPage?.take ?? pageSize);
+  const isLoading = isLoadingInventoryPage;
+  const isError =
+    inventoryPageError instanceof DOMException &&
+    inventoryPageError.name === "AbortError"
+      ? null
+      : inventoryPageError;
+
+  const { data: inventorySummary, mutate: mutateInventorySummary } = useSWR<ReportsInventorySummaryResponse>(
+    effectiveBranchId
+      ? ["/reporting/inventory/summary", effectiveBranchId, LOW_STOCK_THRESHOLD]
+      : null,
+    () =>
+      backendApi.reporting.inventory.summary(
+        { lowStockThreshold: LOW_STOCK_THRESHOLD },
+        effectiveBranchId
+      )
+  );
+  const { data: lowStockResponse, mutate: mutateLowStockRows } = useSWR<ReportsInventoryLowStockResponse>(
+    effectiveBranchId
+      ? ["/reporting/inventory/low-stock", effectiveBranchId, LOW_STOCK_THRESHOLD]
+      : null,
+    () =>
+      backendApi.reporting.inventory.lowStock(
+        {
+          page: 1,
+          limit: 100,
+          lowStockThreshold: LOW_STOCK_THRESHOLD,
+        },
+        effectiveBranchId
+      )
+  );
+  const lowStockRows = useMemo(
+    () => lowStockResponse?.items ?? [],
+    [lowStockResponse?.items]
+  );
 
   const categoryNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -457,20 +949,24 @@ export function InventoryModule() {
     return map;
   }, [categoriesData]);
 
-  const getProductCategoryLabel = (item: Product) => {
-    if (item.categoryId) {
-      const mapped = categoryNameById.get(item.categoryId);
+  const getProductCategoryLabel = (item: InventoryRow) => {
+    const directCategoryName = String(item.categoryName ?? "").trim();
+    if (directCategoryName) return directCategoryName;
+
+    const categoryId = resolveInventoryRowCategoryId(item);
+    if (categoryId) {
+      const mapped = categoryNameById.get(categoryId);
       if (mapped) return mapped;
 
       const loose = getLooseCategoryLabel(
-        (item as Product & { category?: unknown }).category
+        (item.product as Product & { category?: unknown })?.category
       );
-      if (loose && loose !== item.categoryId) return loose;
+      if (loose && loose !== categoryId) return loose;
 
       return "Sin categoria";
     }
     return getLooseCategoryLabel(
-      (item as Product & { category?: unknown }).category
+      (item.product as Product & { category?: unknown })?.category
     );
   };
 
@@ -484,18 +980,47 @@ export function InventoryModule() {
     setCurrentPage(1);
   };
 
-  const filteredInventory = inventory.slice().sort((a: Product, b: Product) => {
-    const factor = sortOrder === "asc" ? 1 : -1;
-    if (sortKey === "name") return a.name.localeCompare(b.name) * factor;
-    if (sortKey === "category") {
+  useEffect(() => {
+    return () => {
+      productsAbortControllerRef.current?.abort();
+    };
+  }, []);
+
+  const filteredInventory = inventory
+    .slice()
+    .sort((a: InventoryRow, b: InventoryRow) => {
+      const factor = sortOrder === "asc" ? 1 : -1;
+      if (sortKey === "name") {
+        return (
+          resolveInventoryRowName(a).localeCompare(resolveInventoryRowName(b)) *
+          factor
+        );
+      }
+      if (sortKey === "category") {
+        return (
+          getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) *
+          factor
+        );
+      }
+      if (sortKey === "stock") {
+        return (Number(a.quantity ?? 0) - Number(b.quantity ?? 0)) * factor;
+      }
       return (
-        getProductCategoryLabel(a).localeCompare(getProductCategoryLabel(b)) *
+        (resolveInventoryRowPrices(a).wholesaleUnitPrice -
+          resolveInventoryRowPrices(b).wholesaleUnitPrice) *
         factor
       );
-    }
-    if (sortKey === "stock") return ((a.stock || 0) - (b.stock || 0)) * factor;
-    return (getWholesaleUnitPrice(a) - getWholesaleUnitPrice(b)) * factor;
-  });
+    });
+  const shouldPaginateLocally = filteredInventory.length > take;
+  const effectiveInventoryTotal = shouldPaginateLocally
+    ? filteredInventory.length
+    : inventoryTotal;
+  const effectiveSkip = shouldPaginateLocally
+    ? Math.max(0, (currentPage - 1) * take)
+    : skip;
+  const visibleInventory = shouldPaginateLocally
+    ? filteredInventory.slice(effectiveSkip, effectiveSkip + take)
+    : filteredInventory;
 
   const categories = useMemo(() => {
     return (categoriesData ?? [])
@@ -508,11 +1033,21 @@ export function InventoryModule() {
   }, [categoriesData]);
 
   const totalValueFallback = inventory.reduce(
-    (sum: number, item: Product) => sum + item.stock * getWholesaleUnitPrice(item),
+    (sum: number, item: InventoryRow) =>
+      sum +
+      Number(item.quantity ?? 0) *
+        resolveInventoryRowPrices(item).wholesaleUnitPrice,
     0
   );
   const inventoryNameById = useMemo(
-    () => new Map(inventory.map((item) => [item.id, item.name])),
+    () =>
+      new Map(
+        inventory.map((item) => [item.productId, resolveInventoryRowName(item)])
+      ),
+    [inventory]
+  );
+  const inventoryByProductId = useMemo(
+    () => new Map(inventory.map((item) => [item.productId, item])),
     [inventory]
   );
   const lowStockNamesPreview = useMemo(() => {
@@ -521,19 +1056,11 @@ export function InventoryModule() {
     const names = lowStockRows
       .map((row) => {
         const directName =
-          typeof row.name === "string" ? row.name.trim() : "";
+          typeof row.productName === "string" ? row.productName.trim() : "";
         if (directName) return directName;
 
-        const nestedName =
-          typeof row.product?.name === "string" ? row.product.name.trim() : "";
-        if (nestedName) return nestedName;
-
         const productId =
-          typeof row.productId === "string"
-            ? row.productId
-            : typeof row.product?.id === "string"
-            ? row.product.id
-            : null;
+          typeof row.productId === "string" ? row.productId.trim() : null;
         if (!productId) return "";
         return inventoryNameById.get(productId) ?? "";
       })
@@ -541,32 +1068,65 @@ export function InventoryModule() {
 
     return Array.from(new Set(names)).slice(0, 3);
   }, [lowStockRows, inventoryNameById]);
-  const totalProductsKpi = inventorySummary?.products.total ?? inventoryTotal;
-  const lowStockCountKpi =
-    inventorySummary?.products.lowStock ?? lowStockRows?.length ?? 0;
-  const inventoryValueKpi =
-    inventorySummary?.inventoryValue.wholesale ?? totalValueFallback;
-  const categoriesTotalKpi =
-    inventorySummaryCategories?.total ?? categories.length;
+  const totalProductsKpi = Number(inventorySummary?.productsTotal ?? inventoryTotal);
+  const lowStockCountKpi = Number(
+    inventorySummary?.lowStockTotal ?? lowStockRows.length
+  );
+  const inventoryValueKpi = Number(
+    inventorySummary?.inventoryValueWholesale ?? totalValueFallback
+  );
+  const categoriesTotalKpi = Number(
+    inventorySummary?.byCategory?.length ?? categories.length
+  );
   const lowStockHiddenCount = Math.max(
     lowStockCountKpi - lowStockNamesPreview.length,
     0
   );
+  const outOfStockRows = useMemo(
+    () =>
+      lowStockRows.filter((row) => Number(row.stock ?? 0) <= Number.EPSILON),
+    [lowStockRows]
+  );
+  const criticalStockRows = useMemo(
+    () =>
+      lowStockRows.filter((row) => Number(row.stock ?? 0) > Number.EPSILON),
+    [lowStockRows]
+  );
   const totalPages = Math.max(
     1,
-    Math.ceil((inventoryTotal || 0) / Math.max(take, 1))
+    Math.ceil((effectiveInventoryTotal || 0) / Math.max(take, 1))
   );
-  const showingFrom = inventoryTotal === 0 ? 0 : skip + 1;
-  const showingTo = inventoryTotal === 0 ? 0 : skip + filteredInventory.length;
+  const effectiveHasMore = shouldPaginateLocally
+    ? effectiveSkip + take < effectiveInventoryTotal
+    : hasMore;
+  const showingFrom = effectiveInventoryTotal === 0 ? 0 : effectiveSkip + 1;
+  const showingTo =
+    effectiveInventoryTotal === 0 ? 0 : effectiveSkip + visibleInventory.length;
 
-  const getStockStatus = (item: Product) => {
-    if (item.stock <= (item.minStock || 0)) return "low";
-    if (item.stock >= (item.maxStock || 100) * 0.8) return "high";
+  useEffect(() => {
+    if (currentPage <= totalPages) return;
+    setCurrentPage(totalPages);
+  }, [currentPage, totalPages]);
+
+  const getStockStatus = (
+    item: InventoryRow,
+    stock: number,
+    minStock: number,
+    maxStock: number | null
+  ) => {
+    if (item.stockStatus === "OUT_OF_STOCK") return "out";
+    if (item.stockStatus === "LOW") return "low";
+    if (item.stockStatus === "HIGH") return "high";
+    if (item.stockStatus === "NORMAL") return "normal";
+    if (stock <= Number.EPSILON) return "out";
+    if (stock <= minStock) return "low";
+    if (maxStock !== null && maxStock > 0 && stock >= maxStock) return "high";
     return "normal";
   };
 
   const getStockColor = (status: string) => {
     switch (status) {
+      case "out":
       case "low":
         return "text-red-500";
       case "high":
@@ -576,16 +1136,64 @@ export function InventoryModule() {
     }
   };
 
-  const getProgressValue = (item: Product) => {
-    const max = item.maxStock || 100;
-    return (item.stock / max) * 100;
+  const getProgressValue = (stock: number, maxStock: number | null) => {
+    if (maxStock === null || maxStock <= 0) return null;
+    return Math.max(0, Math.min(100, (stock / maxStock) * 100));
   };
 
-  function InventoryItemCard({ item }: { item: Product }) {
-    const status = getStockStatus(item);
-    const progressValue = getProgressValue(item);
-    const wholesaleUnitPrice = getWholesaleUnitPrice(item);
-    const inventoryValue = item.stock * wholesaleUnitPrice;
+  function InventoryItemCard({ item }: { item: InventoryRow }) {
+    const itemName = resolveInventoryRowName(item);
+    const categoryLabel = getProductCategoryLabel(item);
+    const stockQuantity = Number(item.stock ?? item.quantity ?? 0);
+    const minStock = Number(item.minStock ?? (item.product as any)?.minStock ?? 0);
+    const maxStockValue = Number(
+      item.maxStock ?? (item.product as any)?.maxStock ?? Number.NaN
+    );
+    const maxStock = Number.isFinite(maxStockValue) ? maxStockValue : null;
+    const measurementType = resolveMeasurementTypeFromItem(item);
+    const unitLabel = toDisplayMeasurementUnit(measurementType);
+    const status = getStockStatus(item, stockQuantity, minStock, maxStock);
+    const progressValue = getProgressValue(stockQuantity, maxStock);
+    const { costPrice, wholesaleUnitPrice } = resolveInventoryRowPrices(item);
+    const inventoryValue = stockQuantity * wholesaleUnitPrice;
+    const linkedProducts = resolveLinkedProducts(item);
+    const linkedProductsCount = Number(
+      item.sharedStock?.linkedProductsCount ?? linkedProducts.length
+    );
+    const isSharedStock = Boolean(item.sharedStock?.isShared);
+    const consumptionQuantity = Number(item.stockConsumptionQuantity ?? 1);
+    const baseMeasurementType =
+      normalizeMeasurementType(item.stockBaseUnit) ?? measurementType;
+    const consumptionLabel = toDisplayMeasurementUnit(baseMeasurementType);
+    const baseQuantity = Number(item.baseQuantity ?? Number.NaN);
+    const formattedStockQuantity = formatInventoryQuantity(
+      stockQuantity,
+      measurementType,
+      { precise: isSharedStock }
+    );
+    const formattedConsumptionQuantity = formatInventoryQuantity(
+      consumptionQuantity,
+      baseMeasurementType,
+      { precise: true }
+    );
+    const formattedBaseQuantity = Number.isFinite(baseQuantity)
+      ? formatInventoryQuantity(baseQuantity, baseMeasurementType, {
+          precise: true,
+        })
+      : null;
+    const formattedMinStock = formatInventoryQuantity(minStock, measurementType);
+    const formattedMaxStock =
+      maxStock !== null
+        ? formatInventoryQuantity(maxStock, measurementType)
+        : "Sin maximo definido";
+    const adjustDialogItem = {
+      id: item.productId,
+      name: itemName,
+      stock: stockQuantity,
+      unit: unitLabel,
+      measurementType,
+      branchId: item.branchId ?? effectiveBranchId ?? null,
+    };
 
     const handleMovementSubmit = async (input: {
       type: MovementType;
@@ -596,33 +1204,33 @@ export function InventoryModule() {
     }) => {
       try {
         await registerStockMovement({
-          productId: item.id,
+          productId: item.productId,
           branchId: item.branchId ?? effectiveBranchId ?? undefined,
           quantity: input.quantity,
           type: input.type,
-          unitCost: Number(item.costPrice ?? 0),
+          unitCost: costPrice,
           direction: input.direction,
           reason: input.reason,
           toBranchId: input.toBranchId,
         });
         await Promise.all([
-          mutateProducts(),
+          mutateInventoryPage(),
           mutateInventorySummary(),
-          mutateInventorySummaryCategories(),
           mutateLowStockRows(),
         ]);
 
         toast({
           title: "Movimiento registrado",
-          description: `Se registro ${input.type} para ${item.name} (${
-            input.quantity
-          } ${item.unit || "unidades"}).`,
+          description: `Se registro ${input.type} para ${itemName} (${input.quantity} ${unitLabel}).`,
         });
       } catch (error: any) {
         toast({
           variant: "destructive",
           title: "No se pudo registrar el movimiento",
-          description: error?.message ?? "Intenta nuevamente.",
+          description: getUserFacingErrorMessage(
+            error,
+            "Revisa los datos del movimiento e intenta nuevamente."
+          ),
         });
         throw error;
       }
@@ -633,46 +1241,57 @@ export function InventoryModule() {
         className="w-full p-4 transition-all hover:shadow-lg border-l-4 group relative overflow-hidden"
         style={{
           borderLeftColor:
-            status === "low"
+            status === "low" || status === "out"
               ? "#ef4444"
               : status === "high"
               ? "#22c55e"
               : "#3b82f6",
         }}
       >
-        {status === "low" && (
+        {(status === "low" || status === "out") && (
           <div className="absolute top-0 right-0 p-1 bg-red-500 text-white transform rotate-0 text-[8px] font-black uppercase px-2 rounded-bl-lg">
-            Reposición Urgente
+            {status === "out" ? "Sin stock" : "Reposicion urgente"}
           </div>
         )}
         <div className="flex flex-col md:flex-row items-center gap-6">
-          {/* Item Info */}
           <div className="flex-1 min-w-0 w-full">
             <div className="flex items-center justify-between mb-2">
               <div className="flex items-center gap-3">
                 <div
                   className={`p-2.5 rounded-xl ${
-                    status === "low" ? "bg-red-500/10" : "bg-primary/10"
+                    status === "low" || status === "out"
+                      ? "bg-red-500/10"
+                      : "bg-primary/10"
                   }`}
                 >
                   <img
-                    src={resolveProductImageUrl(item)}
-                    alt={item.name}
+                    src={resolveInventoryRowImage(item)}
+                    alt={itemName}
                     className="h-10 w-10 rounded-md object-cover"
                   />
                 </div>
                 <div>
                   <h3 className="font-bold text-lg leading-tight truncate group-hover:text-primary transition-colors">
-                    {item.name}
+                    {itemName}
                   </h3>
-                  <Badge
-                    variant="outline"
-                    className={`text-[10px] uppercase font-black tracking-widest mt-1 ${getCategoryColor(
-                      getProductCategoryLabel(item)
-                    )}`}
-                  >
-                    {getProductCategoryLabel(item)}
-                  </Badge>
+                  <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                    <Badge
+                      variant="outline"
+                      className={`text-[10px] uppercase font-black tracking-widest ${getCategoryColor(
+                        categoryLabel
+                      )}`}
+                    >
+                      {categoryLabel}
+                    </Badge>
+                    {isSharedStock && (
+                      <Badge
+                        variant="secondary"
+                        className="text-[10px] font-black uppercase tracking-widest"
+                      >
+                        Stock compartido
+                      </Badge>
+                    )}
+                  </div>
                 </div>
               </div>
               <div className="text-right flex flex-col items-end">
@@ -681,52 +1300,167 @@ export function InventoryModule() {
                     status
                   )}`}
                 >
-                  {item.stock}
+                  {formattedStockQuantity}
                 </div>
                 <div className="text-[10px] text-muted-foreground uppercase font-bold tracking-tighter mt-1">
-                  {item.unit || "unidades"} disponibles
+                  {unitLabel} disponibles
                 </div>
               </div>
             </div>
 
-            <div className="space-y-1.5 mt-4">
-              <Progress
-                value={progressValue}
-                className={`h-2 ${
-                  status === "low" ? "bg-red-100" : "bg-secondary"
-                }`}
-              />
-              <div className="flex justify-between text-[10px] text-muted-foreground font-black uppercase tracking-wider">
-                <span className={status === "low" ? "text-red-500" : ""}>
-                  Mín: {item.minStock || 0}
+            <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
+              {isSharedStock ? (
+                <div className="inline-flex items-center gap-1 text-muted-foreground">
+                  <Link2 className="h-3.5 w-3.5" />
+                  <span>{linkedProductsCount} productos vinculados</span>
+                </div>
+              ) : (
+                <div className="inline-flex items-center gap-1 text-muted-foreground">
+                  <Package className="h-3.5 w-3.5" />
+                  <span>Stock propio</span>
+                </div>
+              )}
+              {isSharedStock && linkedProductsCount > 0 && (
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      className="h-7 gap-1 px-2 text-[11px]"
+                    >
+                      <Info className="h-3 w-3" />
+                      Ver vinculados
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-80 p-3" align="start">
+                    <p className="mb-2 text-xs font-semibold text-muted-foreground">
+                      Productos vinculados al mismo stock base
+                    </p>
+                    <div className="space-y-2">
+                      {linkedProducts.map((linked) => (
+                        <div
+                          key={linked.id}
+                          className="flex items-center justify-between rounded-md border px-2 py-1.5 text-xs"
+                        >
+                          <div className="min-w-0">
+                            <p className="truncate font-medium">
+                              {linked.name}
+                            </p>
+                            <p className="truncate text-muted-foreground">
+                              {linked.sku ? `SKU ${linked.sku}` : linked.id}
+                            </p>
+                          </div>
+                          <div className="ml-3 flex items-center gap-1">
+                            {linked.isBase && (
+                              <Badge variant="outline" className="text-[10px]">
+                                Base
+                              </Badge>
+                            )}
+                            <span className="text-muted-foreground">
+                              {formatInventoryQuantity(
+                                linked.stockConsumptionQuantity ?? 0,
+                                linked.stockBaseUnit,
+                                {
+                                  precise: true,
+                                }
+                              )}{" "}
+                              {toDisplayMeasurementUnit(linked.stockBaseUnit)}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              )}
+            </div>
+
+            <p className="mb-3 text-xs text-muted-foreground">
+              Consume{" "}
+              <span className="font-semibold text-foreground">
+                {formattedConsumptionQuantity}{" "}
+                {consumptionLabel}
+              </span>{" "}
+              por unidad vendida
+            </p>
+            {isSharedStock && formattedBaseQuantity && (
+              <p className="mb-3 text-xs text-muted-foreground">
+                Stock base compartido real:{" "}
+                <span className="font-semibold text-foreground">
+                  {formattedBaseQuantity} {consumptionLabel}
                 </span>
-                <span>Capacidad: {item.maxStock || 100}</span>
+                . Los productos vinculados descuentan de este mismo saldo.
+              </p>
+            )}
+
+            <div className="space-y-1.5 mt-4">
+              {progressValue !== null ? (
+                <Progress
+                  value={progressValue}
+                  className={`h-2 ${
+                    status === "low" || status === "out"
+                      ? "bg-red-100"
+                      : "bg-secondary"
+                  }`}
+                />
+              ) : (
+                <div className="h-2 rounded-full bg-secondary" />
+              )}
+              <div className="flex justify-between text-[10px] text-muted-foreground font-black uppercase tracking-wider">
+                <span
+                  className={
+                    status === "low" || status === "out" ? "text-red-500" : ""
+                  }
+                >
+                  Min: {formattedMinStock} {unitLabel}
+                </span>
+                <span>
+                  Capacidad:{" "}
+                  {maxStock !== null
+                    ? `${formattedMaxStock} ${unitLabel}`
+                    : formattedMaxStock}
+                </span>
               </div>
             </div>
           </div>
 
-          {/* Pricing & Valorization */}
           <div className="hidden lg:flex flex-col items-end justify-center px-8 border-l border-dashed min-w-[180px]">
             <div className="flex flex-col items-end">
               <span className="text-[10px] text-muted-foreground font-bold uppercase tracking-widest">
-                Valorización
+                Valorizacion
               </span>
               <span className="text-xl font-black text-primary">
                 ${inventoryValue.toLocaleString()}
               </span>
               <span className="text-[10px] text-muted-foreground font-medium italic mt-0.5">
-                (Calc. a ${wholesaleUnitPrice.toLocaleString()}/u mayorista)
+                (Calc. a ${wholesaleUnitPrice.toLocaleString()}/{unitLabel} mayorista)
               </span>
             </div>
           </div>
 
-          {/* New Control Flow */}
           <div className="flex items-center gap-3 w-full md:w-auto md:pl-4 border-t md:border-t-0 md:border-l pt-4 md:pt-0">
             <AdjustStockDialog
-              item={item}
+              item={adjustDialogItem}
               branches={branches}
               onSubmitMovement={handleMovementSubmit}
             />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              className="h-10 px-4 font-bold gap-2"
+              onClick={() =>
+                setStockDetailTarget({
+                  productId: item.productId,
+                  productName: itemName,
+                  item,
+                })
+              }
+            >
+              <Info className="h-4 w-4" />
+              Detalle
+            </Button>
           </div>
         </div>
       </Card>
@@ -746,8 +1480,8 @@ export function InventoryModule() {
           <p className="text-xs text-muted-foreground">
             Sucursal activa:{" "}
             <span className="font-semibold text-foreground">
-              {branches.find((branch) => branch.id === effectiveBranchId)?.name ??
-                "Sin sucursal"}
+              {branches.find((branch) => branch.id === effectiveBranchId)
+                ?.name ?? "Sin sucursal"}
             </span>
           </p>
         </div>
@@ -800,6 +1534,9 @@ export function InventoryModule() {
                 <p className="text-3xl font-bold mt-1">
                   ${inventoryValueKpi.toLocaleString()}
                 </p>
+                <span className="text-xs text-muted-foreground">
+                  Valor en Precio de Venta Mayorista
+                </span>
               </div>
               <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
                 <TrendingUp className="h-6 w-6 text-green-500" />
@@ -828,15 +1565,15 @@ export function InventoryModule() {
       </div>
 
       {lowStockCountKpi > 0 && (
-        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex items-start gap-4 animate-in fade-in slide-in-from-top-4 duration-500">
+        <div className="bg-red-50 border border-red-200 rounded-xl p-4 flex flex-col gap-4 animate-in fade-in slide-in-from-top-4 duration-500 sm:flex-row sm:items-start">
           <div className="bg-red-500 p-2 rounded-lg">
             <AlertTriangle className="h-5 w-5 text-white" />
           </div>
           <div className="flex-1">
             <h4 className="text-red-900 font-bold">Resumen de Reposición</h4>
             <p className="text-red-700 text-sm">
-              Hay {lowStockCountKpi} productos con stock crítico. Se
-              recomienda revisar:
+              Hay {lowStockCountKpi} productos con stock crítico. Se recomienda
+              revisar:
               <span className="font-bold ml-1">
                 {lowStockNamesPreview.length > 0
                   ? lowStockNamesPreview.join(", ")
@@ -847,7 +1584,191 @@ export function InventoryModule() {
               </span>
             </p>
           </div>
+          <Button
+            asChild
+            size="sm"
+            variant="outline"
+            className="border-red-200 bg-white text-red-700 hover:bg-red-100 hover:text-red-900 sm:self-center"
+          >
+            <Link href="/reports?tab=stock#low-stock-list">Ver más</Link>
+          </Button>
         </div>
+      )}
+
+      {lowStockRows.length > 0 && (
+        // <div className="grid gap-4 lg:grid-cols-[0.85fr_1.15fr]">
+        //   <Card className="border-red-200 shadow-sm">
+        //     <CardHeader className="space-y-3">
+        //       <div className="flex items-center justify-between gap-3">
+        //         <div>
+        //           <CardTitle className="text-base">Alertas de stock</CardTitle>
+        //           <p className="text-sm text-muted-foreground">
+        //             Prioriza primero los articulos agotados.
+        //           </p>
+        //         </div>
+        //         <Button
+        //           type="button"
+        //           variant="destructive"
+        //           onClick={() =>
+        //             criticalTableRef.current?.scrollIntoView({
+        //               behavior: "smooth",
+        //               block: "start",
+        //             })
+        //           }
+        //         >
+        //           Ver tabla critica
+        //         </Button>
+        //       </div>
+        //     </CardHeader>
+        //     <CardContent className="space-y-3">
+        //       <div className="rounded-lg border border-red-200 bg-red-50/80 p-4">
+        //         <p className="text-xs font-semibold uppercase tracking-wide text-red-700">
+        //           Sin stock
+        //         </p>
+        //         <p className="mt-1 text-3xl font-black text-red-600">
+        //           {outOfStockRows.length.toLocaleString()}
+        //         </p>
+        //         <p className="text-xs text-red-700">
+        //           Productos sin unidades disponibles para vender.
+        //         </p>
+        //       </div>
+        //       <div className="rounded-lg border border-amber-200 bg-amber-50/80 p-4">
+        //         <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+        //           Stock critico
+        //         </p>
+        //         <p className="mt-1 text-3xl font-black text-amber-600">
+        //           {criticalStockRows.length.toLocaleString()}
+        //         </p>
+        //         <p className="text-xs text-amber-700">
+        //           Productos con stock bajo, pero todavia disponibles.
+        //         </p>
+        //       </div>
+        //     </CardContent>
+        //   </Card>
+
+        //   {/* <Card ref={criticalTableRef} className="border-red-200 shadow-sm">
+        //     <CardHeader className="space-y-3">
+        //       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        //         <div>
+        //           <CardTitle className="text-base">
+        //             Tabla de stock critico
+        //           </CardTitle>
+        //           <p className="text-sm text-muted-foreground">
+        //             Lista directa para reponer articulos con faltante.
+        //           </p>
+        //         </div>
+        //         <Badge className="w-fit bg-red-100 text-red-800 hover:bg-red-100">
+        //           {lowStockRows.length} articulos en alerta
+        //         </Badge>
+        //       </div>
+        //     </CardHeader>
+        //     <CardContent>
+        //       <div className="overflow-hidden rounded-xl border">
+        //         <div className="overflow-x-auto">
+        //           <table className="w-full text-sm">
+        //             <thead className="bg-muted/50">
+        //               <tr>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Producto
+        //                 </th>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Stock
+        //                 </th>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Minimo
+        //                 </th>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Faltante
+        //                 </th>
+        //                 <th className="px-4 py-3 text-left font-medium">
+        //                   Estado
+        //                 </th>
+        //                 <th className="px-4 py-3 text-right font-medium">
+        //                   Acciones
+        //                 </th>
+        //               </tr>
+        //             </thead>
+        //             <tbody className="divide-y">
+        //               {lowStockRows.map((row) => {
+        //                 const linkedInventoryItem =
+        //                   inventoryByProductId.get(row.productId) ?? null;
+        //                 const isOutOfStock =
+        //                   Number(row.stock ?? 0) <= Number.EPSILON;
+
+        //                 return (
+        //                   <tr
+        //                     key={row.productId}
+        //                     className="transition-colors hover:bg-muted/25"
+        //                   >
+        //                     <td className="px-4 py-3">
+        //                       <div>
+        //                         <p className="font-medium">{row.productName}</p>
+        //                         <p className="text-xs text-muted-foreground">
+        //                           {row.category?.name ?? "Sin categoria"}
+        //                         </p>
+        //                       </div>
+        //                     </td>
+        //                     <td className="px-4 py-3 font-semibold">
+        //                       {Number(row.stock ?? 0).toLocaleString("es-AR")}
+        //                     </td>
+        //                     <td className="px-4 py-3">
+        //                       {Number(row.minStock ?? 0).toLocaleString("es-AR")}
+        //                     </td>
+        //                     <td className="px-4 py-3 font-bold text-red-600">
+        //                       {Number(row.shortageQty ?? 0).toLocaleString("es-AR")}
+        //                     </td>
+        //                     <td className="px-4 py-3">
+        //                       <Badge
+        //                         className={
+        //                           isOutOfStock
+        //                             ? "bg-red-100 text-red-800"
+        //                             : "bg-amber-100 text-amber-800"
+        //                         }
+        //                       >
+        //                         {isOutOfStock ? "Sin stock" : "Critico"}
+        //                       </Badge>
+        //                     </td>
+        //                     <td className="px-4 py-3">
+        //                       <div className="flex justify-end gap-2">
+        //                         <Button
+        //                           type="button"
+        //                           size="sm"
+        //                           variant="outline"
+        //                           onClick={() => {
+        //                             setSearchQuery(row.productName);
+        //                             setCurrentPage(1);
+        //                           }}
+        //                         >
+        //                           Filtrar
+        //                         </Button>
+        //                         <Button
+        //                           type="button"
+        //                           size="sm"
+        //                           onClick={() => {
+        //                             if (!linkedInventoryItem) return;
+        //                             setStockDetailTarget({
+        //                               productId: row.productId,
+        //                               productName: row.productName,
+        //                               item: linkedInventoryItem,
+        //                             });
+        //                           }}
+        //                           disabled={!linkedInventoryItem}
+        //                         >
+        //                           Detalle
+        //                         </Button>
+        //                       </div>
+        //                     </td>
+        //                   </tr>
+        //                 );
+        //               })}
+        //             </tbody>
+        //           </table>
+        //         </div>
+        //       </div>
+        //     </CardContent>
+        //   </Card> */}
+        // </div>
+        <div></div>
       )}
 
       <Card>
@@ -919,6 +1840,13 @@ export function InventoryModule() {
           </div>
         </CardHeader>
         <CardContent>
+          {isError && !isLoading && (
+            <p className="mb-4 text-sm text-destructive">
+              {isError instanceof Error
+                ? isError.message
+                : "No se pudo cargar el inventario."}
+            </p>
+          )}
           <div className="flex flex-col gap-4">
             {isLoading ? (
               Array.from({ length: 5 }).map((_, i) => (
@@ -938,8 +1866,8 @@ export function InventoryModule() {
                   </div>
                 </Card>
               ))
-            ) : filteredInventory.length > 0 ? (
-              filteredInventory.map((item: Product) => (
+            ) : visibleInventory.length > 0 ? (
+              visibleInventory.map((item: InventoryRow) => (
                 <InventoryItemCard key={item.id} item={item} />
               ))
             ) : (
@@ -950,10 +1878,10 @@ export function InventoryModule() {
               </div>
             )}
           </div>
-          {!isLoading && inventoryTotal > 0 && (
+          {!isLoading && effectiveInventoryTotal > 0 && (
             <div className="mt-4 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted-foreground">
-                Mostrando {showingFrom}-{showingTo} de {inventoryTotal}{" "}
+                Mostrando {showingFrom}-{showingTo} de {effectiveInventoryTotal}{" "}
                 productos. Pagina {currentPage} de {totalPages}.
               </p>
               <div className="flex items-center gap-2">
@@ -971,7 +1899,7 @@ export function InventoryModule() {
                   size="sm"
                   variant="outline"
                   onClick={() => setCurrentPage((prev) => prev + 1)}
-                  disabled={!hasMore}
+                  disabled={!effectiveHasMore}
                 >
                   Siguiente
                 </Button>
@@ -984,6 +1912,16 @@ export function InventoryModule() {
       <InventoryLotsSection
         branchId={effectiveBranchId}
         categories={categories}
+      />
+      <StockDetailDialog
+        branchId={effectiveBranchId}
+        productId={stockDetailTarget?.productId ?? null}
+        productName={stockDetailTarget?.productName ?? null}
+        fallbackItem={stockDetailTarget?.item ?? null}
+        open={Boolean(stockDetailTarget)}
+        onOpenChange={(open) => {
+          if (!open) setStockDetailTarget(null);
+        }}
       />
     </div>
   );

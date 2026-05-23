@@ -19,11 +19,34 @@ import { useUser } from "@/components/providers/user-provider";
 import { useBranches } from "@/components/providers/branch-provider";
 import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
-import type { CashMovementType, CashSession } from "@/lib/api-types";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
+import {
+  EXPENSE_CATEGORY_OPTIONS,
+  getExpenseCategoryLabel,
+} from "@/lib/expense-categories";
+import {
+  formatDecimalAmountInput,
+  parseDecimalAmountInput,
+} from "@/lib/numeric-input";
+import type {
+  CashMovementType,
+  CashSession,
+  ExpenseCategory,
+  ExpenseContext,
+} from "@/lib/api-types";
 
 const SESSION_POLL_INTERVAL_MS = 8_000;
 const SESSION_HISTORY_DAYS = 60;
-const AUTO_WITHDRAWAL_REASON = "Extraccion de turno para cierre";
+const PURCHASE_WITH_CASH = "PURCHASE_WITH_CASH" as const;
+type CashMovementMode = CashMovementType | typeof PURCHASE_WITH_CASH;
+const EXPENSE_CONTEXT_OPTIONS: Array<{
+  value: ExpenseContext;
+  label: string;
+}> = [
+  { value: "GENERAL", label: "General" },
+  { value: "RETAIL", label: "Retail" },
+  { value: "WHOLESALE", label: "Wholesale" },
+];
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -63,10 +86,15 @@ export function CashModule() {
   const [isSaving, setIsSaving] = useState(false);
 
   const [openingFloat, setOpeningFloat] = useState("");
-  const [movementType, setMovementType] = useState<CashMovementType>("IN");
+  const [movementType, setMovementType] = useState<CashMovementMode>("IN");
   const [movementReason, setMovementReason] = useState("");
   const [movementAmount, setMovementAmount] = useState("");
-  const [amountToLeave, setAmountToLeave] = useState("");
+  const [purchaseExpenseCategory, setPurchaseExpenseCategory] = useState<
+    ExpenseCategory | ""
+  >("");
+  const [purchaseExpenseContext, setPurchaseExpenseContext] =
+    useState<ExpenseContext>("GENERAL");
+  const [countedCashInput, setCountedCashInput] = useState("");
   const [closeNotes, setCloseNotes] = useState("");
 
   const currentSessionValidatorsRef = useRef<{
@@ -89,7 +117,7 @@ export function CashModule() {
         };
         setCashSession(null);
         if (options?.syncAmountToLeave) {
-          setAmountToLeave("");
+          setCountedCashInput("");
         }
         return;
       }
@@ -121,7 +149,7 @@ export function CashModule() {
         if (options?.syncAmountToLeave) {
           const nextExpected = response.session?.expectedCash;
           if (nextExpected === undefined || nextExpected === null) {
-            setAmountToLeave("");
+            setCountedCashInput("");
           }
         }
       } catch (error: any) {
@@ -129,9 +157,11 @@ export function CashModule() {
           setCashSession(null);
           toast({
             variant: "destructive",
-            title: "Error de caja",
-            description:
-              error?.message || "No se pudo obtener el estado actual de caja.",
+            title: "No pudimos actualizar el estado de caja",
+            description: getUserFacingErrorMessage(
+              error,
+              "Intenta nuevamente en unos segundos."
+            ),
           });
         }
       } finally {
@@ -212,8 +242,8 @@ export function CashModule() {
   );
 
   const handleOpenCash = async () => {
-    const opening = Number(openingFloat);
-    if (!Number.isFinite(opening)) {
+    const opening = parseDecimalAmountInput(openingFloat);
+    if (!openingFloat.trim()) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
@@ -243,7 +273,7 @@ export function CashModule() {
 
       toast({
         title: "Caja abierta",
-        description: "Sesion abierta correctamente.",
+        description: "La caja ya esta lista para registrar movimientos.",
       });
     } catch (error: any) {
       const message = String(error?.message ?? "");
@@ -252,12 +282,15 @@ export function CashModule() {
       }
       toast({
         variant: "destructive",
-        title: "Error al abrir caja",
+        title: "No pudimos abrir la caja",
         description: message
           .toLowerCase()
           .includes("already an open cash session")
-          ? "Ya existe una sesion de caja abierta para esta sucursal."
-          : error?.message || "No se pudo abrir caja.",
+          ? "Ya hay una caja abierta en esta sucursal."
+          : getUserFacingErrorMessage(
+              error,
+              "Revisa el monto inicial e intenta nuevamente."
+            ),
       });
     } finally {
       setIsSaving(false);
@@ -267,9 +300,9 @@ export function CashModule() {
   const handleAddMovement = async () => {
     if (!cashSession) return;
 
-    const amount = Number(movementAmount);
+    const amount = parseDecimalAmountInput(movementAmount);
     const reason = movementReason.trim();
-    if (!Number.isFinite(amount) || amount < 0.01) {
+    if (!movementAmount.trim() || !Number.isFinite(amount) || amount < 0.01) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
@@ -286,10 +319,120 @@ export function CashModule() {
       return;
     }
 
+    if (movementType === PURCHASE_WITH_CASH) {
+      if (!branchId) {
+        toast({
+          variant: "destructive",
+          title: "Sucursal requerida",
+          description: "Selecciona una sucursal activa antes de registrar la compra.",
+        });
+        return;
+      }
+
+      if (!purchaseExpenseCategory) {
+        toast({
+          variant: "destructive",
+          title: "Categoria requerida",
+          description: "Selecciona la categoria del gasto para la compra con caja.",
+        });
+        return;
+      }
+
+      if (amount > expectedCash) {
+        toast({
+          variant: "destructive",
+          title: "Saldo insuficiente",
+          description:
+            "La compra no puede superar el efectivo esperado disponible en caja.",
+        });
+        return;
+      }
+
+      let createdExpenseId: string | null = null;
+      let expenseRolledBack = false;
+
+      try {
+        setIsSaving(true);
+
+        const createdExpense = await backendApi.expenses.create({
+          branchId,
+          amount,
+          category: purchaseExpenseCategory,
+          description: reason,
+          context: purchaseExpenseContext,
+        });
+        createdExpenseId = createdExpense.id;
+
+        const updated = await backendApi.cash.addMovement(cashSession.id, {
+          type: "OUT",
+          reason: `Compra con caja - ${getExpenseCategoryLabel(
+            purchaseExpenseCategory
+          )}: ${reason}`,
+          amount,
+        });
+
+        setCashSession(updated);
+        setMovementAmount("");
+        setMovementReason("");
+        setPurchaseExpenseCategory("");
+        setPurchaseExpenseContext("GENERAL");
+
+        await refreshCashState();
+
+        logEvent(
+          "create",
+          "cash_expense",
+          `Compra con caja por ${formatMoney(amount)} en ${activeBranchName}`,
+          createdExpense.id,
+          {
+            branchId,
+            cashSessionId: cashSession.id,
+            amount,
+            category: purchaseExpenseCategory,
+            context: purchaseExpenseContext,
+            description: reason,
+          }
+        );
+
+        toast({
+          title: "Compra con caja registrada",
+          description: "Descontamos el importe de caja y lo registramos tambien en gastos.",
+        });
+      } catch (error: any) {
+        if (createdExpenseId) {
+          try {
+            await backendApi.expenses.remove(createdExpenseId);
+            expenseRolledBack = true;
+          } catch {
+            expenseRolledBack = false;
+          }
+        }
+
+        toast({
+          variant: "destructive",
+          title: "No pudimos registrar la compra con caja",
+          description: expenseRolledBack
+            ? getUserFacingErrorMessage(
+                error,
+                "No pudimos registrar la salida de caja. El gasto fue revertido automaticamente."
+              )
+            : createdExpenseId
+            ? "La operacion quedo incompleta. Revisa si el gasto o la salida de caja necesitan correccion manual."
+            : getUserFacingErrorMessage(
+                error,
+                "Revisa los datos e intenta nuevamente."
+              ),
+        });
+      } finally {
+        setIsSaving(false);
+      }
+      return;
+    }
+
     try {
       setIsSaving(true);
       const updated = await backendApi.cash.addMovement(cashSession.id, {
-        type: movementType,
+        type: movementType as CashMovementType,
         reason,
         amount,
       });
@@ -297,6 +440,8 @@ export function CashModule() {
       setCashSession(updated);
       setMovementAmount("");
       setMovementReason("");
+      setPurchaseExpenseCategory("");
+      setPurchaseExpenseContext("GENERAL");
 
       await refreshCashState();
 
@@ -305,12 +450,19 @@ export function CashModule() {
           movementType === "OUT"
             ? "Retiro de caja registrado"
             : "Movimiento registrado",
+        description:
+          movementType === "OUT"
+            ? "La salida de dinero quedo registrada correctamente."
+            : "El ingreso a caja quedo registrado correctamente.",
       });
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error en movimiento",
-        description: error?.message || "No se pudo registrar movimiento.",
+        title: "No pudimos registrar el movimiento",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa los datos del movimiento e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSaving(false);
@@ -318,56 +470,46 @@ export function CashModule() {
   };
 
   const expectedCash = Number(cashSession?.expectedCash ?? 0);
-  const amountToLeaveNumber = Number(amountToLeave);
-  const hasValidAmountToLeave =
-    Number.isFinite(amountToLeaveNumber) && amountToLeaveNumber >= 0;
-  const suggestedWithdrawal = hasValidAmountToLeave
-    ? Number((expectedCash - amountToLeaveNumber).toFixed(2))
-    : expectedCash;
+  const countedCashNumber = parseDecimalAmountInput(countedCashInput);
+  const hasValidCountedCash =
+    countedCashInput.trim().length > 0 &&
+    Number.isFinite(countedCashNumber) &&
+    countedCashNumber >= 0;
+  const closeDifferencePreview = hasValidCountedCash
+    ? Number((countedCashNumber - expectedCash).toFixed(2))
+    : 0;
 
-  const handleCloseCash = async () => {
-    if (!cashSession) return;
+  const validateCloseCashInput = () => {
+    if (!cashSession) return false;
 
-    if (!hasValidAmountToLeave) {
+    if (!hasValidCountedCash) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
-        description: "Ingresa un monto a dejar numerico valido.",
+        description: "Ingresa el efectivo contado con un valor numerico valido.",
       });
-      return;
+      return false;
     }
 
-    if (suggestedWithdrawal < 0) {
-      toast({
-        variant: "destructive",
-        title: "Monto no permitido",
-        description:
-          "El monto a dejar no puede ser mayor al efectivo esperado del turno.",
-      });
-      return;
-    }
+    return true;
+  };
+
+  const confirmCloseCash = async () => {
+    if (!cashSession) return;
 
     try {
       setIsSaving(true);
 
-      if (suggestedWithdrawal > 0) {
-        await backendApi.cash.addMovement(cashSession.id, {
-          type: "OUT",
-          reason: AUTO_WITHDRAWAL_REASON,
-          amount: suggestedWithdrawal,
-        });
-      }
-
       const closedSession = await backendApi.cash.closeSession(cashSession.id, {
-        countedCash: amountToLeaveNumber,
+        countedCash: countedCashNumber,
         notes: closeNotes.trim() || undefined,
       });
 
       const expectedAfterClose = Number(
-        closedSession.expectedCash ?? amountToLeaveNumber
+        closedSession.expectedCash ?? countedCashNumber
       );
       const difference = Number(
-        closedSession.difference ?? amountToLeaveNumber - expectedAfterClose
+        closedSession.difference ?? countedCashNumber - expectedAfterClose
       );
 
       logEvent(
@@ -377,11 +519,9 @@ export function CashModule() {
         closedSession.id,
         {
           branchId: closedSession.branchId ?? branchId ?? null,
-          countedCash: amountToLeaveNumber,
+          countedCash: countedCashNumber,
           expectedCash: expectedAfterClose,
           difference,
-          withdrawalOut: suggestedWithdrawal > 0 ? suggestedWithdrawal : 0,
-          amountForNextShift: amountToLeaveNumber,
           notes: closeNotes.trim() || null,
         }
       );
@@ -394,17 +534,25 @@ export function CashModule() {
 
       toast({
         title: "Caja cerrada",
-        description: "Turno cerrado correctamente.",
+        description: "El turno se cerro correctamente y la caja quedo actualizada.",
       });
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error al cerrar caja",
-        description: error?.message || "No se pudo cerrar caja.",
+        title: "No pudimos cerrar la caja",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa el monto contado e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSaving(false);
     }
+  };
+
+  const handleCloseCash = async () => {
+    if (!validateCloseCashInput()) return;
+    await confirmCloseCash();
   };
 
   const withdrawalMovements = useMemo(
@@ -429,15 +577,6 @@ export function CashModule() {
     [withdrawalMovements]
   );
 
-  const displayedCountedCash =
-    cashSession?.countedCash ??
-    (hasValidAmountToLeave ? Number(amountToLeaveNumber) : null);
-  const displayedDifference =
-    cashSession?.difference ??
-    (hasValidAmountToLeave
-      ? Number((amountToLeaveNumber - expectedCash).toFixed(2))
-      : null);
-
   if (!canManageCash) {
     return (
       <Card>
@@ -460,7 +599,7 @@ export function CashModule() {
           Gestion de Caja por Turno
         </h1>
         <p className="text-sm text-muted-foreground">
-          Apertura, movimientos de caja y cierre con extraccion de turno.
+          Apertura, movimientos, compras con caja y cierre con arqueo real.
         </p>
       </div>
 
@@ -504,12 +643,13 @@ export function CashModule() {
               <Label htmlFor="opening-float">Fondo inicial</Label>
               <Input
                 id="opening-float"
-                type="number"
-                step="0.01"
-                min="0"
-                placeholder="0.00"
+                type="text"
+                inputMode="decimal"
+                placeholder="0,00"
                 value={openingFloat}
-                onChange={(event) => setOpeningFloat(event.target.value)}
+                onChange={(event) =>
+                  setOpeningFloat(formatDecimalAmountInput(event.target.value))
+                }
               />
               <Button
                 className="w-full"
@@ -565,7 +705,7 @@ export function CashModule() {
                 </div>
                 <div className="rounded-md border bg-muted/30 p-3">
                   <p className="text-xs text-muted-foreground">
-                    Retiros de caja
+                    Salidas de caja
                   </p>
                   <p className="text-base font-semibold">
                     {formatMoney(cashSession.totals?.movementOut ?? 0)}
@@ -578,7 +718,7 @@ export function CashModule() {
                 <Select
                   value={movementType}
                   onValueChange={(value) =>
-                    setMovementType(value as CashMovementType)
+                    setMovementType(value as CashMovementMode)
                   }
                 >
                   <SelectTrigger>
@@ -587,46 +727,132 @@ export function CashModule() {
                   <SelectContent>
                     <SelectItem value="IN">Ingreso manual</SelectItem>
                     <SelectItem value="OUT">Retiro de caja</SelectItem>
+                    <SelectItem value={PURCHASE_WITH_CASH}>
+                      Compra con dinero en caja
+                    </SelectItem>
                   </SelectContent>
                 </Select>
+                {movementType === PURCHASE_WITH_CASH && (
+                  <>
+                    <Select
+                      value={purchaseExpenseCategory}
+                      onValueChange={(value) =>
+                        setPurchaseExpenseCategory(value as ExpenseCategory)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Categoria del gasto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EXPENSE_CATEGORY_OPTIONS.map((category) => (
+                          <SelectItem key={category.value} value={category.value}>
+                            {category.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    <Select
+                      value={purchaseExpenseContext}
+                      onValueChange={(value) =>
+                        setPurchaseExpenseContext(value as ExpenseContext)
+                      }
+                    >
+                      <SelectTrigger>
+                        <SelectValue placeholder="Contexto del gasto" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {EXPENSE_CONTEXT_OPTIONS.map((contextOption) => (
+                          <SelectItem
+                            key={contextOption.value}
+                            value={contextOption.value}
+                          >
+                            {contextOption.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </>
+                )}
                 <Input
-                  type="number"
-                  step="0.01"
-                  min="0.01"
+                  type="text"
+                  inputMode="decimal"
                   placeholder="Monto"
                   value={movementAmount}
-                  onChange={(event) => setMovementAmount(event.target.value)}
+                  onChange={(event) =>
+                    setMovementAmount(
+                      formatDecimalAmountInput(event.target.value)
+                    )
+                  }
                 />
                 <Input
-                  placeholder="Motivo"
+                  placeholder={
+                    movementType === PURCHASE_WITH_CASH
+                      ? "Descripcion de la compra"
+                      : "Motivo"
+                  }
                   value={movementReason}
                   onChange={(event) => setMovementReason(event.target.value)}
-                  maxLength={120}
+                  maxLength={180}
                 />
+                {movementType === PURCHASE_WITH_CASH && (
+                  <p className="text-xs text-muted-foreground">
+                    Esta opcion registra un gasto y descuenta el importe del efectivo esperado en caja.
+                  </p>
+                )}
                 <Button
                   variant="outline"
                   className="w-full"
                   onClick={handleAddMovement}
                   disabled={isSaving}
                 >
-                  Registrar Movimiento
+                  {movementType === PURCHASE_WITH_CASH
+                    ? "Registrar compra con caja"
+                    : "Registrar Movimiento"}
                 </Button>
               </div>
 
               <div className="space-y-2 rounded-md border p-4">
                 <h3 className="text-sm font-semibold">Cerrar turno</h3>
 
+                <Label htmlFor="counted-cash">Efectivo contado al cierre</Label>
                 <Input
-                  id="amount-to-leave"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  placeholder="0.00"
-                  value={amountToLeave}
-                  onChange={(event) => setAmountToLeave(event.target.value)}
+                  id="counted-cash"
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={countedCashInput}
+                  onChange={(event) =>
+                    setCountedCashInput(
+                      formatDecimalAmountInput(event.target.value)
+                    )
+                  }
                 />
 
-                <Button className="w-full" onClick={handleCloseCash}>
+                <p className="text-xs text-muted-foreground">
+                  Puedes cerrar con menos o mas efectivo que el esperado. La
+                  diferencia se registrara solo como arqueo, sin crear retiros
+                  automaticos.
+                </p>
+
+                {hasValidCountedCash && (
+                  <p className="text-xs text-muted-foreground">
+                    {closeDifferencePreview > 0
+                      ? `Estas cerrando con ${formatMoney(
+                          closeDifferencePreview
+                        )} por encima de lo esperado. Se registrara como diferencia positiva.`
+                      : closeDifferencePreview < 0
+                      ? `Estas cerrando con ${formatMoney(
+                          Math.abs(closeDifferencePreview)
+                        )} por debajo de lo esperado. Se registrara como diferencia negativa.`
+                      : "El cierre coincide exactamente con el efectivo esperado."}
+                  </p>
+                )}
+
+                <Button
+                  className="w-full"
+                  onClick={() => void handleCloseCash()}
+                  disabled={isSaving}
+                >
                   {isSaving && (
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
                   )}
@@ -636,7 +862,7 @@ export function CashModule() {
 
               <div className="space-y-3 rounded-md border p-4 lg:col-span-2">
                 <div className="flex items-center justify-between gap-2">
-                  <h3 className="text-sm font-semibold">Retiros del turno</h3>
+                  <h3 className="text-sm font-semibold">Salidas del turno</h3>
                   <Badge variant="outline">
                     Total: {formatMoney(withdrawalTotal)}
                   </Badge>
@@ -644,7 +870,7 @@ export function CashModule() {
 
                 {withdrawalMovements.length === 0 ? (
                   <p className="text-xs text-muted-foreground">
-                    No hay retiros de caja registrados en este turno.
+                    No hay salidas de caja registradas en este turno.
                   </p>
                 ) : (
                   <div className="max-h-52 space-y-2 overflow-auto pr-1">
@@ -673,6 +899,7 @@ export function CashModule() {
           )}
         </CardContent>
       </Card>
+
     </div>
   );
 }

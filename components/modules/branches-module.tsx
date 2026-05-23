@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -30,6 +30,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { useBranches, Branch } from "@/components/providers/branch-provider";
 import { useToast } from "@/hooks/use-toast";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
   Dialog,
   DialogContent,
@@ -60,7 +61,8 @@ import {
 } from "../ui/select";
 
 export function BranchesModule() {
-  const { branches, addBranch, updateBranch, removeBranch, isLoading } = useBranches();
+  const { branches, addBranch, updateBranch, removeBranch, isLoading } =
+    useBranches();
   const [searchQuery, setSearchQuery] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [editingBranch, setEditingBranch] = useState<Branch | null>(null);
@@ -95,8 +97,11 @@ export function BranchesModule() {
       } catch (error: any) {
         toast({
           variant: "destructive",
-          title: "Error al eliminar",
-          description: error?.message || "No se pudo eliminar la sucursal.",
+          title: "No pudimos eliminar la sucursal",
+          description: getUserFacingErrorMessage(
+            error,
+            "Verifica que la sucursal no tenga informacion asociada e intenta nuevamente."
+          ),
         });
       } finally {
         setIsDeleteDialogOpen(false);
@@ -125,9 +130,19 @@ export function BranchesModule() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error al guardar",
-        description: error?.message || "No se pudo guardar la sucursal.",
+        title: "No pudimos guardar la sucursal",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa la informacion cargada e intenta nuevamente."
+        ),
       });
+    }
+  };
+
+  const handleDialogOpenChange = (open: boolean) => {
+    setIsDialogOpen(open);
+    if (!open) {
+      setEditingBranch(null);
     }
   };
 
@@ -187,7 +202,7 @@ export function BranchesModule() {
 
       <BranchDialog
         open={isDialogOpen}
-        onOpenChange={setIsDialogOpen}
+        onOpenChange={handleDialogOpenChange}
         branch={editingBranch}
         onSave={handleSave}
       />
@@ -297,35 +312,44 @@ interface BranchDialogProps {
   onSave: (branch: Omit<Branch, "id" | "createdAt">) => void;
 }
 
+const BRANCH_FORM_INITIAL_STATE: Omit<Branch, "id" | "createdAt"> = {
+  name: "",
+  address: "",
+  phone: "",
+  email: "",
+  isActive: true,
+  branchType: "STORE",
+  code: "",
+};
+
 function BranchDialog({
   open,
   onOpenChange,
   branch,
   onSave,
 }: BranchDialogProps) {
-  const [formData, setFormData] = useState<Omit<Branch, "id" | "createdAt">>({
-    name: "",
-    address: "",
-    phone: "",
-    email: "",
-    isActive: false,
-    branchType: "STORE",
-    code: "",
-  });
+  const [formData, setFormData] = useState<Omit<Branch, "id" | "createdAt">>(
+    BRANCH_FORM_INITIAL_STATE
+  );
 
-  useState(() => {
+  useEffect(() => {
+    if (!open) return;
+
     if (branch) {
       setFormData({
         code: branch.code,
         name: branch.name,
         address: branch.address,
-        phone: branch.phone,
-        email: branch.email,
+        phone: branch.phone ?? "",
+        email: branch.email ?? "",
         isActive: branch.isActive,
         branchType: branch.branchType,
       });
+      return;
     }
-  });
+
+    setFormData(BRANCH_FORM_INITIAL_STATE);
+  }, [branch, open]);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -388,10 +412,13 @@ function BranchDialog({
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="branchType">Tipo de Sucursal</Label>
-              <Select
-                value={formData.branchType}
-                onValueChange={(value) =>
-                  setFormData({ ...formData, branchType: value as Branch["branchType"] })
+                <Select
+                  value={formData.branchType}
+                  onValueChange={(value) =>
+                    setFormData({
+                      ...formData,
+                    branchType: value as Branch["branchType"],
+                  })
                 }
               >
                 <SelectTrigger id="branchType" className="w-full">
@@ -405,18 +432,35 @@ function BranchDialog({
               </Select>
             </div>
             <div className="space-y-2">
-              <Label htmlFor="phone">Activa?</Label>
-              <Switch
-                id="isActive"
-                checked={formData.isActive}
-                onCheckedChange={(checked) =>
-                  setFormData({ ...formData, isActive: checked })
-                }
-              />
+              <Label htmlFor="isActive">Estado</Label>
+              <div className="flex items-center justify-between rounded-md border px-3 py-2">
+                <div className="space-y-1">
+                  <Badge
+                    variant={formData.isActive ? "default" : "secondary"}
+                    className={
+                      formData.isActive ? "bg-emerald-600 text-white" : ""
+                    }
+                  >
+                    {formData.isActive ? "Activa" : "Inactiva"}
+                  </Badge>
+                  <p className="text-xs text-muted-foreground">
+                    {formData.isActive
+                      ? "Disponible para operar"
+                      : "No disponible para operar"}
+                  </p>
+                </div>
+                <Switch
+                  id="isActive"
+                  checked={formData.isActive}
+                  className="data-[state=checked]:bg-emerald-600 data-[state=unchecked]:bg-slate-300"
+                  onCheckedChange={(checked) =>
+                    setFormData({ ...formData, isActive: checked })
+                  }
+                />
+              </div>
             </div>
           </div>
 
-          <p>Opcional *</p>
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="phone">Teléfono</Label>

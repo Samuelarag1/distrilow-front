@@ -30,6 +30,11 @@ import { useToast } from "@/hooks/use-toast";
 import { Product } from "@/lib/products";
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import type { ProductSaveInput } from "@/components/products/hooks/useProductSave";
+import { ProductStockLinkForm } from "@/components/products/components/ProductStockLinkForm";
+import {
+  mapProductStockLinkingBackendError,
+  useProductStockLinking,
+} from "@/components/products/hooks/useProductStockLinking";
 
 // IMPORTANTE: usÃ¡ el enum que ya tenÃ©s (ajustÃ¡ el path a tu estructura real)
 import { MeasurementType } from "@/lib/measurement-type";
@@ -60,6 +65,7 @@ type ProductDialogFormState = {
   isWeighable: boolean;
   name: string;
   description: string;
+  wholesaleMinQuantity: OptionalNumericInput;
   costPrice: OptionalNumericInput;
   wholesalePrice: OptionalNumericInput;
   retailPrice: OptionalNumericInput;
@@ -69,6 +75,10 @@ type ProductDialogFormState = {
   categoryId: string;
   brand: string;
   trackStock: boolean;
+  useSharedStock: boolean;
+  stockBaseProductId: string;
+  stockConsumptionQuantity: OptionalNumericInput;
+  stockBaseUnit: MeasurementType;
   allowNegativeStock: boolean;
   measurementType: MeasurementType;
   isActive: boolean;
@@ -118,6 +128,7 @@ export function ProductDialog({
     isWeighable: false,
     name: "",
     description: "",
+    wholesaleMinQuantity: "",
     costPrice: 0,
     wholesalePrice: 0,
     retailPrice: 0,
@@ -127,6 +138,10 @@ export function ProductDialog({
     categoryId: "",
     brand: "",
     trackStock: true,
+    useSharedStock: false,
+    stockBaseProductId: "__self__",
+    stockConsumptionQuantity: 1,
+    stockBaseUnit: MeasurementType.UNIT as MeasurementType,
     allowNegativeStock: false,
     measurementType: MeasurementType.UNIT as MeasurementType,
     // estado: en tu entity esActive boolean
@@ -137,12 +152,17 @@ export function ProductDialog({
   const [localImagePreview, setLocalImagePreview] = useState<string | null>(
     null
   );
+  const [baseSearchQuery, setBaseSearchQuery] = useState("");
 
   // Si tu Product del front NO tiene algunos campos (sku, etc), ajustÃ¡ el mapeo.
   useEffect(() => {
     if (!open) return;
 
     if (product) {
+      const currentProductId = String((product as any).id ?? "").trim();
+      const currentBaseId = String(
+        (product as any).stockBaseProductId ?? ""
+      ).trim();
       const productCategoryId =
         (product as any).categoryId ?? (product as any).category?.id ?? "";
 
@@ -153,6 +173,11 @@ export function ProductDialog({
         isWeighable: Boolean((product as any).isWeighable ?? false),
         name: product.name ?? "",
         description: product.description ?? "",
+        wholesaleMinQuantity:
+          (product as any).wholesaleMinQuantity === null ||
+          (product as any).wholesaleMinQuantity === undefined
+            ? ""
+            : Number((product as any).wholesaleMinQuantity),
         costPrice: Number((product as any).costPrice ?? 0),
         wholesalePrice: Number(product.wholesalePrice ?? 0),
         retailPrice: Number((product as any).retailPrice ?? 0),
@@ -163,10 +188,19 @@ export function ProductDialog({
         costReviewPending: Boolean((product as any).costReviewPending ?? false),
         categoryId: productCategoryId,
         brand: (product as any).brand ?? "",
-        trackStock:
-          typeof (product as any).trackStock === "boolean"
-            ? (product as any).trackStock
-            : true,
+        trackStock: true,
+        useSharedStock: Boolean(
+          currentProductId &&
+            currentBaseId &&
+            currentBaseId !== currentProductId
+        ),
+        stockBaseProductId: currentBaseId || currentProductId || "__self__",
+        stockConsumptionQuantity: Number(
+          (product as any).stockConsumptionQuantity ?? 1
+        ),
+        stockBaseUnit: ((product as any).stockBaseUnit ??
+          (product as any).measurementType ??
+          MeasurementType.UNIT) as MeasurementType,
         allowNegativeStock: Boolean(
           (product as any).allowNegativeStock ?? false
         ),
@@ -177,6 +211,7 @@ export function ProductDialog({
       });
       setImageFile(null);
       setLocalImagePreview(null);
+      setBaseSearchQuery("");
     } else {
       setFormData({
         sku: "",
@@ -185,6 +220,7 @@ export function ProductDialog({
         isWeighable: false,
         name: "",
         description: "",
+        wholesaleMinQuantity: "",
         costPrice: 0,
         wholesalePrice: 0,
         retailPrice: 0,
@@ -194,6 +230,10 @@ export function ProductDialog({
         categoryId: "",
         brand: "",
         trackStock: true,
+        useSharedStock: false,
+        stockBaseProductId: "__self__",
+        stockConsumptionQuantity: 1,
+        stockBaseUnit: MeasurementType.UNIT as MeasurementType,
         allowNegativeStock: false,
         measurementType: MeasurementType.UNIT,
         isActive: true,
@@ -201,6 +241,7 @@ export function ProductDialog({
       });
       setImageFile(null);
       setLocalImagePreview(null);
+      setBaseSearchQuery("");
     }
   }, [product, open]);
 
@@ -245,6 +286,10 @@ export function ProductDialog({
     const costPrice = Number(formData.costPrice);
     const wholesalePrice = Number(formData.wholesalePrice);
     const retailPrice = Number(formData.retailPrice);
+    const wholesaleMinQuantity =
+      formData.wholesaleMinQuantity === ""
+        ? undefined
+        : Number(formData.wholesaleMinQuantity);
     const normalizedPluCode = formData.pluCode.trim();
 
     if (
@@ -255,6 +300,25 @@ export function ProductDialog({
       return;
     }
     if (costPrice < 0 || wholesalePrice < 0 || retailPrice < 0) return;
+    if (
+      wholesaleMinQuantity !== undefined &&
+      (!Number.isFinite(wholesaleMinQuantity) || wholesaleMinQuantity <= 0)
+    ) {
+      return;
+    }
+
+    let stockPayload;
+    try {
+      stockPayload = await stockLinking.buildPayload();
+    } catch (error) {
+      toast({
+        variant: "destructive",
+        title: "No se pudo validar el stock",
+        description: mapProductStockLinkingBackendError(error),
+      });
+      return;
+    }
+    if (!stockPayload) return;
 
     // si querÃ©s autocalcular margen al guardar:
     const marginPercent = computeMargin(costPrice, retailPrice);
@@ -266,6 +330,7 @@ export function ProductDialog({
       isWeighable: formData.isWeighable,
       name: formData.name.trim(),
       description: formData.description?.trim() || undefined,
+      wholesaleMinQuantity,
       costPrice,
       wholesalePrice,
       retailPrice,
@@ -274,7 +339,10 @@ export function ProductDialog({
       costReviewPending: formData.costReviewPending,
       categoryId: formData.categoryId?.trim() || undefined,
       brand: formData.brand?.trim() || undefined,
-      trackStock: formData.trackStock,
+      trackStock: true,
+      stockBaseProductId: stockPayload.stockBaseProductId,
+      stockConsumptionQuantity: stockPayload.stockConsumptionQuantity,
+      stockBaseUnit: stockPayload.stockBaseUnit as MeasurementType | undefined,
       allowNegativeStock: formData.allowNegativeStock,
       measurementType: formData.measurementType,
 
@@ -287,6 +355,18 @@ export function ProductDialog({
   const disableForm = isSaving;
   const previewSrc =
     localImagePreview || formData.imageUrl || resolveProductImageUrl(product);
+  const stockLinking = useProductStockLinking({
+    product,
+    activeBranchId,
+    values: {
+      trackStock: formData.trackStock,
+      useSharedStock: formData.useSharedStock,
+      stockBaseProductId: formData.stockBaseProductId,
+      stockConsumptionQuantity: formData.stockConsumptionQuantity,
+      stockBaseUnit: formData.stockBaseUnit,
+    },
+    baseSearchQuery,
+  });
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -384,6 +464,25 @@ export function ProductDialog({
                 </div>
               </div>
               <div className="space-y-2">
+                <Label>Cantidad minima mayorista</Label>
+                <Input
+                  type="number"
+                  step="0.001"
+                  min="0.001"
+                  placeholder="Ej. 6"
+                  value={formData.wholesaleMinQuantity}
+                  onChange={(e) =>
+                    setFormData((p) => ({
+                      ...p,
+                      wholesaleMinQuantity: parseOptionalNumberInput(
+                        e.target.value
+                      ),
+                    }))
+                  }
+                  disabled={disableForm}
+                />
+              </div>
+              <div className="space-y-2">
                 <Label>Precio Minorista *</Label>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground">
@@ -473,6 +572,72 @@ export function ProductDialog({
               </div>
             </div>
 
+            <ProductStockLinkForm
+              trackStock
+              onTrackStockChange={() => undefined}
+              useSharedStock={formData.useSharedStock}
+              onUseSharedStockChange={(checked) => {
+                setFormData((previous) => {
+                  const currentProductId = String(
+                    (product as any)?.id ?? ""
+                  ).trim();
+                  const currentBaseId = String(
+                    previous.stockBaseProductId ?? ""
+                  ).trim();
+                  const shouldResetBase =
+                    !currentBaseId ||
+                    currentBaseId === "__self__" ||
+                    (currentProductId && currentBaseId === currentProductId);
+                  return {
+                    ...previous,
+                    useSharedStock: checked,
+                    stockBaseProductId: checked
+                      ? shouldResetBase
+                        ? ""
+                        : currentBaseId
+                      : "__self__",
+                    stockConsumptionQuantity: checked
+                      ? previous.stockConsumptionQuantity
+                      : 1,
+                  };
+                });
+                if (!checked) setBaseSearchQuery("");
+              }}
+              stockBaseProductId={formData.stockBaseProductId}
+              onStockBaseProductIdChange={(value) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  stockBaseProductId: value,
+                }))
+              }
+              stockConsumptionQuantity={formData.stockConsumptionQuantity}
+              onStockConsumptionQuantityChange={(value) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  stockConsumptionQuantity: value,
+                }))
+              }
+              stockBaseUnit={formData.stockBaseUnit}
+              onStockBaseUnitChange={(value) =>
+                setFormData((previous) => ({
+                  ...previous,
+                  stockBaseUnit: value as MeasurementType,
+                }))
+              }
+              stockMode={stockLinking.stockMode}
+              consumptionPreview={stockLinking.consumptionPreview}
+              baseSearchQuery={baseSearchQuery}
+              onBaseSearchQueryChange={setBaseSearchQuery}
+              selectedBaseLabel={stockLinking.selectedBaseLabel}
+              baseOptions={stockLinking.baseOptions}
+              isCheckingRelation={stockLinking.isCheckingRelation}
+              isLoadingBaseOptions={stockLinking.isLoadingBaseOptions}
+              isBlockingModalOpen={stockLinking.isBlockingModalOpen}
+              blockingMessage={stockLinking.blockingMessage}
+              onCloseBlockingModal={stockLinking.closeBlockingModal}
+              disabled={disableForm}
+            />
+
             {/* Flags */}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">
@@ -494,15 +659,12 @@ export function ProductDialog({
                 <div className="flex flex-col gap-1">
                   <Label className="font-bold">Control de stock</Label>
                   <span className="text-xs text-muted-foreground">
-                    Activa control de inventario para este producto
+                    Siempre activo para este producto
                   </span>
                 </div>
                 <Switch
-                  checked={formData.trackStock}
-                  onCheckedChange={(checked) =>
-                    setFormData((p) => ({ ...p, trackStock: checked }))
-                  }
-                  disabled={disableForm}
+                  checked
+                  disabled
                 />
               </div>
               <div className="flex items-center justify-between p-4 bg-muted/50 rounded-lg border border-dashed">

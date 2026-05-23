@@ -27,20 +27,13 @@ export interface InventoryItem {
 }
 
 export type ExpenseCategoryKnown =
-  | "RENT"
-  | "SERVICES"
+  | "RENT"|"SERVICES"
   | "SALARIES"
-  | "SUPPLIES"
   | "MARKETING"
-  | "MAINTENANCE"
-  | "TAXES"
   | "LUZ"
   | "DESCARTABLES"
   | "LIMPIEZA"
-  | "BOLSAS"
   | "DESINFECCION"
-  | "NAFTA"
-  | "MONOTRIBUTO"
   | "VEHICULO_PARTICULAR"
   | "OTHER";
 export type ExpenseCategory = ExpenseCategoryKnown;
@@ -51,6 +44,7 @@ export type AnalyticsMetric = "revenue" | "count" | "avgTicket" | "profit";
 export type SnapshotPeriod = "monthly" | "quarterly" | "semiannual" | "annual";
 export type SaleChargeStatus = "PENDING" | "PARTIALLY_PAID" | "PAID";
 export type SaleLifecycleStatus = "ACTIVE" | "CANCELLED";
+export type SalePaymentType = "CASH" | "TRANSFER" | "MIXED" | "OTHER";
 export type PricingMode = "AUTO" | "MANUAL";
 export type PriceType = "RETAIL" | "WHOLESALE";
 export type PaymentMethod =
@@ -259,6 +253,9 @@ export interface Product {
   branchId?: string | null;
   brand?: string | null;
   trackStock?: boolean;
+  stockBaseProductId?: string | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
   allowNegativeStock?: boolean;
   imageUrl?: string | null;
   measurementType: MeasurementType;
@@ -292,6 +289,9 @@ export interface CreateProductRequest {
   branchId?: string;
   brand?: string;
   trackStock?: boolean;
+  stockBaseProductId?: string;
+  stockConsumptionQuantity?: number;
+  stockBaseUnit?: MeasurementType;
   allowNegativeStock?: boolean;
   imageUrl?: string;
   measurementType: MeasurementType;
@@ -397,10 +397,48 @@ export interface Stock {
   id: string;
   branchId: string;
   productId: string;
+  stockProductId?: string | null;
   quantity: number;
+  baseQuantity?: number | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  sharedStock?: StockSharedRelation | null;
   averageCost: number;
   createdAt?: string;
   updatedAt?: string;
+}
+
+export interface StockSharedProduct {
+  id: string;
+  name: string;
+  sku?: string | null;
+  barcode?: string | null;
+  pluCode?: string | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  isBase?: boolean;
+}
+
+export interface StockSharedRelation {
+  stockProductId?: string | null;
+  isShared: boolean;
+  linkedProductsCount: number;
+  linkedProducts: StockSharedProduct[];
+}
+
+export interface StockListItem extends Stock {
+  name?: string | null;
+  product?: Partial<ProductListItem> | null;
+  sharedStock?: StockSharedRelation | null;
+}
+
+export interface StockDetail extends StockListItem {
+  stockProductId?: string | null;
+  quantity: number;
+  baseQuantity?: number | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  sharedStock?: StockSharedRelation | null;
 }
 
 export interface CreateStockRequest {
@@ -411,11 +449,16 @@ export interface CreateStockRequest {
 }
 
 export interface StockQuery {
+  page?: number;
   skip?: number;
   take?: number;
   offset?: number;
   limit?: number;
+  search?: string;
+  name?: string;
+  q?: string;
   productId?: string;
+  categoryId?: string;
   stockStatus?: string;
   lowStockThreshold?: number;
 }
@@ -563,25 +606,44 @@ export interface SalePaymentInput {
 export interface SalePayment extends SalePaymentInput {
   id: string;
   saleId: string;
+  receivedAmount?: number | null;
+  changeAmount?: number | null;
+  cancelledAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
 
-export type SalePaymentBreakdown = Partial<
-  Record<PaymentMethod | string, number>
->;
+export interface SalePaymentBreakdown {
+  paidByMethod?: Record<string, number | null | undefined> | null;
+  byMethod?: Record<string, number | null | undefined> | null;
+  appliedByMethod?: Record<string, number | null | undefined> | null;
+  [key: string]:
+    | number
+    | Record<string, number | null | undefined>
+    | null
+    | undefined;
+}
+
+export interface SalePaymentBreakdownByMethod {
+  cash?: number | null;
+  transfer?: number | null;
+  card?: number | null;
+  other?: number | null;
+}
 
 export interface CreateSaleRequest {
   branchId?: string;
   clientId?: string;
   items: SaleItemInput[];
   payments?: SalePaymentInput[];
+  notes?: string;
 }
 
 export interface SaleSummary {
   id: string;
   branchId: string;
   userId?: string | null;
+  userName?: string | null;
   clientId?: string | null;
   total?: number;
   totalAmount?: number;
@@ -598,6 +660,13 @@ export interface SaleSummary {
   itemsCount?: number;
   itemsQuantity?: number;
   paymentBreakdown?: SalePaymentBreakdown;
+  paymentBreakdownByMethod?: SalePaymentBreakdownByMethod | null;
+  paymentType?: SalePaymentType | null;
+  pendingReason?: string | null;
+  note?: string | null;
+  notes?: string | null;
+  notesRaw?: string | null;
+  originalNotes?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -628,12 +697,22 @@ export type Sale = SaleSummary | SaleDetail;
 export interface SaleListQuery {
   // skip?: number;
   // take?: number;
+  page?: number;
   offset?: number;
   limit?: number;
   search?: string;
+  status?: string;
+  paymentType?: SalePaymentType;
+  paymentStatus?: SaleChargeStatus;
   chargeStatus?: SaleChargeStatus;
+  lifecycleStatus?: SaleLifecycleStatus;
   from?: string;
   to?: string;
+  sort?:
+    | "createdAt:desc"
+    | "createdAt:asc"
+    | "totalAmount:desc"
+    | "totalAmount:asc";
 }
 
 export interface SalePaymentsListQuery {
@@ -649,6 +728,12 @@ export interface SalePaymentsListQuery {
 }
 
 export interface SnapshotMetricsResponse {
+  period?: SnapshotPeriod;
+  scope?: "active" | "all";
+  range?: {
+    from?: string;
+    to?: string;
+  };
   totalRevenue?: number;
   totalIncome?: number;
   totalOrders?: number;
@@ -666,7 +751,7 @@ export interface SnapshotMetricsResponse {
   totalCostOfGoods?: number;
   netProfit?: number;
   averageTicket?: number;
-  growthTrend?: string;
+  growthTrend?: number;
   retentionRate?: string;
   summary?: {
     totalIncome?: number;
@@ -688,8 +773,15 @@ export interface SnapshotMetricsResponse {
     totalSales?: number;
     uniqueClients?: number;
     averageTicket?: number;
-    growthTrend?: string;
+    growthTrend?: number;
   };
+  history?: Array<{
+    period?: string;
+    totalIncome?: number;
+    operationalExpenses?: number;
+    totalCostOfGoods?: number;
+    netProfit?: number;
+  }>;
   [key: string]: unknown;
 }
 
@@ -699,6 +791,7 @@ export interface CreateExpenseRequest {
   amount: number;
   category: ExpenseCategory;
   context?: ExpenseContext;
+  date?: string;
 }
 
 export interface Expense {
@@ -708,6 +801,7 @@ export interface Expense {
   amount: number;
   category: ExpenseCategory;
   context?: ExpenseContext;
+  date?: string;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -875,33 +969,94 @@ export interface AnalyticsSalesQuery {
   metric: AnalyticsMetric;
 }
 
+export interface ReportingSalesSummaryBucket {
+  revenue: number;
+  orders: number;
+  avgTicket: number;
+  revenueGrowthPct?: number;
+  ordersGrowthPct?: number;
+  avgTicketGrowthPct?: number;
+  cashIncome?: number;
+  transferIncome?: number;
+}
+
+export interface ReportingSalesSummaryResponse {
+  timezone?: string;
+  today: ReportingSalesSummaryBucket;
+  yesterday?: ReportingSalesSummaryBucket;
+  rollingMonth: ReportingSalesSummaryBucket;
+  previousRollingMonth?: ReportingSalesSummaryBucket;
+}
+
+export interface ReportingGlobalMetricsByPaymentMethod {
+  cashTotal?: number | null;
+  transferTotal?: number | null;
+  appliedTotal?: number | null;
+  receivedCashTotal?: number | null;
+  receivedTransferTotal?: number | null;
+  receivedTotal?: number | null;
+}
+
+export interface ReportingGlobalMetricsResponse {
+  range?: {
+    from?: string;
+    to?: string;
+  };
+  sales?: {
+    byPaymentMethod?: ReportingGlobalMetricsByPaymentMethod | null;
+  } | null;
+}
+
 export interface ReportsTopProductsQuery {
   branchId?: string;
   from: string;
   to: string;
-  limit?: number;
   offset?: number;
   skip?: number;
   page?: number;
+  limit?: number;
   search?: string;
   q?: string;
   categoryId?: string;
 }
 
+export interface ReportsSalesOverviewQuery {
+  branchId?: string;
+  from: string;
+  to: string;
+  topProductsLimit?: number;
+}
+
+export interface ReportsSoldQuantitySummary {
+  unitsTotal: number;
+  kilosTotal: number;
+}
+
 export interface ReportsTopProductItem {
   productId: string;
-  productName: string;
+  productName: string | null;
   categoryId?: string | null;
   categoryName?: string | null;
+  measurementType?: MeasurementType | null;
+  isWeighable?: boolean;
+  soldQuantity?: ReportsSoldQuantitySummary;
   unitsTotal: number;
   revenueTotal: number;
   unitsRetail: number;
   revenueRetail: number;
+  costRetail?: number;
+  profitRetail?: number;
+  marginRetailPct?: number;
   unitsWholesale: number;
   revenueWholesale: number;
+  costWholesale?: number;
+  profitWholesale?: number;
+  marginWholesalePct?: number;
   costTotal: number;
-  marginTotal: number;
-  marginPct: number;
+  profitTotal?: number;
+  marginTotal?: number;
+  marginTotalPct?: number;
+  marginPct?: number;
 }
 
 export interface ReportsTopProductsResponse {
@@ -915,6 +1070,54 @@ export interface ReportsTopProductsResponse {
   };
   limit: number;
   items: ReportsTopProductItem[];
+  total?: number;
+  hasMore?: boolean;
+  meta?: OffsetPaginationMeta;
+}
+
+export interface ReportsProductMarginsTableQuery {
+  branchId?: string;
+  startDate: string;
+  endDate: string;
+  page?: number;
+  limit?: number;
+  search?: string;
+  categoryId?: string;
+}
+
+export interface ReportsProductMarginsMetrics {
+  quantitySold: number;
+  revenue: number;
+  cost: number;
+  grossProfit: number;
+  grossMarginPercent: number;
+}
+
+export interface ReportsProductMarginsTableItem {
+  productId: string;
+  productName: string;
+  categoryId?: string | null;
+  categoryName?: string | null;
+  retail: ReportsProductMarginsMetrics;
+  wholesale: ReportsProductMarginsMetrics;
+  override: ReportsProductMarginsMetrics;
+  total: ReportsProductMarginsMetrics;
+}
+
+export interface ReportsProductMarginsTableResponse {
+  period: {
+    startDate: string;
+    endDate: string;
+  };
+  filters: {
+    branchId?: string | null;
+    categoryId?: string | null;
+    search?: string | null;
+  };
+  total: number;
+  page: number;
+  limit: number;
+  items: ReportsProductMarginsTableItem[];
 }
 
 export interface ReportsSalesPriceTypesSummaryQuery {
@@ -926,11 +1129,16 @@ export interface ReportsSalesPriceTypesSummaryQuery {
 
 export interface ReportsSalesPriceTypesSummaryItem {
   key: PriceType | string;
+  priceType?: PriceType | string;
   label?: string | null;
+  quantity?: number;
   unitsTotal: number;
+  revenue?: number;
   revenueTotal: number;
   costTotal?: number;
+  cost?: number;
   profitTotal?: number;
+  profit?: number;
   marginPercent?: number;
   itemCount?: number;
   saleCount?: number;
@@ -967,9 +1175,17 @@ export interface ReportsSalesPricingSourcesSummaryQuery {
 
 export interface ReportsSalesPricingSourcesSummaryItem {
   key: PricingMode | string;
+  pricingSource?: PricingMode | string;
   label?: string | null;
+  quantity?: number;
   unitsTotal: number;
+  revenue?: number;
   revenueTotal: number;
+  cost?: number;
+  profit?: number;
+  marginPercent?: number;
+  itemCount?: number;
+  saleCount?: number;
   salesCount?: number;
 }
 
@@ -983,6 +1199,59 @@ export interface ReportsSalesPricingSourcesSummaryResponse {
     categoryId?: string | null;
   };
   items: ReportsSalesPricingSourcesSummaryItem[];
+}
+
+export interface ReportsSalesOverviewResponse {
+  range: {
+    from: string;
+    to: string;
+    timezone?: string;
+  };
+  totals: {
+    revenueTotal: number;
+    costTotal: number;
+    grossMarginTotal: number;
+    grossMarginPercent: number;
+    salesTotal: number;
+    saleItemsTotal: number;
+    distinctProductsSold: number;
+    weightedKgTotal: number;
+    unitItemsTotal: number;
+    byPriceType?: Record<string, unknown>;
+    byPaymentMethod?: Record<string, unknown>;
+  };
+  payments: {
+    cashTotal: number;
+    transferTotal: number;
+    appliedTotal: number;
+    receivedCashTotal: number;
+    receivedTransferTotal: number;
+    receivedTotal: number;
+  };
+  soldQuantity: ReportsSoldQuantitySummary;
+  dailyRevenue: {
+    points: Array<{
+      period: string;
+      value: number;
+    }>;
+    totals: {
+      value: number;
+    };
+  };
+  priceTypes: ReportsSalesPriceTypesSummaryResponse;
+  pricingSources: ReportsSalesPricingSourcesSummaryResponse & {
+    totals?: {
+      unitsTotal: number;
+      revenueTotal: number;
+      costTotal: number;
+      profitTotal: number;
+      marginPercent: number;
+      itemCount: number;
+      saleCount: number;
+    };
+  };
+  topProducts: ReportsTopProductsResponse;
+  warnings: unknown[];
 }
 
 export interface ReportsInventorySummaryQuery {
@@ -1058,6 +1327,57 @@ export interface ReportsInventoryLowStockResponse {
   };
 }
 
+export type InventoryOverviewStockStatus =
+  | "OUT_OF_STOCK"
+  | "LOW"
+  | "NORMAL"
+  | "HIGH";
+
+export interface ReportsInventoryOverviewQuery {
+  branchId?: string;
+  categoryId?: string;
+  search?: string;
+  stockStatus?: InventoryOverviewStockStatus;
+  page?: number;
+  limit?: number;
+  offset?: number;
+  skip?: number;
+  take?: number;
+}
+
+export interface ReportsInventoryOverviewItem {
+  productId: string;
+  productName: string;
+  branchId?: string | null;
+  sourceBranchId?: string | null;
+  categoryId?: string | null;
+  categoryName?: string | null;
+  measurementType?: MeasurementType | null;
+  trackStock?: boolean | null;
+  stock?: number | null;
+  baseQuantity?: number | null;
+  stockProductId?: string | null;
+  stockConsumptionQuantity?: number | null;
+  stockBaseUnit?: MeasurementType | null;
+  minStock?: number | null;
+  maxStock?: number | null;
+  shortageQty?: number | null;
+  stockStatus?: InventoryOverviewStockStatus | null;
+  sharedStock?: StockSharedRelation | null;
+  averageCost?: number | null;
+  retailPrice?: number | null;
+  wholesalePrice?: number | null;
+  updatedAt?: string | null;
+}
+
+export interface ReportsInventoryOverviewResponse {
+  items: ReportsInventoryOverviewItem[];
+  total?: number;
+  page?: number;
+  limit?: number;
+  meta?: OffsetPaginationMeta;
+}
+
 export interface ReportsExpensesProjectionQuery {
   branchId?: string;
   from: string;
@@ -1129,6 +1449,56 @@ export interface ReportsCashMonthlyResponse {
     branchId?: string | null;
   };
   items: ReportsCashMonthlyItem[];
+}
+
+export type CashOverviewGroupBy = "day" | "month" | "session";
+
+export interface ReportsCashOverviewQuery {
+  branchId?: string;
+  from: string;
+  to: string;
+  groupBy: CashOverviewGroupBy;
+}
+
+export interface ReportsCashOverviewSource {
+  unclassifiedOutflow?: number | null;
+  outflowClassificationStatus?: string | null;
+  [key: string]: unknown;
+}
+
+export interface ReportsCashOverviewItem {
+  id?: string | null;
+  key?: string | null;
+  label?: string | null;
+  period?: string | null;
+  date?: string | null;
+  month?: string | null;
+  sessionId?: string | null;
+  cashSales?: number | null;
+  transferSales?: number | null;
+  salesTotal?: number | null;
+  manualIncome?: number | null;
+  cashPurchases?: number | null;
+  withdrawalsGross?: number | null;
+  withdrawalsNet?: number | null;
+  netTotal?: number | null;
+  countedCash?: number | null;
+  expectedCash?: number | null;
+  difference?: number | null;
+  source?: ReportsCashOverviewSource | null;
+}
+
+export interface ReportsCashOverviewResponse {
+  range?: {
+    from?: string;
+    to?: string;
+  };
+  filters?: {
+    branchId?: string | null;
+  };
+  groupBy?: CashOverviewGroupBy;
+  items: ReportsCashOverviewItem[];
+  totals?: ReportsCashOverviewItem | null;
 }
 
 export interface AuditLog {

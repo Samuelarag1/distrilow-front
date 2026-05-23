@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, Filter, Eye, Ban, Wallet } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Dialog,
@@ -26,20 +27,30 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  useTransactions,
-  type Sale,
-} from "@/components/providers/transactions-provider";
+import { useTransactions, type Sale } from "@/components/providers/transactions-provider";
 import { SalesDetailModal } from "./sales-detail-modal";
 import { useBusiness } from "@/components/providers/business-provider";
+import { useUser } from "@/components/providers/user-provider";
 import { useToast } from "@/hooks/use-toast";
-import { backendApi } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import type { PaymentMethod } from "@/lib/api-types";
+import { backendApi } from "@/lib/backend-api";
+import { normalizeSale } from "@/lib/adapters/sales";
+import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
+import {
+  getPaymentMethodLabel,
+  formatWholeAmountInput,
+  getSalePaymentTypeBadgeClassName,
+  getSalePaymentTypeLabel,
+  normalizeWholeAmountInput,
+  parseWholeAmount,
+} from "@/lib/sales-payments";
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
     style: "currency",
     currency: "ARS",
+    maximumFractionDigits: 0,
   });
 }
 
@@ -62,45 +73,40 @@ function getStatusText(status: string) {
   return "Cancelada";
 }
 
-type SalesPaymentMethodFilter = "CASH" | "TRANSFER";
-type SalesPaymentFilter = "all" | SalesPaymentMethodFilter;
+function toFiniteNumber(value: unknown, fallback = 0) {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
 
-const PAYMENT_FILTER_LIMIT = 100;
-const PAYMENT_FILTER_MAX_PAGES = 40;
+type SalesSort =
+  | "createdAt:desc"
+  | "createdAt:asc"
+  | "totalAmount:desc"
+  | "totalAmount:asc";
+type SalesPaymentTypeFilter = "all" | "CASH" | "TRANSFER" | "MIXED" | "OTHER";
 
-async function fetchSaleIdsByPaymentMethod(method: SalesPaymentMethodFilter) {
-  const saleIds = new Set<string>();
-  let offset = 0;
-
-  for (let page = 0; page < PAYMENT_FILTER_MAX_PAGES; page += 1) {
-    const response = await backendApi.sales.paymentsList({
-      method,
-      offset,
-      limit: PAYMENT_FILTER_LIMIT,
-    });
-
-    response.items.forEach((payment) => {
-      const saleId = String(payment.saleId ?? "").trim();
-      if (!saleId) return;
-      saleIds.add(saleId);
-    });
-
-    if (!response.meta.hasMore) break;
-    offset += Math.max(1, Number(response.meta.limit ?? PAYMENT_FILTER_LIMIT));
+function getSalePaymentDisplayLabel(sale: Sale) {
+  if (sale.paidAmount <= Number.EPSILON) {
+    return "Sin pago";
   }
 
-  return Array.from(saleIds);
+  return getSalePaymentTypeLabel(sale.paymentType);
+}
+
+function getSalePendingReasonDisplay(sale: Sale | null | undefined) {
+  return sale?.pendingReasonLabel ?? sale?.pendingReason;
 }
 
 export function SalesTable() {
-  const { sales, isLoading, registerSalePayment, cancelSale, getSaleDetail } =
-    useTransactions();
+  const { registerSalePayment, cancelSale, getSaleDetail } = useTransactions();
   const { businessType } = useBusiness();
+  const { branchId } = useUser();
   const { toast } = useToast();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("all");
-  const [selectedPaymentMethod, setSelectedPaymentMethod] =
-    useState<SalesPaymentFilter>("all");
+  const [selectedPaymentType, setSelectedPaymentType] =
+    useState<SalesPaymentTypeFilter>("all");
+  const sort: SalesSort = "createdAt:desc";
   const [currentPage, setCurrentPage] = useState(1);
   const [detailSaleId, setDetailSaleId] = useState<string | null>(null);
   const [saleToPay, setSaleToPay] = useState<Sale | null>(null);
@@ -108,107 +114,117 @@ export function SalesTable() {
   const [payAmount, setPayAmount] = useState("");
   const [payMethod, setPayMethod] = useState<PaymentMethod>("CASH");
   const [payReference, setPayReference] = useState("");
+  const [payNotes, setPayNotes] = useState("");
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
   const [cancelTarget, setCancelTarget] = useState<Sale | null>(null);
   const [isCancelling, setIsCancelling] = useState(false);
   const pageSize = 10;
-  const paymentMethodFilter =
-    selectedPaymentMethod === "all" ? null : selectedPaymentMethod;
+  const debouncedSearch = useDebouncedValue(searchQuery, 350);
+
+  const salesQuery = useMemo(() => {
+    const query = {
+      page: currentPage,
+      limit: pageSize,
+      status: "COMPLETED" as const,
+      search: debouncedSearch.trim() || undefined,
+      paymentType:
+        selectedPaymentType !== "all" ? selectedPaymentType : undefined,
+      sort,
+      chargeStatus: undefined as "PENDING" | "PARTIALLY_PAID" | "PAID" | undefined,
+    };
+
+    if (
+      selectedStatus === "PENDING" ||
+      selectedStatus === "PARTIALLY_PAID" ||
+      selectedStatus === "PAID"
+    ) {
+      query.chargeStatus = selectedStatus;
+    }
+
+    if (selectedStatus === "CANCELLED") {
+      return {
+        page: currentPage,
+        limit: pageSize,
+        status: "CANCELLED" as const,
+        search: debouncedSearch.trim() || undefined,
+        paymentType:
+          selectedPaymentType !== "all" ? selectedPaymentType : undefined,
+        sort,
+      };
+    }
+
+    return query;
+  }, [currentPage, debouncedSearch, selectedPaymentType, selectedStatus, sort]);
 
   const {
-    data: detailSale,
-    isLoading: isLoadingDetailSale,
-    error: detailSaleError,
+    data: salesPage,
+    error: salesError,
+    isLoading: isSalesPageLoading,
+    mutate: mutateSalesPage,
   } = useSWR(
-    detailSaleId ? (["/sales", detailSaleId] as const) : null,
-    () => getSaleDetail(detailSaleId as string),
+    branchId ? ["sales-table", branchId, salesQuery] : null,
+    () => backendApi.sales.list(salesQuery, branchId),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
     }
   );
 
-  const {
-    data: filteredSaleIdsByPaymentMethod,
-    isLoading: isLoadingPaymentMethodFilter,
-    error: paymentMethodFilterError,
-  } = useSWR(
-    paymentMethodFilter
-      ? (["/sales/payments/list", paymentMethodFilter] as const)
-      : null,
-    ([, method]) => fetchSaleIdsByPaymentMethod(method),
+  const { data: detailSale } = useSWR(
+    detailSaleId ? (["/sales/detail", detailSaleId] as const) : null,
+    () => getSaleDetail(detailSaleId as string),
     {
       revalidateOnFocus: false,
-      keepPreviousData: false,
+      keepPreviousData: true,
     }
   );
-  const filteredSaleIdsByPaymentMethodSet = useMemo(
-    () => new Set(filteredSaleIdsByPaymentMethod ?? []),
-    [filteredSaleIdsByPaymentMethod]
+  const { data: payDialogDetail, isLoading: isPayDialogDetailLoading } = useSWR(
+    saleToPay ? (["/sales/detail", saleToPay.id] as const) : null,
+    () => getSaleDetail(saleToPay!.id),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
   );
-  const isPaymentMethodFilterPending =
-    Boolean(paymentMethodFilter) &&
-    isLoadingPaymentMethodFilter &&
-    !paymentMethodFilterError &&
-    !filteredSaleIdsByPaymentMethod;
-  const isTableLoading = isLoading || isPaymentMethodFilterPending;
+  const isTableLoading = isSalesPageLoading;
+  const saleForPayment =
+    saleToPay && payDialogDetail?.id === saleToPay.id
+      ? payDialogDetail
+      : saleToPay;
 
-  const filteredSales = useMemo(
+  const paginatedSales = useMemo(
     () =>
-      sales.filter((sale) => {
-        if (isPaymentMethodFilterPending) return false;
-        if (sale.businessType !== businessType) return false;
-        const status = getSaleRowStatus(sale);
-        const query = searchQuery.trim().toLowerCase();
-        const matchesSearch =
-          query.length === 0 ||
-          sale.customerName.toLowerCase().includes(query) ||
-          sale.id.toLowerCase().includes(query);
-        const matchesStatus =
-          selectedStatus === "all" || selectedStatus === status;
-        const matchesPaymentMethod =
-          !paymentMethodFilter ||
-          Boolean(paymentMethodFilterError) ||
-          filteredSaleIdsByPaymentMethodSet.has(sale.id);
-        return matchesSearch && matchesStatus && matchesPaymentMethod;
-      }),
-    [
-      sales,
-      isPaymentMethodFilterPending,
-      businessType,
-      searchQuery,
-      selectedStatus,
-      paymentMethodFilter,
-      paymentMethodFilterError,
-      filteredSaleIdsByPaymentMethodSet,
-    ]
+      (salesPage?.items ?? []).map((sale) =>
+        normalizeSale(sale, { businessType })
+      ),
+    [businessType, salesPage?.items]
   );
-
-  const totalPages = Math.max(1, Math.ceil(filteredSales.length / pageSize));
-  const currentPageSafe = Math.min(currentPage, totalPages);
-  const paginatedSales = useMemo(() => {
-    const start = (currentPageSafe - 1) * pageSize;
-    return filteredSales.slice(start, start + pageSize);
-  }, [filteredSales, currentPageSafe]);
+  const meta = salesPage?.meta;
+  const totalPages = Math.max(1, Number(meta?.totalPages ?? 1));
+  const currentPageSafe = Math.max(1, Number(meta?.page ?? currentPage));
+  const totalRows = Math.max(0, Number(meta?.total ?? 0));
 
   const openPayDialog = (sale: Sale) => {
     setSaleToPay(sale);
     setPayAmount(
-      String(sale.outstandingAmount > 0 ? sale.outstandingAmount : "")
+      sale.outstandingAmount > 0
+        ? String(Math.trunc(toFiniteNumber(sale.outstandingAmount, 0)))
+        : ""
     );
     setPayMethod("CASH");
     setPayReference("");
+    setPayNotes("");
     setIsPayDialogOpen(true);
   };
 
   const handleRegisterPayment = async () => {
     if (!saleToPay) return;
-    const amount = Number(payAmount);
+    const amount = parseWholeAmount(payAmount);
     if (!Number.isFinite(amount) || amount <= 0) {
       toast({
         variant: "destructive",
         title: "Monto invalido",
-        description: "Ingresa un monto valido mayor a 0.",
+        description: "Ingresa un monto entero valido mayor a 0.",
       });
       return;
     }
@@ -219,18 +235,23 @@ export function SalesTable() {
         amount,
         method: payMethod,
         reference: payReference.trim() || undefined,
+        notes: payNotes.trim() || undefined,
       });
       toast({
         title: "Pago registrado",
-        description: "El pago se registro correctamente en la venta.",
+        description: "El pago quedo aplicado correctamente a la venta.",
       });
       setIsPayDialogOpen(false);
       setSaleToPay(null);
+      void mutateSalesPage();
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "No se pudo registrar el pago",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa el monto y vuelve a intentarlo."
+        ),
       });
     } finally {
       setIsSubmittingPayment(false);
@@ -244,14 +265,18 @@ export function SalesTable() {
       await cancelSale(cancelTarget.id);
       toast({
         title: "Venta cancelada",
-        description: "La venta fue cancelada de forma logica.",
+        description: "La venta fue anulada correctamente.",
       });
       setCancelTarget(null);
+      void mutateSalesPage();
     } catch (error: any) {
       toast({
         variant: "destructive",
         title: "No se pudo cancelar",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       setIsCancelling(false);
@@ -275,7 +300,7 @@ export function SalesTable() {
             <div className="relative flex-1">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Buscar por cliente o ID..."
+                placeholder="Buscar por ID, nota o pendiente..."
                 value={searchQuery}
                 onChange={(event) => {
                   setSearchQuery(event.target.value);
@@ -299,9 +324,11 @@ export function SalesTable() {
               <option value="CANCELLED">Cancelada</option>
             </select>
             <select
-              value={selectedPaymentMethod}
+              value={selectedPaymentType}
               onChange={(event) => {
-                setSelectedPaymentMethod(event.target.value as SalesPaymentFilter);
+                setSelectedPaymentType(
+                  event.target.value as SalesPaymentTypeFilter
+                );
                 setCurrentPage(1);
               }}
               className="px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
@@ -309,13 +336,15 @@ export function SalesTable() {
               <option value="all">Todos los pagos</option>
               <option value="CASH">Solo efectivo</option>
               <option value="TRANSFER">Solo transferencia</option>
+              <option value="MIXED">Mixto</option>
             </select>
           </div>
 
-          {paymentMethodFilterError && (
-            <p className="text-xs text-destructive">
-              No se pudo aplicar el filtro por metodo de pago. Se muestran todas
-              las ventas.
+          {salesError && (
+            <p className="text-sm text-destructive">
+              {salesError instanceof Error
+                ? salesError.message
+                : "No se pudieron cargar las ventas."}
             </p>
           )}
 
@@ -325,9 +354,10 @@ export function SalesTable() {
                 <thead className="bg-muted/50">
                   <tr>
                     <th className="text-left p-3 font-medium">Fecha</th>
-                    <th className="text-left p-3 font-medium">Cliente</th>
+                    <th className="text-left p-3 font-medium">Observaciones</th>
                     <th className="text-left p-3 font-medium">Total</th>
                     <th className="text-left p-3 font-medium">Pagado</th>
+                    <th className="text-left p-3 font-medium">Pago</th>
                     <th className="text-left p-3 font-medium">Saldo</th>
                     <th className="text-left p-3 font-medium">Estado</th>
                     <th className="text-left p-3 font-medium">Acciones</th>
@@ -348,6 +378,9 @@ export function SalesTable() {
                           </td>
                           <td className="p-3">
                             <Skeleton className="h-4 w-20" />
+                          </td>
+                          <td className="p-3">
+                            <Skeleton className="h-10 w-44" />
                           </td>
                           <td className="p-3">
                             <Skeleton className="h-4 w-20" />
@@ -375,14 +408,56 @@ export function SalesTable() {
                             <td className="p-3 text-sm whitespace-nowrap">
                               {new Date(sale.date).toLocaleString()}
                             </td>
-                            <td className="p-3 font-medium">
-                              {sale.customerName}
+                            <td className="p-3">
+                              <div className="max-w-[260px] space-y-1 text-sm">
+                                {getSalePendingReasonDisplay(sale) ? (
+                                  <p className="font-medium text-amber-700">
+                                    Motivo pendiente:{" "}
+                                    {getSalePendingReasonDisplay(sale)}
+                                  </p>
+                                ) : null}
+                                {sale.note ? (
+                                  <p className="text-muted-foreground">
+                                    Nota: {sale.note}
+                                  </p>
+                                ) : null}
+                                {!getSalePendingReasonDisplay(sale) && !sale.note ? (
+                                  <p className="text-muted-foreground">
+                                    Sin observaciones
+                                  </p>
+                                ) : null}
+                              </div>
                             </td>
                             <td className="p-3 font-semibold">
                               {formatMoney(sale.totalAmount)}
                             </td>
                             <td className="p-3">
                               {formatMoney(sale.paidAmount)}
+                            </td>
+                            <td className="p-3">
+                              <div className="space-y-1 text-xs">
+                                <Badge
+                                  className={getSalePaymentTypeBadgeClassName(
+                                    sale.paymentType
+                                  )}
+                                >
+                                  {getSalePaymentDisplayLabel(sale)}
+                                </Badge>
+                                {sale.paymentBreakdownByMethod.card >
+                                Number.EPSILON ? (
+                                  <p className="text-muted-foreground">
+                                    Tarjetas:{" "}
+                                    {formatMoney(sale.paymentBreakdownByMethod.card)}
+                                  </p>
+                                ) : null}
+                                {sale.paymentBreakdownByMethod.other >
+                                Number.EPSILON ? (
+                                  <p className="text-muted-foreground">
+                                    Otros:{" "}
+                                    {formatMoney(sale.paymentBreakdownByMethod.other)}
+                                  </p>
+                                ) : null}
+                              </div>
                             </td>
                             <td className="p-3">
                               {formatMoney(sale.outstandingAmount)}
@@ -427,16 +502,16 @@ export function SalesTable() {
             </div>
           </div>
 
-          {!isTableLoading && filteredSales.length === 0 && (
+          {!isTableLoading && !salesError && paginatedSales.length === 0 && (
             <div className="text-center py-12 text-muted-foreground">
               No se encontraron ventas.
             </div>
           )}
 
-          {!isTableLoading && filteredSales.length > 0 && (
+          {!isTableLoading && !salesError && totalRows > 0 && (
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-muted-foreground">
-                Pagina {currentPageSafe} de {totalPages} ({filteredSales.length}{" "}
+                Pagina {currentPageSafe} de {totalPages} ({totalRows}{" "}
                 registros)
               </p>
               <div className="flex items-center gap-2">
@@ -478,62 +553,251 @@ export function SalesTable() {
         open={isPayDialogOpen}
         onOpenChange={(open) => {
           setIsPayDialogOpen(open);
-          if (!open) setSaleToPay(null);
+          if (!open) {
+            setSaleToPay(null);
+            setPayNotes("");
+          }
         }}
       >
-        <DialogContent className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Registrar Pago</DialogTitle>
-            <DialogDescription>
-              Venta: {saleToPay?.id}. Saldo pendiente:{" "}
-              {formatMoney(saleToPay?.outstandingAmount ?? 0)}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-3">
-            <Input
-              type="number"
-              min="0.01"
-              step="0.01"
-              value={payAmount}
-              onChange={(event) => setPayAmount(event.target.value)}
-              placeholder="Monto"
-            />
-            <select
-              value={payMethod}
-              onChange={(event) =>
-                setPayMethod(event.target.value as PaymentMethod)
-              }
-              className="w-full px-3 py-2 border border-input bg-background rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-ring"
-            >
-              <option value="CASH">Efectivo</option>
-              <option value="TRANSFER">Transferencia</option>
-              <option value="DEBIT_CARD">Debito</option>
-              <option value="CREDIT_CARD">Credito</option>
-              <option value="MERCADO_PAGO">Mercado Pago</option>
-              <option value="OTHER">Otro</option>
-            </select>
-            <Input
-              value={payReference}
-              onChange={(event) => setPayReference(event.target.value)}
-              placeholder="Referencia (opcional)"
-            />
+        <DialogContent className="flex max-h-[92vh] max-w-4xl flex-col gap-0 overflow-hidden p-0">
+          <div className="border-b bg-gradient-to-br from-emerald-500/10 via-background to-sky-500/10 p-6">
+            <DialogHeader className="space-y-3 text-left">
+              <DialogTitle className="text-2xl font-black tracking-tight">
+                Registrar cobro pendiente
+              </DialogTitle>
+              <DialogDescription className="max-w-2xl text-sm leading-6">
+                Revisa el detalle de la venta antes de aplicar un nuevo pago.
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="mt-5 grid gap-3 sm:grid-cols-4">
+              <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Venta
+                </p>
+                <p className="mt-2 text-sm font-bold">
+                  {saleForPayment?.id ?? "-"}
+                </p>
+              </div>
+              <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Total
+                </p>
+                <p className="mt-2 text-xl font-black">
+                  {formatMoney(saleForPayment?.totalAmount ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Pagado
+                </p>
+                <p className="mt-2 text-xl font-black text-emerald-600">
+                  {formatMoney(saleForPayment?.paidAmount ?? 0)}
+                </p>
+              </div>
+              <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
+                <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
+                  Saldo
+                </p>
+                <p className="mt-2 text-xl font-black text-orange-600">
+                  {formatMoney(saleForPayment?.outstandingAmount ?? 0)}
+                </p>
+              </div>
+            </div>
           </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setIsPayDialogOpen(false);
-                setSaleToPay(null);
-              }}
-            >
-              Cancelar
-            </Button>
-            <Button
-              onClick={handleRegisterPayment}
-              disabled={isSubmittingPayment}
-            >
-              {isSubmittingPayment ? "Registrando..." : "Registrar pago"}
-            </Button>
+
+          <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto p-6 lg:grid-cols-[1.15fr_0.85fr]">
+            <div className="space-y-4">
+              <div className="rounded-2xl border bg-card p-5 shadow-sm">
+                <div className="flex items-center justify-between gap-3">
+                  <div>
+                    <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                      Detalle de la venta
+                    </h3>
+                    <p className="mt-1 text-sm text-muted-foreground">
+                      {saleForPayment?.date
+                        ? new Date(saleForPayment.date).toLocaleString("es-AR")
+                        : "Sin fecha disponible"}
+                    </p>
+                  </div>
+                  <Badge
+                    className={getSalePaymentTypeBadgeClassName(
+                      saleForPayment?.paymentType ?? "OTHER"
+                    )}
+                  >
+                    {saleForPayment
+                      ? getSalePaymentDisplayLabel(saleForPayment)
+                      : getSalePaymentTypeLabel("OTHER")}
+                  </Badge>
+                </div>
+
+                <div className="mt-4 space-y-3">
+                  {isPayDialogDetailLoading &&
+                  !saleForPayment?.lineItems?.length ? (
+                    <p className="text-sm text-muted-foreground">
+                      Cargando detalle de productos...
+                    </p>
+                  ) : saleForPayment?.lineItems?.length ? (
+                    saleForPayment.lineItems.map((item, index) => (
+                      <div
+                        key={`${item.productId}-${index}`}
+                        className="rounded-xl border bg-muted/20 p-3"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium">
+                              {item.productName || "Producto"}
+                            </p>
+                            <p className="text-xs text-muted-foreground">
+                              Cantidad: {Number(item.quantity ?? 0).toLocaleString("es-AR")}
+                            </p>
+                          </div>
+                          <p className="font-semibold">
+                            {formatMoney(
+                              item.subtotal ??
+                                Number(item.quantity ?? 0) *
+                                  Number(item.unitPrice ?? 0)
+                            )}
+                          </p>
+                        </div>
+                      </div>
+                    ))
+                  ) : (
+                    <p className="text-sm text-muted-foreground">
+                      La venta no tiene detalle adicional cargado.
+                    </p>
+                  )}
+                </div>
+              </div>
+
+              {getSalePendingReasonDisplay(saleForPayment) ? (
+                <div className="rounded-2xl border border-amber-200 bg-amber-50/70 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    Motivo del saldo pendiente
+                  </p>
+                  <p className="mt-1 text-sm text-amber-950">
+                    {getSalePendingReasonDisplay(saleForPayment)}
+                  </p>
+                </div>
+              ) : null}
+
+              {saleForPayment?.note ? (
+                <div className="rounded-2xl border border-sky-200 bg-sky-50/70 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+                    Nota de la venta
+                  </p>
+                  <p className="mt-1 whitespace-pre-line text-sm text-sky-950">
+                    {saleForPayment.note}
+                  </p>
+                </div>
+              ) : null}
+            </div>
+
+            <div className="space-y-4">
+              <div className="rounded-2xl border bg-card p-5 shadow-sm">
+                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                  Nuevo pago
+                </h3>
+
+                <div className="mt-4 space-y-3">
+                  <Input
+                    type="text"
+                    inputMode="numeric"
+                    value={formatWholeAmountInput(payAmount)}
+                    onChange={(event) =>
+                      setPayAmount(normalizeWholeAmountInput(event.target.value))
+                    }
+                    placeholder="Monto a cobrar"
+                  />
+                  <select
+                    value={payMethod}
+                    onChange={(event) =>
+                      setPayMethod(event.target.value as PaymentMethod)
+                    }
+                    className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-ring"
+                  >
+                    <option value="CASH">Efectivo</option>
+                    <option value="TRANSFER">Transferencia</option>
+                    <option value="DEBIT_CARD">Debito</option>
+                    <option value="CREDIT_CARD">Credito</option>
+                    <option value="MERCADO_PAGO">Mercado Pago</option>
+                    <option value="OTHER">Otro</option>
+                  </select>
+                  <Input
+                    value={payReference}
+                    onChange={(event) => setPayReference(event.target.value)}
+                    placeholder="Referencia (opcional)"
+                  />
+                  <Textarea
+                    value={payNotes}
+                    onChange={(event) => setPayNotes(event.target.value)}
+                    placeholder="Nota opcional sobre este cobro"
+                    className="min-h-[110px] resize-none"
+                  />
+                </div>
+              </div>
+
+              {saleForPayment?.payments?.length ? (
+                <div className="rounded-2xl border bg-card p-5 shadow-sm">
+                  <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                    Pagos ya registrados
+                  </h3>
+                  <div className="mt-4 space-y-2">
+                    {saleForPayment.payments.map((payment, index) => (
+                      <div
+                        key={`${payment.id ?? index}`}
+                        className="rounded-xl border bg-muted/20 p-3 text-sm"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <p className="font-medium">
+                              {getPaymentMethodLabel(payment.method)}
+                            </p>
+                            {payment.reference ? (
+                              <p className="text-xs text-muted-foreground">
+                                Ref: {payment.reference}
+                              </p>
+                            ) : null}
+                            {payment.notes ? (
+                              <p className="mt-1 text-xs text-muted-foreground">
+                                Nota: {payment.notes}
+                              </p>
+                            ) : null}
+                          </div>
+                          <p className="font-semibold">
+                            {formatMoney(payment.amount)}
+                          </p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
+            </div>
+          </div>
+
+          <DialogFooter className="border-t px-6 py-4 sm:flex-row sm:items-center sm:justify-between sm:space-x-0">
+            <p className="text-sm text-muted-foreground">
+              El pago se aplicará sobre el saldo pendiente actual.
+            </p>
+            <div className="flex flex-col-reverse gap-2 sm:flex-row">
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setIsPayDialogOpen(false);
+                  setSaleToPay(null);
+                  setPayNotes("");
+                }}
+              >
+                Cancelar
+              </Button>
+              <Button
+                onClick={handleRegisterPayment}
+                disabled={isSubmittingPayment}
+              >
+                {isSubmittingPayment ? "Registrando..." : "Registrar pago"}
+              </Button>
+            </div>
           </DialogFooter>
         </DialogContent>
       </Dialog>

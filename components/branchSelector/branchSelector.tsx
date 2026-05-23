@@ -13,6 +13,7 @@ import { useSidebar } from "@/components/ui/sidebar";
 import { useUser } from "@/components/providers/user-provider";
 import { useToast } from "@/hooks/use-toast";
 import { BrandMark } from "@/components/common/brand-mark";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 
 export function BranchSelector() {
   const { branchId, branches, switchBranch } = useUser();
@@ -28,7 +29,10 @@ export function BranchSelector() {
       toast({
         variant: "destructive",
         title: "No se pudo cambiar sucursal",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     }
   };

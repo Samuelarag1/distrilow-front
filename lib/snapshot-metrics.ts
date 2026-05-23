@@ -1,4 +1,19 @@
+import type { SnapshotPeriod } from "./api-types";
+
 export interface NormalizedSnapshotMetrics {
+  period?: SnapshotPeriod;
+  scope?: "active" | "all";
+  range?: {
+    from?: string;
+    to?: string;
+  };
+  history?: Array<{
+    period: string;
+    totalIncome?: number;
+    operationalExpenses?: number;
+    totalCostOfGoods?: number;
+    netProfit?: number;
+  }>;
   totalRevenue: number;
   totalOrders: number;
   activeCustomers: number;
@@ -17,11 +32,25 @@ export interface NormalizedSnapshotMetrics {
   totalCostOfGoods?: number;
   netProfit?: number;
   averageTicket?: number;
-  growthTrend?: string;
+  growthTrend?: number;
   retentionRate?: string;
 }
 
 type RecordLike = Record<string, unknown>;
+export const SNAPSHOT_REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
+
+const snapshotDateFormatter = new Intl.DateTimeFormat("es-AR", {
+  timeZone: SNAPSHOT_REPORTING_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+const snapshotYmdFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: SNAPSHOT_REPORTING_TIME_ZONE,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
 
 function asRecord(value: unknown): RecordLike {
   if (value && typeof value === "object" && !Array.isArray(value)) {
@@ -56,6 +85,103 @@ function toOptionalString(value: unknown): string | undefined {
   return trimmed ? trimmed : undefined;
 }
 
+function normalizeSnapshotPeriod(value: unknown): SnapshotPeriod | undefined {
+  if (
+    value === "monthly" ||
+    value === "quarterly" ||
+    value === "semiannual" ||
+    value === "annual"
+  ) {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeSnapshotScope(value: unknown): "active" | "all" | undefined {
+  if (value === "active" || value === "all") {
+    return value;
+  }
+  return undefined;
+}
+
+function normalizeSnapshotHistoryPoint(value: unknown) {
+  const source = asRecord(value);
+  const period = toOptionalString(source.period);
+  if (!period) return null;
+
+  return {
+    period,
+    totalIncome: toOptionalNumber(source.totalIncome),
+    operationalExpenses: toOptionalNumber(source.operationalExpenses),
+    totalCostOfGoods: toOptionalNumber(source.totalCostOfGoods),
+    netProfit: toOptionalNumber(source.netProfit),
+  };
+}
+
+export function formatSnapshotDate(value?: string) {
+  const text = toOptionalString(value);
+  if (!text) return null;
+
+  const exactDate = extractSnapshotDateKey(text);
+  if (exactDate) {
+    const [, year, month, day] = exactDate.match(/^(\d{4})-(\d{2})-(\d{2})$/) ?? [];
+    if (year && month && day) {
+      return `${day}/${month}/${year}`;
+    }
+  }
+
+  const parsedDate = new Date(text);
+  if (!Number.isFinite(parsedDate.getTime())) {
+    const leadingDate = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+    if (!leadingDate) return text;
+    return `${leadingDate[3]}/${leadingDate[2]}/${leadingDate[1]}`;
+  }
+
+  return snapshotDateFormatter.format(parsedDate);
+}
+
+export function extractSnapshotDateKey(value?: string) {
+  const text = toOptionalString(value);
+  if (!text) return null;
+
+  const exactDate = text.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (exactDate) {
+    return `${exactDate[1]}-${exactDate[2]}-${exactDate[3]}`;
+  }
+
+  const leadingDate = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (leadingDate) {
+    return `${leadingDate[1]}-${leadingDate[2]}-${leadingDate[3]}`;
+  }
+
+  const parsedDate = new Date(text);
+  if (!Number.isFinite(parsedDate.getTime())) return null;
+
+  return snapshotYmdFormatter.format(parsedDate);
+}
+
+export function snapshotDateKeyToStableDate(value?: string) {
+  const key = extractSnapshotDateKey(value);
+  if (!key) return null;
+
+  const [year, month, day] = key.split("-").map(Number);
+  if (!year || !month || !day) return null;
+
+  return new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0));
+}
+
+export function formatSnapshotRangeLabel(
+  range?: NormalizedSnapshotMetrics["range"]
+) {
+  const fromLabel = formatSnapshotDate(range?.from);
+  const toLabel = formatSnapshotDate(range?.to);
+
+  if (fromLabel && toLabel) {
+    return fromLabel === toLabel ? fromLabel : `${fromLabel} al ${toLabel}`;
+  }
+  return fromLabel ?? toLabel ?? null;
+}
+
 export function normalizeSnapshotMetrics(
   snapshot: unknown
 ): NormalizedSnapshotMetrics {
@@ -63,8 +189,18 @@ export function normalizeSnapshotMetrics(
   const summary = asRecord(source.summary);
   const inventory = asRecord(source.inventory);
   const salesAnalysis = asRecord(source.salesAnalysis);
+  const range = asRecord(source.range);
+  const rangeFrom = toOptionalString(range.from);
+  const rangeTo = toOptionalString(range.to);
+  const normalizedHistory = Array.isArray(source.history)
+    ? source.history
+        .map(normalizeSnapshotHistoryPoint)
+        .filter((point): point is NonNullable<typeof point> => Boolean(point))
+    : [];
 
   const normalized: NormalizedSnapshotMetrics = {
+    period: normalizeSnapshotPeriod(source.period),
+    scope: normalizeSnapshotScope(source.scope),
     totalRevenue: toNumber(
       source.totalRevenue ?? source.totalIncome ?? summary.totalIncome,
       0
@@ -84,6 +220,16 @@ export function normalizeSnapshotMetrics(
       0
     ),
   };
+
+  if (rangeFrom || rangeTo) {
+    normalized.range = {
+      from: rangeFrom,
+      to: rangeTo,
+    };
+  }
+  if (normalizedHistory.length > 0) {
+    normalized.history = normalizedHistory;
+  }
 
   const dailyCashbox = toOptionalNumber(
     source.dailyCashbox ?? source.dailyCash ?? summary.dailyCash
@@ -149,7 +295,7 @@ export function normalizeSnapshotMetrics(
   );
   if (averageTicket !== undefined) normalized.averageTicket = averageTicket;
 
-  const growthTrend = toOptionalString(
+  const growthTrend = toOptionalNumber(
     source.growthTrend ?? salesAnalysis.growthTrend
   );
   if (growthTrend !== undefined) normalized.growthTrend = growthTrend;

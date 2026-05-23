@@ -3,7 +3,9 @@ import { useCallback, useState } from "react";
 import { Product } from "@/lib/products";
 import { useToast } from "@/hooks/use-toast";
 import { backendApi } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { normalizeProductPayload } from "../utils/normalizePayload";
+import { mapProductStockLinkingBackendError } from "./useProductStockLinking";
 
 export type ProductSaveInput = Partial<Product> & {
   imageFile?: File | null;
@@ -27,7 +29,8 @@ export function useProductSave(opts: {
 
       try {
         const imageFile = productData.imageFile ?? null;
-        const { imageFile: _imageFile, ...rawProductData } = productData;
+        const rawProductData = { ...productData } as Record<string, unknown>;
+        delete rawProductData.imageFile;
         const reviewFlags = {
           priceReviewPending:
             typeof (rawProductData as any).priceReviewPending === "boolean"
@@ -38,11 +41,9 @@ export function useProductSave(opts: {
               ? Boolean((rawProductData as any).costReviewPending)
               : undefined,
         };
-        const {
-          priceReviewPending: _priceReviewPending,
-          costReviewPending: _costReviewPending,
-          ...baseProductData
-        } = rawProductData as any;
+        const baseProductData = { ...rawProductData } as Record<string, unknown>;
+        delete baseProductData.priceReviewPending;
+        delete baseProductData.costReviewPending;
         const resolvedBranchId =
           (baseProductData as any).branchId ??
           opts.activeBranchId ??
@@ -54,7 +55,7 @@ export function useProductSave(opts: {
         }
 
         const payload = normalizeProductPayload({
-          ...baseProductData,
+          ...(baseProductData as Partial<Product>),
           branchId: resolvedBranchId,
         });
 
@@ -105,17 +106,19 @@ export function useProductSave(opts: {
         opts.onCloseDialog();
         opts.onClearEditing();
       } catch (err: any) {
-        const msg =
-          err?.response?.data?.details ||
-          err?.response?.data?.message ||
-          err?.details ||
-          err?.message ||
-          "Ocurrió un error inesperado.";
+        const mappedMessage = mapProductStockLinkingBackendError(err);
+        const message =
+          typeof mappedMessage === "string" && mappedMessage.trim().length > 0
+            ? mappedMessage
+            : getUserFacingErrorMessage(
+                err,
+                "No pudimos guardar el producto. Revisa los datos e intenta nuevamente."
+              );
 
         toast({
           variant: "destructive",
-          title: "Error al guardar",
-          description: msg,
+          title: "No pudimos guardar el producto",
+          description: message,
         });
       } finally {
         setIsSaving(false);

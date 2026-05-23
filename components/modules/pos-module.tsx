@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Plus,
   Minus,
@@ -55,9 +56,17 @@ import {
 } from "@/hooks/usePosProductSearch";
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { backendApi, type ResolvedBarcodeProduct } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { emitProductsSync } from "@/lib/products-live-sync";
 import type { PaymentMethod, PriceType, PricingMode } from "@/lib/api-types";
 import { resolveProductImageUrl } from "@/lib/media-utils";
+import {
+  formatWholeAmountInput,
+  getPaymentMethodLabel as getSharedPaymentMethodLabel,
+  normalizeWholeAmountInput,
+  parseWholeAmount,
+} from "@/lib/sales-payments";
+import { buildSaleNotesPayload } from "@/lib/sale-notes";
 
 interface CartItem extends Product {
   quantity: number;
@@ -84,12 +93,17 @@ type PersistedPosCart = {
   cashPaymentAmount: string;
   transferPaymentAmount: string;
   transferReference: string;
+  pendingPaymentReason: string;
+  saleNote: string;
 };
 
 const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
 const POS_CART_TTL_MS = 12 * 60 * 60 * 1000;
 const POS_SCAN_CACHE_TTL_MS = 5_000;
-
+const POS_PENDING_REASON_MAX_LENGTH = 180;
+const POS_SALE_NOTE_MAX_LENGTH = 240;
+const POS_SCANNER_BURST_MS = 450;
+const POS_SCANNER_CONCAT_CODE_LENGTHS = [13, 12, 8] as const;
 type ScanCacheEntry = {
   cachedAt: number;
   value: ResolvedBarcodeProduct;
@@ -97,7 +111,9 @@ type ScanCacheEntry = {
 
 type PaymentPreviewRow = {
   method: PaymentMethod;
-  amount: number;
+  appliedAmount: number;
+  receivedAmount: number;
+  changeAmount?: number;
   reference?: string;
 };
 
@@ -111,6 +127,120 @@ type PosPreviewItem = {
   priceType: PriceType;
   pricingMode: PricingMode;
 };
+
+function splitScannerPayload(rawValue: string): string[] {
+  const normalized = rawValue.replace(/[\r\n\t]+/g, " ").trim();
+  if (!normalized) return [];
+
+  const bySeparators = normalized
+    .split(/[\s,;|]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+  if (bySeparators.length > 1) return bySeparators;
+
+  const token = bySeparators[0] ?? "";
+  if (!token) return [];
+
+  if (!/^\d+$/.test(token)) {
+    return [token];
+  }
+
+  for (const chunkLength of POS_SCANNER_CONCAT_CODE_LENGTHS) {
+    if (token.length < chunkLength * 2) continue;
+    if (token.length % chunkLength !== 0) continue;
+    const chunks: string[] = [];
+    for (let index = 0; index < token.length; index += chunkLength) {
+      chunks.push(token.slice(index, index + chunkLength));
+    }
+    if (chunks.length > 1) {
+      return chunks;
+    }
+  }
+
+  return [token];
+}
+
+function stripProductCodeLeadingZeros(value: string) {
+  const normalized = value.replace(/^0+(?=\d)/, "");
+  return normalized || "0";
+}
+
+function getScannedCodeDetails(rawCode: string) {
+  const normalizedCode = rawCode.trim();
+  if (!normalizedCode || !/^\d+$/.test(normalizedCode)) {
+    return {
+      rawCode: normalizedCode,
+      productCode: null,
+      pluCode: null,
+      isInternalCode: false,
+    };
+  }
+
+  if (normalizedCode.length === 13 && normalizedCode.startsWith("2")) {
+    const pluCode = normalizedCode.slice(1, 6);
+    return {
+      rawCode: normalizedCode,
+      productCode: stripProductCodeLeadingZeros(pluCode),
+      pluCode,
+      isInternalCode: true,
+    };
+  }
+
+  if (normalizedCode.length <= 5) {
+    return {
+      rawCode: normalizedCode,
+      productCode: stripProductCodeLeadingZeros(normalizedCode),
+      pluCode: normalizedCode.padStart(5, "0"),
+      isInternalCode: false,
+    };
+  }
+
+  return {
+    rawCode: normalizedCode,
+    productCode: null,
+    pluCode: null,
+    isInternalCode: false,
+  };
+}
+
+function getMissingProductScanMessage(rawCode: string) {
+  const details = getScannedCodeDetails(rawCode);
+  if (!details.rawCode) {
+    return "No se encontro un producto para el codigo escaneado.";
+  }
+
+  if (details.productCode && details.pluCode && details.isInternalCode) {
+    return `No se encontro un producto para el codigo ${details.rawCode}. Se interpreto como producto ${details.productCode} (PLU ${details.pluCode}).`;
+  }
+
+  if (details.productCode && details.pluCode) {
+    return `No se encontro un producto para el codigo ${details.rawCode}. Codigo interpretado: producto ${details.productCode} (PLU ${details.pluCode}).`;
+  }
+
+  return `No se encontro un producto para el codigo ${details.rawCode}.`;
+}
+
+function extractBurstScanDelta(
+  currentInput: string,
+  previousInput: string,
+  previousSubmittedAt: number
+) {
+  const current = currentInput.trim();
+  if (!current) return "";
+
+  const previous = previousInput.trim();
+  if (!previous) return current;
+
+  if (Date.now() - previousSubmittedAt > POS_SCANNER_BURST_MS) {
+    return current;
+  }
+
+  if (current.length > previous.length && current.startsWith(previous)) {
+    return current.slice(previous.length).trim();
+  }
+
+  return current;
+}
 
 type PosCartListProps = {
   cart: CartItem[];
@@ -139,13 +269,18 @@ type PosPaymentCardProps = {
   itemCount: number;
   total: number;
   totalInitialPayments: number;
+  pendingAfterInitialPayments: number;
   changeDuePreview: number;
+  transferExcessPreview: number;
   cashPaymentAmount: string;
   transferPaymentAmount: string;
+  pendingPaymentReason: string;
+  isPendingReasonRequired: boolean;
   onCashPaymentAmountChange: (value: string) => void;
   onTransferPaymentAmountChange: (value: string) => void;
   onCashPaymentAmountBlur: () => void;
   onTransferPaymentAmountBlur: () => void;
+  onPendingPaymentReasonChange: (value: string) => void;
   onHandlePayment: () => Promise<void>;
   onClearCart: () => void;
   isProcessingPayment: boolean;
@@ -160,12 +295,16 @@ type PosPaymentConfirmDialogProps = {
   totalInitialPayments: number;
   itemCount: number;
   changeDuePreview: number;
+  transferExcessPreview: number;
   pendingAfterInitialPayments: number;
   previewItems: PosPreviewItem[];
   previewTotalUnits: number;
   previewBranchName: string;
   previewCashierName: string;
   paymentPreviewRows: PaymentPreviewRow[];
+  pendingPaymentReason: string;
+  saleNote: string;
+  onSaleNoteChange: (value: string) => void;
   onProcessPayment: () => Promise<void>;
 };
 
@@ -212,6 +351,11 @@ function parsePersistedPosCart(raw: string | null): PersistedPosCart | null {
         typeof parsed.transferReference === "string"
           ? parsed.transferReference
           : "",
+      pendingPaymentReason:
+        typeof parsed.pendingPaymentReason === "string"
+          ? parsed.pendingPaymentReason
+          : "",
+      saleNote: typeof parsed.saleNote === "string" ? parsed.saleNote : "",
     };
   } catch {
     return null;
@@ -382,20 +526,7 @@ function getPriceTypeLabel(priceType: PriceType) {
 }
 
 function getPaymentMethodLabel(method: PaymentMethod) {
-  switch (method) {
-    case "CASH":
-      return "Efectivo";
-    case "TRANSFER":
-      return "Transferencia";
-    case "DEBIT_CARD":
-      return "Tarjeta de debito";
-    case "CREDIT_CARD":
-      return "Tarjeta de credito";
-    case "MERCADO_PAGO":
-      return "Mercado Pago";
-    default:
-      return "Otro";
-  }
+  return getSharedPaymentMethodLabel(method);
 }
 
 function formatThresholdQuantity(value: number) {
@@ -406,7 +537,31 @@ function formatThresholdQuantity(value: number) {
 function getMeasurementLabel(product: Product) {
   if (product.measurementType === "kg") return "kg";
   if (product.measurementType === "gram") return "gr";
+  if (product.measurementType === "ml") return "ml";
+  if (product.measurementType === "liter") return "litros";
   return "unidades";
+}
+
+function extractPosStockQuantity(value: unknown) {
+  const directStock = toSafeNumber(value, Number.NaN);
+  if (Number.isFinite(directStock)) {
+    return directStock;
+  }
+
+  if (!value || typeof value !== "object") {
+    return Number.NaN;
+  }
+
+  const source = value as {
+    quantity?: unknown;
+    availableQuantity?: unknown;
+    baseQuantity?: unknown;
+  };
+
+  return pickFirstFinite(
+    [source.quantity, source.availableQuantity, source.baseQuantity],
+    Number.NaN
+  );
 }
 
 function normalizeProductForPos(
@@ -415,10 +570,12 @@ function normalizeProductForPos(
   const measurementType =
     item.measurementType === "kg" ||
     item.measurementType === "gram" ||
-    item.measurementType === "unit"
+    item.measurementType === "unit" ||
+    item.measurementType === "ml" ||
+    item.measurementType === "liter"
       ? item.measurementType
       : "unit";
-  const parsedStock = toSafeNumber(item.stock, Number.NaN);
+  const parsedStock = extractPosStockQuantity(item.stock);
 
   return {
     ...item,
@@ -447,64 +604,12 @@ function normalizeProductForPos(
   };
 }
 
-const POS_MONEY_FORMATTER = new Intl.NumberFormat("es-AR");
+const POS_MONEY_FORMATTER = new Intl.NumberFormat("es-AR", {
+  maximumFractionDigits: 0,
+});
 
 function formatMoney(value: unknown) {
   return POS_MONEY_FORMATTER.format(toSafeNumber(value, 0));
-}
-
-function sanitizeMoneyInput(value: string) {
-  return value.replace(/[^\d,.\-]/g, "");
-}
-
-function parseMoneyInput(value: string) {
-  const sanitized = sanitizeMoneyInput(value).trim();
-  if (!sanitized) return 0;
-
-  const lastComma = sanitized.lastIndexOf(",");
-  const lastDot = sanitized.lastIndexOf(".");
-  const hasComma = lastComma !== -1;
-  const hasDot = lastDot !== -1;
-
-  if (!hasComma && hasDot) {
-    const dotMatches = sanitized.match(/\./g) ?? [];
-    if (dotMatches.length > 1) {
-      const integerValue = sanitized.replace(/[^\d-]/g, "");
-      const parsed = Number(integerValue);
-      return Number.isFinite(parsed) ? parsed : 0;
-    }
-
-    const decimalDigits = sanitized.length - lastDot - 1;
-    if (decimalDigits === 3) {
-      const integerValue = sanitized.replace(/[^\d-]/g, "");
-      const parsed = Number(integerValue);
-      return Number.isFinite(parsed) ? parsed : 0;
-    }
-  }
-
-  const decimalSeparatorIndex = Math.max(lastComma, lastDot);
-
-  if (decimalSeparatorIndex === -1) {
-    const integerValue = sanitized.replace(/[^\d-]/g, "");
-    const parsed = Number(integerValue);
-    return Number.isFinite(parsed) ? parsed : 0;
-  }
-
-  const integerPart = sanitized
-    .slice(0, decimalSeparatorIndex)
-    .replace(/[^\d-]/g, "");
-  const decimalPart = sanitized
-    .slice(decimalSeparatorIndex + 1)
-    .replace(/[^\d]/g, "");
-  const normalized = `${integerPart || "0"}.${decimalPart}`;
-  const parsed = Number(normalized);
-  return Number.isFinite(parsed) ? parsed : 0;
-}
-
-function formatMoneyInput(value: string) {
-  const parsed = parseMoneyInput(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return "";
-  return POS_MONEY_FORMATTER.format(roundTo(parsed, 2));
 }
 
 function isWeighableProduct(product: Product) {
@@ -532,8 +637,10 @@ function getProductSearchMetaLabel(product: Product) {
   const details: string[] = [];
   const brand = typeof product.brand === "string" ? product.brand.trim() : "";
   const sku = typeof product.sku === "string" ? product.sku.trim() : "";
-  const barcode = typeof product.barcode === "string" ? product.barcode.trim() : "";
-  const pluCode = typeof product.pluCode === "string" ? product.pluCode.trim() : "";
+  const barcode =
+    typeof product.barcode === "string" ? product.barcode.trim() : "";
+  const pluCode =
+    typeof product.pluCode === "string" ? product.pluCode.trim() : "";
 
   if (brand && !isOpaqueIdentifier(brand)) {
     details.push(brand);
@@ -611,35 +718,14 @@ function getCartLineTotal(item: CartItem) {
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
-  const normalizeStockMessage = (message: string) => {
-    const normalized = message.trim().toLowerCase();
-    const isStockError =
-      normalized.includes("not enouth stock") ||
-      normalized.includes("not enough stock") ||
-      normalized.includes("insufficient stock");
+  return getUserFacingErrorMessage(error, fallback);
+}
 
-    if (isStockError) {
-      return "No hay stock suficiente para completar la venta.";
-    }
-
-    return message;
-  };
-
-  if (error instanceof Error && error.message.trim()) {
-    return normalizeStockMessage(error.message);
-  }
-
-  if (
-    error &&
-    typeof error === "object" &&
-    "message" in error &&
-    typeof error.message === "string" &&
-    error.message.trim()
-  ) {
-    return normalizeStockMessage(error.message);
-  }
-
-  return fallback;
+function normalizePendingPaymentReason(value: string) {
+  return value
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, POS_PENDING_REASON_MAX_LENGTH);
 }
 
 // function getAutoRuleLabel(item: CartItem): string | null {
@@ -686,11 +772,11 @@ const PosCartItemCard = memo(function PosCartItemCard({
           <div className="flex items-start justify-between gap-2">
             <h4 className="truncate text-sm font-medium">{item.name}</h4>
             <p className="whitespace-nowrap text-xs font-semibold">
-              Subtotal: ${roundTo(getCartLineTotal(item), 2).toFixed(2)}
+              Subtotal: ${formatMoney(getCartLineTotal(item))}
             </p>
           </div>
           <p className="text-xs text-muted-foreground">
-            ${toSafeNumber(getDisplayUnitPrice(item), 0).toFixed(2)} /{" "}
+            ${formatMoney(getDisplayUnitPrice(item))} /{" "}
             {item.measurementType === "kg"
               ? "kg"
               : item.measurementType === "gram"
@@ -771,10 +857,14 @@ const PosCartItemCard = memo(function PosCartItemCard({
               inputMode="decimal"
               min={getQuantityStep(item)}
               step={getQuantityStep(item)}
-              defaultValue={formatThresholdQuantity(toSafeNumber(item.quantity, 0))}
+              defaultValue={formatThresholdQuantity(
+                toSafeNumber(item.quantity, 0)
+              )}
               key={`${item.id}-${item.quantity}`}
               className="h-8 w-24 text-center text-sm"
-              placeholder={item.measurementType === "kg" ? "kg o gramos" : "Cantidad"}
+              placeholder={
+                item.measurementType === "kg" ? "kg o gramos" : "Cantidad"
+              }
               title={
                 item.measurementType === "kg"
                   ? "Puedes ingresar kg (ej. 1.5) o gramos enteros (ej. 1500)."
@@ -782,7 +872,10 @@ const PosCartItemCard = memo(function PosCartItemCard({
               }
               disabled={isSaleCommitted}
               onBlur={(event) => {
-                const committed = onCommitManualQuantity(item, event.target.value);
+                const committed = onCommitManualQuantity(
+                  item,
+                  event.target.value
+                );
                 if (!committed) {
                   event.target.value = formatThresholdQuantity(
                     toSafeNumber(item.quantity, 0)
@@ -905,7 +998,15 @@ const PosCatalogCard = memo(function PosCatalogCard({
   const [searchQuery, setSearchQuery] = useState("");
   const [scanQuery, setScanQuery] = useState("");
   const [isSearchDropdownOpen, setIsSearchDropdownOpen] = useState(false);
+  const [queuedScanCount, setQueuedScanCount] = useState(0);
+  const [isProcessingScanQueue, setIsProcessingScanQueue] = useState(false);
   const scanInputRef = useRef<HTMLInputElement | null>(null);
+  const scanQueueRef = useRef<string[]>([]);
+  const isProcessingScanQueueRef = useRef(false);
+  const lastSubmittedScanRef = useRef<{ value: string; submittedAt: number }>({
+    value: "",
+    submittedAt: 0,
+  });
   const deferredSearchQuery = useDeferredValue(searchQuery);
   const debouncedSearch = useDebouncedValue(deferredSearchQuery, 250);
   const {
@@ -950,20 +1051,63 @@ const PosCatalogCard = memo(function PosCatalogCard({
     });
   }, [isSaleCommitted, isPaymentConfirmOpen]);
 
-  const handleScan = useCallback(async (rawCode?: string) => {
-    const code = (rawCode ?? scanQuery).trim();
-    if (!code) {
-      focusScanInput();
-      return;
-    }
+  const processScanQueue = useCallback(async () => {
+    if (isProcessingScanQueueRef.current) return;
+    isProcessingScanQueueRef.current = true;
+    setIsProcessingScanQueue(true);
 
-    const added = await onScanCode(code);
-    if (added) {
-      setScanQuery("");
+    try {
+      while (scanQueueRef.current.length > 0) {
+        const nextCode = scanQueueRef.current.shift();
+        setQueuedScanCount(scanQueueRef.current.length);
+        if (!nextCode) continue;
+        await onScanCode(nextCode);
+      }
+    } finally {
+      isProcessingScanQueueRef.current = false;
+      setIsProcessingScanQueue(false);
+      setQueuedScanCount(scanQueueRef.current.length);
+      focusScanInput();
     }
-    setIsSearchDropdownOpen(false);
-    focusScanInput();
-  }, [scanQuery, onScanCode, focusScanInput]);
+  }, [onScanCode, focusScanInput]);
+
+  const enqueueScannedCodes = useCallback(
+    (rawCode: string) => {
+      if (isSaleCommitted || isPaymentConfirmOpen) return false;
+      const normalizedInput = String(rawCode ?? "").trim();
+      if (!normalizedInput) return false;
+
+      const deltaInput = extractBurstScanDelta(
+        normalizedInput,
+        lastSubmittedScanRef.current.value,
+        lastSubmittedScanRef.current.submittedAt
+      );
+      lastSubmittedScanRef.current = {
+        value: normalizedInput,
+        submittedAt: Date.now(),
+      };
+
+      const nextCodes = splitScannerPayload(deltaInput || normalizedInput);
+      if (nextCodes.length === 0) return false;
+      scanQueueRef.current.push(...nextCodes);
+      setQueuedScanCount(scanQueueRef.current.length);
+      void processScanQueue();
+      return true;
+    },
+    [isSaleCommitted, isPaymentConfirmOpen, processScanQueue]
+  );
+
+  const handleScan = useCallback(
+    (rawCode?: string) => {
+      const rawInput = String(rawCode ?? scanQuery ?? "");
+      const queued = enqueueScannedCodes(rawInput);
+      setScanQuery("");
+      setIsSearchDropdownOpen(false);
+      focusScanInput();
+      return queued;
+    },
+    [scanQuery, enqueueScannedCodes, focusScanInput]
+  );
 
   const handleSelectProduct = useCallback(
     async (product: Product) => {
@@ -1002,10 +1146,22 @@ const PosCatalogCard = memo(function PosCatalogCard({
                 disabled={isSaleCommitted}
               />
             </div>
-            <Button onClick={() => void handleScan()} disabled={isSaleCommitted}>
+            <Button
+              onClick={() => void handleScan()}
+              disabled={isSaleCommitted}
+            >
               Agregar
             </Button>
           </div>
+          {(isProcessingScanQueue || queuedScanCount > 0) && (
+            <p className="text-xs text-muted-foreground">
+              {queuedScanCount > 0
+                ? `Cola de escaneo: ${queuedScanCount} pendiente${
+                    queuedScanCount === 1 ? "" : "s"
+                  }.`
+                : "Procesando escaneo..."}
+            </p>
+          )}
 
           <div className="flex flex-col gap-4 sm:flex-row">
             <div className="relative flex-1">
@@ -1140,18 +1296,27 @@ const PosPaymentCard = memo(function PosPaymentCard({
   itemCount,
   total,
   totalInitialPayments,
+  pendingAfterInitialPayments,
   changeDuePreview,
+  transferExcessPreview,
   cashPaymentAmount,
   transferPaymentAmount,
+  pendingPaymentReason,
+  isPendingReasonRequired,
   onCashPaymentAmountChange,
   onTransferPaymentAmountChange,
   onCashPaymentAmountBlur,
   onTransferPaymentAmountBlur,
+  onPendingPaymentReasonChange,
   onHandlePayment,
   onClearCart,
   isProcessingPayment,
   isSaleCommitted,
 }: PosPaymentCardProps) {
+  const showPendingReasonInput =
+    cartLength > 0 &&
+    (pendingAfterInitialPayments > 0 || pendingPaymentReason.trim().length > 0);
+
   return (
     <Card>
       <CardHeader>
@@ -1176,6 +1341,12 @@ const PosPaymentCard = memo(function PosPaymentCard({
               <span>${formatMoney(changeDuePreview)}</span>
             </div>
           )}
+          {transferExcessPreview > 0 && (
+            <div className="flex justify-between text-sm font-semibold text-blue-700">
+              <span>Excedente transferido:</span>
+              <span>${formatMoney(transferExcessPreview)}</span>
+            </div>
+          )}
           <Separator />
           <div className="flex justify-between font-bold">
             <span>Total:</span>
@@ -1194,9 +1365,9 @@ const PosPaymentCard = memo(function PosPaymentCard({
                 </label>
                 <Input
                   type="text"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={cashPaymentAmount}
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={formatWholeAmountInput(cashPaymentAmount)}
                   onChange={(event) =>
                     onCashPaymentAmountChange(event.target.value)
                   }
@@ -1210,9 +1381,9 @@ const PosPaymentCard = memo(function PosPaymentCard({
                 </label>
                 <Input
                   type="text"
-                  inputMode="decimal"
-                  placeholder="0.00"
-                  value={transferPaymentAmount}
+                  inputMode="numeric"
+                  placeholder="0"
+                  value={formatWholeAmountInput(transferPaymentAmount)}
                   onChange={(event) =>
                     onTransferPaymentAmountChange(event.target.value)
                   }
@@ -1221,6 +1392,28 @@ const PosPaymentCard = memo(function PosPaymentCard({
                 />
               </div>
             </div>
+            {showPendingReasonInput ? (
+              <div className="space-y-1">
+                <label className="text-md font-bold text-muted-foreground">
+                  Motivo de pendiente{" "}
+                  {isPendingReasonRequired ? "*" : "(opcional)"}
+                </label>
+                <Input
+                  value={pendingPaymentReason}
+                  maxLength={POS_PENDING_REASON_MAX_LENGTH}
+                  placeholder="Ej: saldo a regularizar manana"
+                  onChange={(event) =>
+                    onPendingPaymentReasonChange(event.target.value)
+                  }
+                  className="h-10"
+                />
+                <p className="text-[11px] text-muted-foreground">
+                  {isPendingReasonRequired
+                    ? "Si no se cobra nada al momento, este motivo es obligatorio."
+                    : `Maximo ${POS_PENDING_REASON_MAX_LENGTH} caracteres.`}
+                </p>
+              </div>
+            ) : null}
           </div>
           {cartLength === 0 ? (
             <p className="text-center text-xs text-muted-foreground">
@@ -1237,7 +1430,11 @@ const PosPaymentCard = memo(function PosPaymentCard({
           </Button>
           <AlertDialog>
             <AlertDialogTrigger asChild>
-              <Button className="w-full" variant="ghost" disabled={cartLength === 0}>
+              <Button
+                className="w-full"
+                variant="ghost"
+                disabled={cartLength === 0}
+              >
                 Limpiar Carrito
               </Button>
             </AlertDialogTrigger>
@@ -1275,15 +1472,21 @@ function PosPaymentConfirmDialog({
   totalInitialPayments,
   itemCount,
   changeDuePreview,
+  transferExcessPreview,
   pendingAfterInitialPayments,
   previewItems,
   previewTotalUnits,
   previewBranchName,
   previewCashierName,
   paymentPreviewRows,
+  pendingPaymentReason,
+  saleNote,
+  onSaleNoteChange,
   onProcessPayment,
 }: PosPaymentConfirmDialogProps) {
   if (!open) return null;
+  const normalizedPendingPaymentReason = pendingPaymentReason.trim();
+  const normalizedSaleNote = saleNote.trim();
 
   return (
     <Dialog
@@ -1308,8 +1511,8 @@ function PosPaymentConfirmDialog({
                   Confirmar venta
                 </DialogTitle>
                 <DialogDescription className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                  Revisa el detalle, los pagos cargados y el importe a devolver
-                  antes de registrar definitivamente la venta.
+                  Revisa el detalle y los pagos cargados antes de registrar
+                  definitivamente la venta.
                 </DialogDescription>
               </DialogHeader>
 
@@ -1338,7 +1541,8 @@ function PosPaymentConfirmDialog({
                     {itemCount}
                   </p>
                   <p className="mt-1 text-xs text-muted-foreground">
-                    {formatThresholdQuantity(previewTotalUnits)} unidades totales
+                    {formatThresholdQuantity(previewTotalUnits)} unidades
+                    totales
                   </p>
                 </div>
               </div>
@@ -1349,6 +1553,8 @@ function PosPaymentConfirmDialog({
                 <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/90">
                   {changeDuePreview > 0
                     ? "Vuelto a entregar"
+                    : transferExcessPreview > 0
+                    ? "Excedente transferido"
                     : pendingAfterInitialPayments > 0
                     ? "Saldo pendiente"
                     : "Pago exacto"}
@@ -1358,6 +1564,8 @@ function PosPaymentConfirmDialog({
                   {formatMoney(
                     changeDuePreview > 0
                       ? changeDuePreview
+                      : transferExcessPreview > 0
+                      ? transferExcessPreview
                       : pendingAfterInitialPayments > 0
                       ? pendingAfterInitialPayments
                       : 0
@@ -1365,7 +1573,9 @@ function PosPaymentConfirmDialog({
                 </p>
                 <p className="mt-3 text-sm leading-6 text-white/90">
                   {changeDuePreview > 0
-                    ? "Este es el importe que deberias devolver al cliente al cerrar la operacion."
+                    ? "Este es el importe que deberias devolver al cerrar la operacion."
+                    : transferExcessPreview > 0
+                    ? "El excedente por transferencia es informativo y no genera vuelto."
                     : pendingAfterInitialPayments > 0
                     ? "La venta se registrara con saldo pendiente si continuas."
                     : "El importe cargado coincide exactamente con el total."}
@@ -1386,7 +1596,10 @@ function PosPaymentConfirmDialog({
 
             <div className="max-h-[34vh] space-y-3 overflow-y-auto pr-1 sm:max-h-[38vh]">
               {previewItems.map((item) => (
-                <div key={item.id} className="rounded-2xl border bg-card p-4 shadow-sm">
+                <div
+                  key={item.id}
+                  className="rounded-2xl border bg-card p-4 shadow-sm"
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
                       <p className="truncate text-sm font-bold">{item.name}</p>
@@ -1474,14 +1687,35 @@ function PosPaymentConfirmDialog({
                           <p className="text-sm font-semibold">
                             {getPaymentMethodLabel(payment.method)}
                           </p>
+                          {payment.method === "TRANSFER" &&
+                          payment.receivedAmount > payment.appliedAmount ? (
+                            <Badge className="mt-2 bg-blue-100 text-blue-800 hover:bg-blue-100">
+                              Excedente transferido
+                            </Badge>
+                          ) : null}
                           {payment.reference ? (
                             <p className="mt-1 text-xs text-muted-foreground">
                               Ref: {payment.reference}
                             </p>
                           ) : null}
+                          <div className="mt-2 space-y-1 text-xs text-muted-foreground">
+                            <p>
+                              Aplicado: ${formatMoney(payment.appliedAmount)}
+                            </p>
+                            <p>
+                              Ingresado: ${formatMoney(payment.receivedAmount)}
+                            </p>
+                            {payment.method === "CASH" &&
+                            Number(payment.changeAmount ?? 0) > 0 ? (
+                              <p>
+                                Vuelto: $
+                                {formatMoney(payment.changeAmount ?? 0)}
+                              </p>
+                            ) : null}
+                          </div>
                         </div>
                         <p className="text-sm font-black">
-                          ${formatMoney(payment.amount)}
+                          ${formatMoney(payment.receivedAmount)}
                         </p>
                       </div>
                     </div>
@@ -1492,6 +1726,38 @@ function PosPaymentConfirmDialog({
                     saldo pendiente.
                   </p>
                 )}
+                {pendingAfterInitialPayments > 0 &&
+                normalizedPendingPaymentReason ? (
+                  <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                      Motivo pendiente
+                    </p>
+                    <p className="mt-1 text-sm text-amber-900">
+                      {normalizedPendingPaymentReason}
+                    </p>
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border bg-card p-5 shadow-sm">
+              <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
+                Nota de la venta
+              </h3>
+              <div className="mt-4 space-y-2">
+                <Textarea
+                  value={saleNote}
+                  onChange={(event) => onSaleNoteChange(event.target.value)}
+                  placeholder="Agrega una nota opcional para esta venta"
+                  maxLength={POS_SALE_NOTE_MAX_LENGTH}
+                  className="min-h-[120px] resize-none"
+                />
+                <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                  <span>Visible luego en el detalle de la venta.</span>
+                  <span>
+                    {normalizedSaleNote.length}/{POS_SALE_NOTE_MAX_LENGTH}
+                  </span>
+                </div>
               </div>
             </div>
 
@@ -1521,6 +1787,8 @@ function PosPaymentConfirmDialog({
                   <span>
                     {changeDuePreview > 0
                       ? "Vuelto"
+                      : transferExcessPreview > 0
+                      ? "Excedente transferido"
                       : pendingAfterInitialPayments > 0
                       ? "Saldo"
                       : "Diferencia"}
@@ -1530,6 +1798,8 @@ function PosPaymentConfirmDialog({
                     {formatMoney(
                       changeDuePreview > 0
                         ? changeDuePreview
+                        : transferExcessPreview > 0
+                        ? transferExcessPreview
                         : pendingAfterInitialPayments > 0
                         ? pendingAfterInitialPayments
                         : 0
@@ -1585,6 +1855,8 @@ export function POSModule() {
   const [cashPaymentAmount, setCashPaymentAmount] = useState("");
   const [transferPaymentAmount, setTransferPaymentAmount] = useState("");
   const [transferReference, setTransferReference] = useState("");
+  const [pendingPaymentReason, setPendingPaymentReason] = useState("");
+  const [saleNote, setSaleNote] = useState("");
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isSaleCommitted, setIsSaleCommitted] = useState(false);
@@ -1597,16 +1869,16 @@ export function POSModule() {
     [currentUser?.id, branchId]
   );
   const handleCashPaymentAmountChange = useCallback((value: string) => {
-    setCashPaymentAmount(sanitizeMoneyInput(value));
+    setCashPaymentAmount(normalizeWholeAmountInput(value));
   }, []);
   const handleTransferPaymentAmountChange = useCallback((value: string) => {
-    setTransferPaymentAmount(sanitizeMoneyInput(value));
+    setTransferPaymentAmount(normalizeWholeAmountInput(value));
   }, []);
   const handleCashPaymentAmountBlur = useCallback(() => {
-    setCashPaymentAmount((prev) => formatMoneyInput(prev));
+    setCashPaymentAmount((prev) => normalizeWholeAmountInput(prev));
   }, []);
   const handleTransferPaymentAmountBlur = useCallback(() => {
-    setTransferPaymentAmount((prev) => formatMoneyInput(prev));
+    setTransferPaymentAmount((prev) => normalizeWholeAmountInput(prev));
   }, []);
 
   useEffect(() => {
@@ -1634,9 +1906,15 @@ export function POSModule() {
 
     if (restoredCart.length > 0) {
       setCart(restoredCart);
-      setCashPaymentAmount(persisted.cashPaymentAmount);
-      setTransferPaymentAmount(persisted.transferPaymentAmount);
+      setCashPaymentAmount(
+        normalizeWholeAmountInput(persisted.cashPaymentAmount)
+      );
+      setTransferPaymentAmount(
+        normalizeWholeAmountInput(persisted.transferPaymentAmount)
+      );
       setTransferReference(persisted.transferReference);
+      setPendingPaymentReason(persisted.pendingPaymentReason);
+      setSaleNote(persisted.saleNote);
       setIsSaleCommitted(false);
 
       toast({
@@ -1664,7 +1942,9 @@ export function POSModule() {
         cart.length === 0 &&
         !cashPaymentAmount.trim() &&
         !transferPaymentAmount.trim() &&
-        !transferReference.trim();
+        !transferReference.trim() &&
+        !pendingPaymentReason.trim() &&
+        !saleNote.trim();
 
       if (isEmptyState) {
         window.localStorage.removeItem(posCartStorageKey);
@@ -1682,6 +1962,8 @@ export function POSModule() {
         cashPaymentAmount,
         transferPaymentAmount,
         transferReference,
+        pendingPaymentReason,
+        saleNote,
       };
 
       window.localStorage.setItem(posCartStorageKey, JSON.stringify(payload));
@@ -1699,6 +1981,8 @@ export function POSModule() {
     cashPaymentAmount,
     transferPaymentAmount,
     transferReference,
+    pendingPaymentReason,
+    saleNote,
     currentUser?.id,
     branchId,
   ]);
@@ -1725,6 +2009,11 @@ export function POSModule() {
     if (branchChanged && cart.length > 0) {
       setCart([]);
       setIsSaleCommitted(false);
+      setCashPaymentAmount("");
+      setTransferPaymentAmount("");
+      setTransferReference("");
+      setPendingPaymentReason("");
+      setSaleNote("");
       toast({
         title: "Sucursal cambiada",
         description:
@@ -1739,7 +2028,10 @@ export function POSModule() {
     const categoryLabel = getLooseCategoryLabel(
       (product as Product & { category?: unknown }).category
     );
-    if (categoryLabel !== "Sin categoria" && !isOpaqueIdentifier(categoryLabel)) {
+    if (
+      categoryLabel !== "Sin categoria" &&
+      !isOpaqueIdentifier(categoryLabel)
+    ) {
       return categoryLabel;
     }
 
@@ -1809,59 +2101,132 @@ export function POSModule() {
       : "stock --";
   };
 
-  const addToCart = useCallback((
-    product: Product,
-    options?: {
-      quantity?: number;
-      backendUnitPrice?: number;
-      backendSubtotal?: number;
-      backendPriceType?: PriceType;
-      backendPricingSource?: PricingMode;
-    }
-  ) => {
-    if (branchId && product.branchId && product.branchId !== branchId) {
-      toast({
-        variant: "destructive",
-        title: "Producto de otra sucursal",
-        description: "No puedes vender productos de una sucursal diferente.",
-      });
-      return;
-    }
+  const addToCart = useCallback(
+    (
+      product: Product,
+      options?: {
+        quantity?: number;
+        backendUnitPrice?: number;
+        backendSubtotal?: number;
+        backendPriceType?: PriceType;
+        backendPricingSource?: PricingMode;
+      }
+    ) => {
+      if (branchId && product.branchId && product.branchId !== branchId) {
+        toast({
+          variant: "destructive",
+          title: "Producto de otra sucursal",
+          description: "No puedes vender productos de una sucursal diferente.",
+        });
+        return;
+      }
 
-    const stock = toSafeNumber(product.stock, Number.NaN);
-    const hasKnownStock = Number.isFinite(stock);
-    const trackStock = product.trackStock !== false;
+      const stock = toSafeNumber(product.stock, Number.NaN);
+      const hasKnownStock = Number.isFinite(stock);
+      const trackStock = product.trackStock !== false;
 
-    if (trackStock && hasKnownStock && stock <= 0) {
-      toast({
-        title: "Sin stock",
-        description: `No hay unidades disponibles de ${product.name}`,
-        variant: "destructive",
-      });
-      return;
-    }
+      if (trackStock && hasKnownStock && stock <= 0) {
+        toast({
+          title: "Sin stock",
+          description: `No hay unidades disponibles de ${product.name}`,
+          variant: "destructive",
+        });
+        return;
+      }
 
-    const step = getQuantityStep(product);
-    const requestedQuantity =
-      options?.quantity && options.quantity > 0
-        ? roundTo(options.quantity, 3)
-        : isWeighableProduct(product)
-        ? step
-        : 1;
-    const normalizedBackendUnitPrice = toSafeNumber(
-      options?.backendUnitPrice,
-      NaN
-    );
-    const normalizedBackendSubtotal = toSafeNumber(
-      options?.backendSubtotal,
-      NaN
-    );
+      const step = getQuantityStep(product);
+      const requestedQuantity =
+        options?.quantity && options.quantity > 0
+          ? roundTo(options.quantity, 3)
+          : isWeighableProduct(product)
+          ? step
+          : 1;
+      const normalizedBackendUnitPrice = toSafeNumber(
+        options?.backendUnitPrice,
+        NaN
+      );
+      const normalizedBackendSubtotal = toSafeNumber(
+        options?.backendSubtotal,
+        NaN
+      );
 
-    setCart((prev) => {
-      const existing = prev.find((item) => item.id === product.id);
-      if (existing) {
-        const nextQuantity = roundTo(existing.quantity + requestedQuantity, 3);
-        if (trackStock && hasKnownStock && nextQuantity > stock) {
+      setCart((prev) => {
+        const existing = prev.find((item) => item.id === product.id);
+        if (existing) {
+          const nextQuantity = roundTo(
+            existing.quantity + requestedQuantity,
+            3
+          );
+          if (trackStock && hasKnownStock && nextQuantity > stock) {
+            toast({
+              title: "Stock limitado",
+              description: `Solo hay ${stock} disponibles de ${product.name}`,
+              variant: "destructive",
+            });
+            return prev;
+          }
+
+          const nextBackendUnitPrice =
+            Number.isFinite(normalizedBackendUnitPrice) &&
+            existing.pricingMode === "AUTO"
+              ? normalizedBackendUnitPrice
+              : existing.backendUnitPrice;
+          const nextBackendSubtotal =
+            Number.isFinite(normalizedBackendSubtotal) &&
+            existing.pricingMode === "AUTO"
+              ? normalizedBackendSubtotal
+              : Number.isFinite(toSafeNumber(nextBackendUnitPrice, NaN)) &&
+                existing.pricingMode === "AUTO"
+              ? roundTo(toSafeNumber(nextBackendUnitPrice, 0) * nextQuantity, 2)
+              : existing.backendSubtotal;
+
+          return prev.map((item) =>
+            item.id === product.id
+              ? {
+                  ...item,
+                  costPrice: toSafeNumber(product.costPrice, item.costPrice),
+                  wholesalePrice: toSafeNumber(
+                    product.wholesalePrice,
+                    item.wholesalePrice
+                  ),
+                  retailPrice: toSafeNumber(
+                    product.retailPrice,
+                    item.retailPrice
+                  ),
+                  price: pickFirstFinite(
+                    [
+                      product.retailPrice,
+                      product.wholesalePrice,
+                      product.costPrice,
+                    ],
+                    item.price
+                  ),
+                  quantity: nextQuantity,
+                  visualPriceType:
+                    options?.backendPriceType ?? item.visualPriceType,
+                  backendPriceType:
+                    existing.pricingMode === "AUTO"
+                      ? options?.backendPriceType ?? item.backendPriceType
+                      : undefined,
+                  backendPricingSource:
+                    existing.pricingMode === "AUTO"
+                      ? options?.backendPricingSource ??
+                        item.backendPricingSource
+                      : undefined,
+                  backendUnitPrice:
+                    existing.pricingMode === "AUTO"
+                      ? nextBackendUnitPrice
+                      : undefined,
+                  backendSubtotal:
+                    existing.pricingMode === "AUTO"
+                      ? nextBackendSubtotal
+                      : undefined,
+                }
+              : item
+          );
+        }
+
+        if (trackStock && hasKnownStock && requestedQuantity > stock) {
           toast({
             title: "Stock limitado",
             description: `Solo hay ${stock} disponibles de ${product.name}`,
@@ -1870,288 +2235,248 @@ export function POSModule() {
           return prev;
         }
 
-        const nextBackendUnitPrice =
-          Number.isFinite(normalizedBackendUnitPrice) &&
-          existing.pricingMode === "AUTO"
-            ? normalizedBackendUnitPrice
-            : existing.backendUnitPrice;
-        const nextBackendSubtotal =
-          Number.isFinite(normalizedBackendSubtotal) &&
-          existing.pricingMode === "AUTO"
-            ? normalizedBackendSubtotal
-            : Number.isFinite(toSafeNumber(nextBackendUnitPrice, NaN)) &&
-              existing.pricingMode === "AUTO"
-            ? roundTo(toSafeNumber(nextBackendUnitPrice, 0) * nextQuantity, 2)
-            : existing.backendSubtotal;
+        const backendUnitPrice = Number.isFinite(normalizedBackendUnitPrice)
+          ? normalizedBackendUnitPrice
+          : undefined;
+        const backendSubtotal = Number.isFinite(normalizedBackendSubtotal)
+          ? normalizedBackendSubtotal
+          : undefined;
 
-        return prev.map((item) =>
-          item.id === product.id
-            ? {
-                ...item,
-                costPrice: toSafeNumber(product.costPrice, item.costPrice),
-                wholesalePrice: toSafeNumber(
-                  product.wholesalePrice,
-                  item.wholesalePrice
-                ),
-                retailPrice: toSafeNumber(product.retailPrice, item.retailPrice),
-                price: pickFirstFinite(
-                  [product.retailPrice, product.wholesalePrice, product.costPrice],
-                  item.price
-                ),
-                quantity: nextQuantity,
-                visualPriceType:
-                  options?.backendPriceType ?? item.visualPriceType,
-                backendPriceType:
-                  existing.pricingMode === "AUTO"
-                    ? options?.backendPriceType ?? item.backendPriceType
-                    : undefined,
-                backendPricingSource:
-                  existing.pricingMode === "AUTO"
-                    ? options?.backendPricingSource ?? item.backendPricingSource
-                    : undefined,
-                backendUnitPrice:
-                  existing.pricingMode === "AUTO"
-                    ? nextBackendUnitPrice
-                    : undefined,
-                backendSubtotal:
-                  existing.pricingMode === "AUTO"
-                    ? nextBackendSubtotal
-                    : undefined,
-              }
-            : item
-        );
-      }
+        return [
+          ...prev,
+          {
+            ...product,
+            quantity: requestedQuantity,
+            pricingMode: "AUTO",
+            requestedPriceType: undefined,
+            manualOverrideReason: "",
+            visualPriceType: options?.backendPriceType ?? "RETAIL",
+            backendPriceType: options?.backendPriceType,
+            backendPricingSource: options?.backendPricingSource,
+            backendUnitPrice,
+            backendSubtotal,
+          },
+        ];
+      });
+      setIsSaleCommitted(false);
+    },
+    [branchId, toast]
+  );
 
-      if (trackStock && hasKnownStock && requestedQuantity > stock) {
+  const updateQuantity = useCallback(
+    (id: string, quantity: number) => {
+      const inCart = cart.find((product) => product.id === id);
+      const normalizedQuantity = roundTo(quantity, 3);
+      const maxStock = pickFirstFinite([inCart?.stock], NaN);
+      const hasReliableStockLimit =
+        Number.isFinite(maxStock) && toSafeNumber(maxStock, 0) > 0;
+
+      if (inCart && hasReliableStockLimit && normalizedQuantity > maxStock) {
         toast({
-          title: "Stock limitado",
-          description: `Solo hay ${stock} disponibles de ${product.name}`,
+          title: "Stock insuficiente",
+          description: `No puedes agregar mas de ${formatThresholdQuantity(
+            maxStock
+          )} ${getMeasurementLabel(inCart)}`,
           variant: "destructive",
         });
-        return prev;
+        return;
       }
 
-      const backendUnitPrice = Number.isFinite(normalizedBackendUnitPrice)
-        ? normalizedBackendUnitPrice
-        : undefined;
-      const backendSubtotal = Number.isFinite(normalizedBackendSubtotal)
-        ? normalizedBackendSubtotal
-        : undefined;
+      if (normalizedQuantity <= 0) {
+        setCart((prev) => prev.filter((item) => item.id !== id));
+        return;
+      }
 
-      return [
-        ...prev,
-        {
-          ...product,
-          quantity: requestedQuantity,
-          pricingMode: "AUTO",
-          requestedPriceType: undefined,
-          manualOverrideReason: "",
-          visualPriceType: options?.backendPriceType ?? "RETAIL",
-          backendPriceType: options?.backendPriceType,
-          backendPricingSource: options?.backendPricingSource,
-          backendUnitPrice,
-          backendSubtotal,
-        },
-      ];
-    });
-    setIsSaleCommitted(false);
-  }, [branchId, toast]);
+      setCart((prev) =>
+        prev.map((item) =>
+          item.id === id
+            ? {
+                ...item,
+                quantity: normalizedQuantity,
+              }
+            : item
+        )
+      );
+      setIsSaleCommitted(false);
+    },
+    [cart, toast]
+  );
 
-  const updateQuantity = useCallback((id: string, quantity: number) => {
-    const inCart = cart.find((product) => product.id === id);
-    const normalizedQuantity = roundTo(quantity, 3);
-    const maxStock = pickFirstFinite([inCart?.stock], NaN);
-    const hasReliableStockLimit =
-      Number.isFinite(maxStock) && toSafeNumber(maxStock, 0) > 0;
+  const commitManualQuantity = useCallback(
+    (item: CartItem, rawValue: string) => {
+      const normalizedValue = rawValue.replace(",", ".").trim();
+      if (!normalizedValue) return false;
 
-    if (inCart && hasReliableStockLimit && normalizedQuantity > maxStock) {
-      toast({
-        title: "Stock insuficiente",
-        description: `No puedes agregar mas de ${formatThresholdQuantity(
-          maxStock
-        )} ${getMeasurementLabel(inCart)}`,
-        variant: "destructive",
-      });
-      return;
-    }
+      const parsedQuantity = Number(normalizedValue);
+      if (!Number.isFinite(parsedQuantity)) {
+        toast({
+          variant: "destructive",
+          title: "Cantidad invalida",
+          description: "Ingresa una cantidad numerica valida.",
+        });
+        return false;
+      }
 
-    if (normalizedQuantity <= 0) {
-      setCart((prev) => prev.filter((item) => item.id !== id));
-      return;
-    }
+      let resolvedQuantity = parsedQuantity;
+      const inputHasDecimals = rawValue.includes(".") || rawValue.includes(",");
+      const shouldInterpretAsGrams =
+        item.measurementType === "kg" &&
+        !inputHasDecimals &&
+        Number.isInteger(parsedQuantity) &&
+        parsedQuantity >= 100;
 
-    setCart((prev) =>
-      prev.map((item) =>
-        item.id === id
-          ? {
+      if (shouldInterpretAsGrams) {
+        resolvedQuantity = parsedQuantity / 1000;
+      }
+
+      updateQuantity(item.id, resolvedQuantity);
+      return true;
+    },
+    [toast, updateQuantity]
+  );
+
+  const updatePricingPreference = useCallback(
+    (id: string, selection: "AUTO" | "RETAIL" | "WHOLESALE") => {
+      setCart((prev) =>
+        prev.map((item) => {
+          if (item.id !== id) return item;
+
+          if (selection === "AUTO") {
+            return {
               ...item,
-              quantity: normalizedQuantity,
-            }
-          : item
-      )
-    );
-    setIsSaleCommitted(false);
-  }, [cart, toast]);
+              pricingMode: "AUTO" as const,
+              requestedPriceType: undefined,
+              backendPriceType: undefined,
+              backendPricingSource: undefined,
+              backendUnitPrice: undefined,
+              backendSubtotal: undefined,
+            };
+          }
 
-  const commitManualQuantity = useCallback((item: CartItem, rawValue: string) => {
-    const normalizedValue = rawValue.replace(",", ".").trim();
-    if (!normalizedValue) return false;
-
-    const parsedQuantity = Number(normalizedValue);
-    if (!Number.isFinite(parsedQuantity)) {
-      toast({
-        variant: "destructive",
-        title: "Cantidad invalida",
-        description: "Ingresa una cantidad numerica valida.",
-      });
-      return false;
-    }
-
-    let resolvedQuantity = parsedQuantity;
-    const inputHasDecimals = rawValue.includes(".") || rawValue.includes(",");
-    const shouldInterpretAsGrams =
-      item.measurementType === "kg" &&
-      !inputHasDecimals &&
-      Number.isInteger(parsedQuantity) &&
-      parsedQuantity >= 100;
-
-    if (shouldInterpretAsGrams) {
-      resolvedQuantity = parsedQuantity / 1000;
-    }
-
-    updateQuantity(item.id, resolvedQuantity);
-    return true;
-  }, [toast, updateQuantity]);
-
-  const updatePricingPreference = useCallback((
-    id: string,
-    selection: "AUTO" | "RETAIL" | "WHOLESALE"
-  ) => {
-    setCart((prev) =>
-      prev.map((item) => {
-        if (item.id !== id) return item;
-
-        if (selection === "AUTO") {
           return {
             ...item,
-            pricingMode: "AUTO" as const,
-            requestedPriceType: undefined,
+            pricingMode: "MANUAL" as const,
+            requestedPriceType: selection,
+            visualPriceType: selection,
             backendPriceType: undefined,
             backendPricingSource: undefined,
             backendUnitPrice: undefined,
             backendSubtotal: undefined,
           };
-        }
-
-        return {
-          ...item,
-          pricingMode: "MANUAL" as const,
-          requestedPriceType: selection,
-          visualPriceType: selection,
-          backendPriceType: undefined,
-          backendPricingSource: undefined,
-          backendUnitPrice: undefined,
-          backendSubtotal: undefined,
-        };
-      })
-    );
-    setIsSaleCommitted(false);
-  }, []);
+        })
+      );
+      setIsSaleCommitted(false);
+    },
+    []
+  );
 
   const removeFromCart = useCallback((id: string) => {
     setCart((prev) => prev.filter((item) => item.id !== id));
     setIsSaleCommitted(false);
   }, []);
 
-  const handleScanProduct = useCallback(async (code?: unknown) => {
-    const normalizedCode = typeof code === "string" ? code.trim() : "";
-    if (!normalizedCode) return false;
-    if (!branchId) {
-      toast({
-        variant: "destructive",
-        title: "Sucursal requerida",
-        description: "Selecciona una sucursal activa antes de escanear.",
-      });
-      return false;
-    }
-
-    try {
-      const cacheKey = `${branchId ?? "no-branch"}:${normalizedCode}`;
-      const cached = scanCacheRef.current.get(cacheKey);
-      const isCachedFresh =
-        cached && Date.now() - cached.cachedAt < POS_SCAN_CACHE_TTL_MS;
-      const resolved =
-        isCachedFresh && cached
-          ? cached.value
-          : await backendApi.products.resolveBarcode(normalizedCode, {
-              hydrateProductDetails: true,
-              branchId,
-            });
-      const scanned = resolved?.product
-        ? normalizeProductForPos(
-            resolved.product as Product & { id: string; name: string }
-          )
-        : null;
-
-      if (!scanned || !scanned.id) {
+  const handleScanProduct = useCallback(
+    async (code?: unknown) => {
+      if (isSaleCommitted) return false;
+      const normalizedCode = typeof code === "string" ? code.trim() : "";
+      if (!normalizedCode) return false;
+      if (!branchId) {
         toast({
           variant: "destructive",
-          title: "Producto no encontrado",
-          description: `No existe un producto para el codigo ${normalizedCode}.`,
+          title: "Sucursal requerida",
+          description: "Selecciona una sucursal activa antes de escanear.",
         });
         return false;
       }
 
-      scanCacheRef.current.set(cacheKey, {
-        cachedAt: Date.now(),
-        value: {
-          ...resolved,
-          product: scanned,
-        },
-      });
+      try {
+        const cacheKey = `${branchId ?? "no-branch"}:${normalizedCode}`;
+        const cached = scanCacheRef.current.get(cacheKey);
+        const isCachedFresh =
+          cached && Date.now() - cached.cachedAt < POS_SCAN_CACHE_TTL_MS;
+        const resolved =
+          isCachedFresh && cached
+            ? cached.value
+            : await backendApi.products.resolveBarcode(normalizedCode, {
+                hydrateProductDetails: true,
+                branchId,
+              });
+        const scanned = resolved?.product
+          ? normalizeProductForPos(
+              resolved.product as Product & { id: string; name: string }
+            )
+          : null;
 
-      addToCart(scanned as Product, {
-        quantity: Number.isFinite(resolved.quantity ?? NaN)
-          ? resolved.quantity
-          : undefined,
-        backendUnitPrice: Number.isFinite(resolved.unitPrice ?? NaN)
-          ? resolved.unitPrice
-          : undefined,
-        backendSubtotal: Number.isFinite(resolved.subtotal ?? NaN)
-          ? resolved.subtotal
-          : undefined,
-        backendPriceType: resolved.priceType,
-        backendPricingSource: resolved.pricingSource,
-      });
-      return true;
-    } catch (error: unknown) {
-      const message = getErrorMessage(error, "");
-      const normalizedMessage = message.toLowerCase();
-      const isInvalidBarcode =
-        normalizedMessage.includes("barcode invalido") ||
-        normalizedMessage.includes("invalid barcode") ||
-        normalizedMessage.includes("ean");
-      const isMissingPlu =
-        normalizedMessage.includes("plu") &&
-        (normalizedMessage.includes("inexistente") ||
-          normalizedMessage.includes("not found"));
+        if (!scanned || !scanned.id) {
+          toast({
+            variant: "destructive",
+            title: "Producto no encontrado",
+            description: getMissingProductScanMessage(normalizedCode),
+          });
+          return false;
+        }
 
-      toast({
-        variant: "destructive",
-        title: "Error al escanear",
-        description: isInvalidBarcode
-          ? "El codigo escaneado no es valido."
-          : isMissingPlu
-          ? "El PLU del codigo interno no existe en el catalogo."
-          : getErrorMessage(error, "No se pudo procesar el codigo escaneado."),
-      });
-      return false;
-    }
-  }, [branchId, addToCart, toast]);
+        scanCacheRef.current.set(cacheKey, {
+          cachedAt: Date.now(),
+          value: {
+            ...resolved,
+            product: scanned,
+          },
+        });
+
+        addToCart(scanned as Product, {
+          quantity: Number.isFinite(resolved.quantity ?? NaN)
+            ? resolved.quantity
+            : undefined,
+          backendUnitPrice: Number.isFinite(resolved.unitPrice ?? NaN)
+            ? resolved.unitPrice
+            : undefined,
+          backendSubtotal: Number.isFinite(resolved.subtotal ?? NaN)
+            ? resolved.subtotal
+            : undefined,
+          backendPriceType: resolved.priceType,
+          backendPricingSource: resolved.pricingSource,
+        });
+        return true;
+      } catch (error: unknown) {
+        const message = getErrorMessage(error, "");
+        const normalizedMessage = message.toLowerCase();
+        const isInvalidBarcode =
+          normalizedMessage.includes("barcode invalido") ||
+          normalizedMessage.includes("invalid barcode") ||
+          normalizedMessage.includes("ean");
+        const isMissingProduct =
+          normalizedMessage.includes("product not found") ||
+          normalizedMessage.includes("producto no encontrado") ||
+          normalizedMessage.includes("no se encontro el producto") ||
+          normalizedMessage.includes("no existe un producto");
+        const isMissingPlu =
+          normalizedMessage.includes("plu") &&
+          (normalizedMessage.includes("inexistente") ||
+            normalizedMessage.includes("not found"));
+
+        toast({
+          variant: "destructive",
+          title: "Error al escanear",
+          description: isInvalidBarcode
+            ? `El codigo ${normalizedCode} no es valido.`
+            : isMissingPlu || isMissingProduct
+            ? getMissingProductScanMessage(normalizedCode)
+            : getErrorMessage(
+                error,
+                "No se pudo procesar el codigo escaneado."
+              ),
+        });
+        return false;
+      }
+    },
+    [isSaleCommitted, branchId, addToCart, toast]
+  );
 
   const itemCount = cart.length;
   const previewBranchName =
-    branches.find((branch) => branch.id === branchId)?.name ?? "Sucursal actual";
+    branches.find((branch) => branch.id === branchId)?.name ??
+    "Sucursal actual";
   const previewCashierName =
     currentUser?.name ?? currentUser?.email ?? "Usuario actual";
   const {
@@ -2159,33 +2484,45 @@ export function POSModule() {
     totalInitialPayments,
     pendingAfterInitialPayments,
     changeDuePreview,
+    transferExcessPreview,
     paymentPreviewRows,
     previewItems,
     previewTotalUnits,
   } = useMemo(() => {
-    const nextTotal = cart.reduce((sum, item) => sum + getCartLineTotal(item), 0);
-    const cashPaymentPreview = Math.max(0, parseMoneyInput(cashPaymentAmount));
-    const transferPaymentPreview = Math.max(
-      0,
-      parseMoneyInput(transferPaymentAmount)
+    const nextTotal = cart.reduce(
+      (sum, item) => sum + getCartLineTotal(item),
+      0
     );
+    const cashPaymentPreview = parseWholeAmount(cashPaymentAmount);
+    const transferPaymentPreview = parseWholeAmount(transferPaymentAmount);
     const nextTotalInitialPayments =
       cashPaymentPreview + transferPaymentPreview;
+    const cashAppliedPreview = Math.min(cashPaymentPreview, nextTotal);
+    const remainingAfterCash = Math.max(0, nextTotal - cashAppliedPreview);
+    const transferAppliedPreview = Math.min(
+      transferPaymentPreview,
+      remainingAfterCash
+    );
+    const nextChangeDuePreview = Math.max(0, cashPaymentPreview - nextTotal);
+    const nextTransferExcessPreview = Math.max(
+      0,
+      transferPaymentPreview - transferAppliedPreview
+    );
     const nextPaymentPreviewRows: PaymentPreviewRow[] = [];
 
     if (Number.isFinite(cashPaymentPreview) && cashPaymentPreview > 0) {
       nextPaymentPreviewRows.push({
         method: "CASH",
-        amount: cashPaymentPreview,
+        appliedAmount: cashAppliedPreview,
+        receivedAmount: cashPaymentPreview,
+        changeAmount: nextChangeDuePreview,
       });
     }
-    if (
-      Number.isFinite(transferPaymentPreview) &&
-      transferPaymentPreview > 0
-    ) {
+    if (Number.isFinite(transferPaymentPreview) && transferPaymentPreview > 0) {
       nextPaymentPreviewRows.push({
         method: "TRANSFER",
-        amount: transferPaymentPreview,
+        appliedAmount: transferAppliedPreview,
+        receivedAmount: transferPaymentPreview,
         reference: transferReference.trim() || undefined,
       });
     }
@@ -2206,12 +2543,10 @@ export function POSModule() {
       totalInitialPayments: nextTotalInitialPayments,
       pendingAfterInitialPayments: Math.max(
         0,
-        nextTotal - nextTotalInitialPayments
+        nextTotal - (cashAppliedPreview + transferAppliedPreview)
       ),
-      changeDuePreview: Math.max(
-        0,
-        nextTotalInitialPayments - nextTotal
-      ),
+      changeDuePreview: nextChangeDuePreview,
+      transferExcessPreview: nextTransferExcessPreview,
       paymentPreviewRows: nextPaymentPreviewRows,
       previewItems: nextPreviewItems,
       previewTotalUnits: nextPreviewItems.reduce(
@@ -2220,6 +2555,12 @@ export function POSModule() {
       ),
     };
   }, [cart, cashPaymentAmount, transferPaymentAmount, transferReference]);
+
+  const normalizedPendingPaymentReason =
+    normalizePendingPaymentReason(pendingPaymentReason);
+  const normalizedSaleNote = saleNote.trim();
+  const isPendingReasonRequired =
+    total > 0 && totalInitialPayments <= Number.EPSILON;
 
   const ensureOpenCashSession = async () => {
     if (!canManageCash) return true;
@@ -2271,6 +2612,20 @@ export function POSModule() {
       return;
     }
 
+    if (pendingPaymentReason !== normalizedPendingPaymentReason) {
+      setPendingPaymentReason(normalizedPendingPaymentReason);
+    }
+
+    if (isPendingReasonRequired && !normalizedPendingPaymentReason) {
+      toast({
+        variant: "destructive",
+        title: "Motivo requerido",
+        description:
+          "Si dejas la venta sin pago inicial, debes indicar el motivo del pendiente.",
+      });
+      return;
+    }
+
     const canProceed = await ensureOpenCashSession();
     if (!canProceed) return;
 
@@ -2284,6 +2639,8 @@ export function POSModule() {
       cashPaymentAmount: string;
       transferPaymentAmount: string;
       transferReference: string;
+      pendingPaymentReason: string;
+      saleNote: string;
     } | null = null;
 
     try {
@@ -2322,14 +2679,24 @@ export function POSModule() {
         return;
       }
 
+      if (isPendingReasonRequired && !normalizedPendingPaymentReason) {
+        toast({
+          variant: "destructive",
+          title: "Motivo requerido",
+          description:
+            "Si dejas la venta sin pago inicial, debes indicar el motivo del pendiente.",
+        });
+        return;
+      }
+
       setIsProcessingPayment(true);
       const payments: Array<{
         amount: number;
         method: PaymentMethod;
         reference?: string;
       }> = [];
-      const cashAmount = parseMoneyInput(cashPaymentAmount);
-      const transferAmount = parseMoneyInput(transferPaymentAmount);
+      const cashAmount = parseWholeAmount(cashPaymentAmount);
+      const transferAmount = parseWholeAmount(transferPaymentAmount);
       if (Number.isFinite(cashAmount) && cashAmount > 0) {
         payments.push({ amount: cashAmount, method: "CASH" });
       }
@@ -2347,6 +2714,8 @@ export function POSModule() {
         cashPaymentAmount,
         transferPaymentAmount,
         transferReference,
+        pendingPaymentReason,
+        saleNote,
       };
 
       setIsPaymentConfirmOpen(false);
@@ -2372,12 +2741,65 @@ export function POSModule() {
           };
         }),
         payments,
+        notes: buildSaleNotesPayload({
+          pendingReason:
+            pendingAfterInitialPayments > 0
+              ? normalizedPendingPaymentReason
+              : undefined,
+          note: normalizedSaleNote,
+        }),
       });
 
       const paidAmount = Number(createdSale.paidAmount ?? 0);
       const outstandingAmount = Number(createdSale.outstandingAmount ?? 0);
       const backendTotal = Number(createdSale.totalAmount ?? total);
-      const localChangeDue = Math.max(0, totalInitialPayments - backendTotal);
+      const createdSalePayments = Array.isArray(
+        (
+          createdSale as {
+            payments?: Array<{
+              amount?: unknown;
+              method?: unknown;
+              receivedAmount?: unknown;
+              changeAmount?: unknown;
+            }>;
+          }
+        ).payments
+      )
+        ? (
+            createdSale as {
+              payments?: Array<{
+                amount?: unknown;
+                method?: unknown;
+                receivedAmount?: unknown;
+                changeAmount?: unknown;
+              }>;
+            }
+          ).payments ?? []
+        : [];
+      const backendCashChange = createdSalePayments.reduce((sum, payment) => {
+        const isCash = String(payment.method ?? "").toUpperCase() === "CASH";
+        if (!isCash) return sum;
+        return sum + Number(payment.changeAmount ?? 0);
+      }, 0);
+      const backendTransferExcess = createdSalePayments.reduce(
+        (sum, payment) => {
+          const isTransfer =
+            String(payment.method ?? "").toUpperCase() === "TRANSFER";
+          if (!isTransfer) return sum;
+          const appliedAmount = Number(payment.amount ?? 0);
+          const receivedAmount = Number(
+            payment.receivedAmount ?? appliedAmount
+          );
+          return sum + Math.max(0, receivedAmount - appliedAmount);
+        },
+        0
+      );
+      const effectiveCashChange =
+        backendCashChange > 0 ? backendCashChange : changeDuePreview;
+      const effectiveTransferExcess =
+        backendTransferExcess > 0
+          ? backendTransferExcess
+          : transferExcessPreview;
       toast({
         title: "Venta registrada",
         description:
@@ -2385,10 +2807,16 @@ export function POSModule() {
             ? `Total $${formatMoney(backendTotal)}. Cobrado $${formatMoney(
                 paidAmount
               )}. Saldo pendiente $${formatMoney(outstandingAmount)}.`
-            : localChangeDue > 0
+            : effectiveCashChange > 0
+            ? `Total $${formatMoney(backendTotal)}. Vuelto $${formatMoney(
+                effectiveCashChange
+              )}.`
+            : effectiveTransferExcess > 0
             ? `Total $${formatMoney(
                 backendTotal
-              )}. Vuelto sugerido $${formatMoney(localChangeDue)}.`
+              )}. Excedente transferido $${formatMoney(
+                effectiveTransferExcess
+              )}.`
             : `Total $${formatMoney(backendTotal)} registrado correctamente.`,
       });
       scanCacheRef.current.clear();
@@ -2400,15 +2828,14 @@ export function POSModule() {
         setCashPaymentAmount(rollbackState.cashPaymentAmount);
         setTransferPaymentAmount(rollbackState.transferPaymentAmount);
         setTransferReference(rollbackState.transferReference);
+        setPendingPaymentReason(rollbackState.pendingPaymentReason);
+        setSaleNote(rollbackState.saleNote);
         setIsPaymentConfirmOpen(true);
       }
       toast({
         variant: "destructive",
         title: "Error al registrar venta",
-        description: getErrorMessage(
-          error,
-          "No se pudo registrar la venta."
-        ),
+        description: getErrorMessage(error, "No se pudo registrar la venta."),
       });
     } finally {
       setIsProcessingPayment(false);
@@ -2421,6 +2848,8 @@ export function POSModule() {
     setCashPaymentAmount("");
     setTransferPaymentAmount("");
     setTransferReference("");
+    setPendingPaymentReason("");
+    setSaleNote("");
     if (!options?.silent) {
       toast({
         title: "Carrito vaciado",
@@ -2429,15 +2858,18 @@ export function POSModule() {
     }
   };
 
-  const handleSelectSearchProduct = useCallback(async (product: Product) => {
-    if (isSaleCommitted) return false;
-    const preparedProduct = normalizeProductForPos({
-      ...product,
-      branchId: product.branchId ?? branchId ?? null,
-    });
-    addToCart(preparedProduct);
-    return true;
-  }, [isSaleCommitted, addToCart, branchId]);
+  const handleSelectSearchProduct = useCallback(
+    async (product: Product) => {
+      if (isSaleCommitted) return false;
+      const preparedProduct = normalizeProductForPos({
+        ...product,
+        branchId: product.branchId ?? branchId ?? null,
+      });
+      addToCart(preparedProduct);
+      return true;
+    },
+    [isSaleCommitted, addToCart, branchId]
+  );
 
   const searchQuery = "";
   const scanQuery = "";
@@ -2449,7 +2881,7 @@ export function POSModule() {
   const setSearchQuery: (value: string) => void = () => {};
   const setScanQuery: (value: string) => void = () => {};
   const setIsSearchDropdownOpen: (open: boolean) => void = () => {};
-  const useOptimizedPosView = process.env.NODE_ENV !== "__legacy_pos__";
+  const useOptimizedPosView = String(process.env.NODE_ENV) !== "__legacy_pos__";
 
   if (useOptimizedPosView) {
     return (
@@ -2491,13 +2923,22 @@ export function POSModule() {
               itemCount={itemCount}
               total={total}
               totalInitialPayments={totalInitialPayments}
+              pendingAfterInitialPayments={pendingAfterInitialPayments}
               changeDuePreview={changeDuePreview}
+              transferExcessPreview={transferExcessPreview}
               cashPaymentAmount={cashPaymentAmount}
               transferPaymentAmount={transferPaymentAmount}
               onCashPaymentAmountChange={handleCashPaymentAmountChange}
               onTransferPaymentAmountChange={handleTransferPaymentAmountChange}
               onCashPaymentAmountBlur={handleCashPaymentAmountBlur}
               onTransferPaymentAmountBlur={handleTransferPaymentAmountBlur}
+              pendingPaymentReason={pendingPaymentReason}
+              isPendingReasonRequired={isPendingReasonRequired}
+              onPendingPaymentReasonChange={(value) =>
+                setPendingPaymentReason(
+                  value.slice(0, POS_PENDING_REASON_MAX_LENGTH)
+                )
+              }
               onHandlePayment={handlePayment}
               onClearCart={() => clearCart()}
               isProcessingPayment={isProcessingPayment}
@@ -2514,12 +2955,18 @@ export function POSModule() {
           totalInitialPayments={totalInitialPayments}
           itemCount={itemCount}
           changeDuePreview={changeDuePreview}
+          transferExcessPreview={transferExcessPreview}
           pendingAfterInitialPayments={pendingAfterInitialPayments}
           previewItems={previewItems}
           previewTotalUnits={previewTotalUnits}
           previewBranchName={previewBranchName}
           previewCashierName={previewCashierName}
           paymentPreviewRows={paymentPreviewRows}
+          pendingPaymentReason={normalizedPendingPaymentReason}
+          saleNote={saleNote}
+          onSaleNoteChange={(value) =>
+            setSaleNote(value.slice(0, POS_SALE_NOTE_MAX_LENGTH))
+          }
           onProcessPayment={processPayment}
         />
       </div>
@@ -2731,16 +3178,11 @@ export function POSModule() {
                               {item.name}
                             </h4>
                             <p className="whitespace-nowrap text-xs font-semibold">
-                              Subtotal: $
-                              {roundTo(getCartLineTotal(item), 2).toFixed(2)}
+                              Subtotal: ${formatMoney(getCartLineTotal(item))}
                             </p>
                           </div>
                           <p className="text-xs text-muted-foreground">
-                            $
-                            {toSafeNumber(getDisplayUnitPrice(item), 0).toFixed(
-                              2
-                            )}{" "}
-                            /{" "}
+                            ${formatMoney(getDisplayUnitPrice(item))} /{" "}
                             {item.measurementType === "kg"
                               ? "kg"
                               : item.measurementType === "gram"
@@ -2932,26 +3374,26 @@ export function POSModule() {
             </CardHeader>
             <CardContent className="space-y-4">
               <div className="space-y-2">
-              <div className="flex justify-between text-sm">
-                <span>Subtotal:</span>
-                <span>${formatMoney(total)}</span>
-              </div>
-              <div className="flex justify-between text-sm">
-                <span>Pagos iniciales:</span>
-                <span>${formatMoney(totalInitialPayments)}</span>
-              </div>
-              {changeDuePreview > 0 && (
-                <div className="flex justify-between text-sm font-semibold text-emerald-700">
-                  <span>Vuelto a entregar:</span>
-                  <span>${formatMoney(changeDuePreview)}</span>
+                <div className="flex justify-between text-sm">
+                  <span>Subtotal:</span>
+                  <span>${formatMoney(total)}</span>
                 </div>
-              )}
-              <Separator />
-              <div className="flex justify-between font-bold">
-                <span>Total:</span>
-                <span>${formatMoney(total)}</span>
+                <div className="flex justify-between text-sm">
+                  <span>Pagos iniciales:</span>
+                  <span>${formatMoney(totalInitialPayments)}</span>
+                </div>
+                {changeDuePreview > 0 && (
+                  <div className="flex justify-between text-sm font-semibold text-emerald-700">
+                    <span>Vuelto a entregar:</span>
+                    <span>${formatMoney(changeDuePreview)}</span>
+                  </div>
+                )}
+                <Separator />
+                <div className="flex justify-between font-bold">
+                  <span>Total:</span>
+                  <span>${formatMoney(total)}</span>
+                </div>
               </div>
-            </div>
               <div className="space-y-2">
                 <div className="rounded-md border p-3 space-y-2">
                   <p className="text-xs font-semibold uppercase text-muted-foreground">
@@ -2964,9 +3406,9 @@ export function POSModule() {
                       </label>
                       <Input
                         type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={cashPaymentAmount}
+                        inputMode="numeric"
+                        placeholder="0"
+                        value={formatWholeAmountInput(cashPaymentAmount)}
                         onChange={(event) =>
                           handleCashPaymentAmountChange(event.target.value)
                         }
@@ -2980,9 +3422,9 @@ export function POSModule() {
                       </label>
                       <Input
                         type="text"
-                        inputMode="decimal"
-                        placeholder="0.00"
-                        value={transferPaymentAmount}
+                        inputMode="numeric"
+                        placeholder="0"
+                        value={formatWholeAmountInput(transferPaymentAmount)}
                         onChange={(event) =>
                           handleTransferPaymentAmountChange(event.target.value)
                         }
@@ -3038,298 +3480,57 @@ export function POSModule() {
               </div>
             </CardContent>
           </Card>
+          <PosPaymentCard
+            cartLength={cart.length}
+            itemCount={itemCount}
+            total={total}
+            totalInitialPayments={totalInitialPayments}
+            pendingAfterInitialPayments={pendingAfterInitialPayments}
+            changeDuePreview={changeDuePreview}
+            transferExcessPreview={transferExcessPreview}
+            cashPaymentAmount={cashPaymentAmount}
+            transferPaymentAmount={transferPaymentAmount}
+            pendingPaymentReason={pendingPaymentReason}
+            isPendingReasonRequired={isPendingReasonRequired}
+            onCashPaymentAmountChange={handleCashPaymentAmountChange}
+            onTransferPaymentAmountChange={handleTransferPaymentAmountChange}
+            onCashPaymentAmountBlur={handleCashPaymentAmountBlur}
+            onTransferPaymentAmountBlur={handleTransferPaymentAmountBlur}
+            onPendingPaymentReasonChange={(value) =>
+              setPendingPaymentReason(
+                value.slice(0, POS_PENDING_REASON_MAX_LENGTH)
+              )
+            }
+            onHandlePayment={handlePayment}
+            onClearCart={() => clearCart()}
+            isProcessingPayment={isProcessingPayment}
+            isSaleCommitted={isSaleCommitted}
+          />
         </div>
       </div>
 
-      <Dialog
+      <PosPaymentConfirmDialog
         open={isPaymentConfirmOpen}
-        onOpenChange={(open) => {
-          if (isProcessingPayment) return;
-          setIsPaymentConfirmOpen(open);
-        }}
-      >
-        <DialogContent className="flex max-h-[92vh] w-[min(96vw,1120px)] max-w-5xl flex-col gap-0 overflow-hidden border-0 bg-background p-0 shadow-2xl sm:max-h-[90vh]">
-          <div className="shrink-0 border-b bg-gradient-to-br from-[#E74E7F]/10 via-background to-[#E74E7F]/5 p-5 sm:p-6">
-            <div className="flex flex-col gap-5 xl:flex-row xl:items-start xl:justify-between">
-              <div className="min-w-0 flex-1">
-                <Badge className="rounded-full bg-[#E74E7F]/70 px-3 py-1 text-xs font-semibold text-white hover:bg-[#E74E7F]/70">
-                  Confirmacion previa
-                </Badge>
-                <DialogHeader className="mt-4 text-left">
-                  <DialogTitle className="flex items-center gap-3 text-2xl font-black tracking-tight sm:text-3xl">
-                    <span className="flex h-11 w-11 items-center justify-center rounded-2xl bg-[#E74E7F]/15 text-[#E74E7F]">
-                      <ReceiptText className="h-6 w-6" />
-                    </span>
-                    Confirmar venta
-                  </DialogTitle>
-                  <DialogDescription className="max-w-2xl text-sm leading-6 text-muted-foreground">
-                    Revisa el detalle, los pagos cargados y el importe a
-                    devolver antes de registrar definitivamente la venta.
-                  </DialogDescription>
-                </DialogHeader>
-
-                <div className="mt-4 grid gap-3 sm:grid-cols-3">
-                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      Total
-                    </p>
-                    <p className="mt-2 text-2xl font-black tracking-tight">
-                      ${formatMoney(total)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      Cobrado
-                    </p>
-                    <p className="mt-2 text-2xl font-black tracking-tight">
-                      ${formatMoney(totalInitialPayments)}
-                    </p>
-                  </div>
-                  <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
-                      Items
-                    </p>
-                    <p className="mt-2 text-2xl font-black tracking-tight">
-                      {itemCount}
-                    </p>
-                    <p className="mt-1 text-xs text-muted-foreground">
-                      {formatThresholdQuantity(previewTotalUnits)} unidades
-                      totales
-                    </p>
-                  </div>
-                </div>
-              </div>
-
-              <div className="xl:w-[310px]">
-                <div className="rounded-[28px] border border-[#E74E7F]/25 bg-[#E74E7F]/70 p-5 text-white shadow-xl shadow-[#E74E7F]/20 sm:p-6">
-                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/90">
-                    {changeDuePreview > 0
-                      ? "Vuelto a entregar"
-                      : pendingAfterInitialPayments > 0
-                      ? "Saldo pendiente"
-                      : "Pago exacto"}
-                  </p>
-                  <p className="mt-4 text-4xl font-black tracking-tight sm:text-5xl">
-                    $
-                    {formatMoney(
-                      changeDuePreview > 0
-                        ? changeDuePreview
-                        : pendingAfterInitialPayments > 0
-                        ? pendingAfterInitialPayments
-                        : 0
-                    )}
-                  </p>
-                  <p className="mt-3 text-sm leading-6 text-white/90">
-                    {changeDuePreview > 0
-                      ? "Este es el importe que deberias devolver al cliente al cerrar la operacion."
-                      : pendingAfterInitialPayments > 0
-                      ? "La venta se registrara con saldo pendiente si continuas."
-                      : "El importe cargado coincide exactamente con el total."}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="grid min-h-0 flex-1 gap-6 overflow-y-auto p-5 sm:p-6 xl:grid-cols-[1.5fr_1fr]">
-            <div className="space-y-4">
-              <div className="flex items-center gap-2">
-                <ReceiptText className="h-4 w-4 text-muted-foreground" />
-                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  Detalle vendido
-                </h3>
-              </div>
-
-              <div className="max-h-[34vh] space-y-3 overflow-y-auto pr-1 sm:max-h-[38vh]">
-                {previewItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className="rounded-2xl border bg-card p-4 shadow-sm"
-                  >
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-bold">
-                          {item.name}
-                        </p>
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                          <Badge variant="outline" className="text-[11px]">
-                            {formatThresholdQuantity(item.quantity)}{" "}
-                            {item.measurementType === "kg"
-                              ? "kg"
-                              : item.measurementType === "gram"
-                              ? "gr"
-                              : "un"}
-                          </Badge>
-                          <Badge variant="outline" className="text-[11px]">
-                            {getPriceTypeLabel(item.priceType)}
-                          </Badge>
-                          {item.pricingMode === "MANUAL" ? (
-                            <Badge className="bg-[#E74E7F]/15 text-[11px] font-semibold text-[#C43C69] hover:bg-[#E74E7F]/15">
-                              Manual
-                            </Badge>
-                          ) : null}
-                        </div>
-                      </div>
-                      <div className="text-right">
-                        <p className="text-sm font-black">
-                          ${formatMoney(item.lineTotal)}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          ${formatMoney(item.unitPrice)} c/u
-                        </p>
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="space-y-4">
-              <div className="rounded-2xl border bg-muted/20 p-5">
-                <div className="flex items-center gap-2">
-                  <Clock3 className="h-4 w-4 text-muted-foreground" />
-                  <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                    Datos de la operacion
-                  </h3>
-                </div>
-
-                <div className="mt-4 space-y-3 text-sm">
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Sucursal</span>
-                    <span className="text-right font-semibold">
-                      {previewBranchName}
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Cajero</span>
-                    <span className="text-right font-semibold">
-                      {previewCashierName}
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Productos</span>
-                    <span className="text-right font-semibold">
-                      {itemCount}
-                    </span>
-                  </div>
-                  <div className="flex items-start justify-between gap-3">
-                    <span className="text-muted-foreground">Unidades</span>
-                    <span className="text-right font-semibold">
-                      {formatThresholdQuantity(previewTotalUnits)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="rounded-2xl border bg-card p-5 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  Pagos cargados
-                </h3>
-                <div className="mt-4 space-y-3">
-                  {paymentPreviewRows.length > 0 ? (
-                    paymentPreviewRows.map((payment, index) => (
-                      <div
-                        key={`${payment.method}-${index}`}
-                        className="rounded-xl border bg-muted/20 p-3"
-                      >
-                        <div className="flex items-start justify-between gap-3">
-                          <div>
-                            <p className="text-sm font-semibold">
-                              {getPaymentMethodLabel(payment.method)}
-                            </p>
-                            {payment.reference ? (
-                              <p className="mt-1 text-xs text-muted-foreground">
-                                Ref: {payment.reference}
-                              </p>
-                            ) : null}
-                          </div>
-                          <p className="text-sm font-black">
-                            ${formatMoney(payment.amount)}
-                          </p>
-                        </div>
-                      </div>
-                    ))
-                  ) : (
-                    <p className="text-sm text-muted-foreground">
-                      No cargaste pagos iniciales. La venta se registrara con
-                      saldo pendiente.
-                    </p>
-                  )}
-                </div>
-              </div>
-
-              <div className="rounded-2xl border bg-card p-5 shadow-sm">
-                <h3 className="text-sm font-bold uppercase tracking-[0.18em] text-muted-foreground">
-                  Totales
-                </h3>
-                <div className="mt-4 space-y-3 text-sm">
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Total venta</span>
-                    <span className="font-semibold">${formatMoney(total)}</span>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Cobrado</span>
-                    <span className="font-semibold">
-                      ${formatMoney(totalInitialPayments)}
-                    </span>
-                  </div>
-                  <div className="flex justify-between gap-3">
-                    <span className="text-muted-foreground">Pendiente</span>
-                    <span className="font-semibold">
-                      ${formatMoney(pendingAfterInitialPayments)}
-                    </span>
-                  </div>
-                  <Separator />
-                  <div className="flex justify-between gap-3 text-base font-black">
-                    <span>
-                      {changeDuePreview > 0
-                        ? "Vuelto"
-                        : pendingAfterInitialPayments > 0
-                        ? "Saldo"
-                        : "Diferencia"}
-                    </span>
-                    <span>
-                      $
-                      {formatMoney(
-                        changeDuePreview > 0
-                          ? changeDuePreview
-                          : pendingAfterInitialPayments > 0
-                          ? pendingAfterInitialPayments
-                          : 0
-                      )}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <DialogFooter className="shrink-0 border-t bg-muted/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:space-x-0 sm:px-6">
-            <p className="text-sm text-muted-foreground">
-              Si todo esta correcto, confirma para registrar la venta.
-            </p>
-            <div className="flex flex-col-reverse gap-2 sm:flex-row">
-              <Button
-                variant="outline"
-                onClick={() => setIsPaymentConfirmOpen(false)}
-                disabled={isProcessingPayment}
-              >
-                Volver
-              </Button>
-              <Button
-                onClick={processPayment}
-                className="min-w-[220px]"
-                disabled={isProcessingPayment}
-              >
-                {isProcessingPayment ? (
-                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                ) : null}
-                Confirmar y Registrar
-              </Button>
-            </div>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+        onOpenChange={setIsPaymentConfirmOpen}
+        isProcessingPayment={isProcessingPayment}
+        total={total}
+        totalInitialPayments={totalInitialPayments}
+        itemCount={itemCount}
+        changeDuePreview={changeDuePreview}
+        transferExcessPreview={transferExcessPreview}
+        pendingAfterInitialPayments={pendingAfterInitialPayments}
+        previewItems={previewItems}
+        previewTotalUnits={previewTotalUnits}
+        previewBranchName={previewBranchName}
+        previewCashierName={previewCashierName}
+        paymentPreviewRows={paymentPreviewRows}
+        pendingPaymentReason={normalizedPendingPaymentReason}
+        saleNote={saleNote}
+        onSaleNoteChange={(value) =>
+          setSaleNote(value.slice(0, POS_SALE_NOTE_MAX_LENGTH))
+        }
+        onProcessPayment={processPayment}
+      />
     </div>
   );
 }

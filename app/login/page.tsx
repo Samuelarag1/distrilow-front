@@ -15,6 +15,7 @@ import {
   syncClientAuthCookies,
 } from "@/lib/client-cookies";
 import { isPosCashOnlyUser } from "@/lib/permissions";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import type { SessionBranch } from "@/lib/api-types";
 import { BrandMark } from "@/components/common/brand-mark";
 import { BrandSpinner } from "@/components/common/brand-spinner";
@@ -97,8 +98,8 @@ export default function LoginPage() {
       setPersistentSessionCookie("needsOnboarding", needsOnboarding);
 
       toast({
-        title: "Inicio de sesion exitoso",
-        description: `Bienvenido, ${data.user.email}`,
+        title: "Sesion iniciada",
+        description: `Entraste correctamente como ${data.user.email}.`,
       });
 
       const posOnly = isPosCashOnlyUser(
@@ -116,8 +117,11 @@ export default function LoginPage() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error de autenticacion",
-        description: error.message || "Credenciales invalidas",
+        title: "No pudimos iniciar sesion",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa tu email y tu contrasena, y vuelve a intentarlo."
+        ),
       });
     } finally {
       setIsLoading(false);

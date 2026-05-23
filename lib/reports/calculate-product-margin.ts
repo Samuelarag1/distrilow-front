@@ -1,8 +1,8 @@
 export type ProductMarginInput = {
-  quantitySold: number;
-  retailRevenue: number;
-  wholesaleRevenue: number;
-  costPrice: number;
+  totalRevenue: number;
+  totalCost: number;
+  retailRevenue?: number;
+  wholesaleRevenue?: number;
 };
 
 export type ProductMarginResult = {
@@ -18,25 +18,12 @@ function toFiniteNumber(value: unknown) {
 }
 
 export function calculateProductMargin({
-  quantitySold,
-  retailRevenue,
-  wholesaleRevenue,
-  costPrice,
+  totalRevenue,
+  totalCost,
 }: ProductMarginInput): ProductMarginResult {
-  const normalizedQuantitySold = toFiniteNumber(quantitySold);
-  const normalizedRetailRevenue = toFiniteNumber(retailRevenue);
-  const normalizedWholesaleRevenue = toFiniteNumber(wholesaleRevenue);
-  const normalizedCostPrice = toFiniteNumber(costPrice);
-
-  const totalRevenue = normalizedRetailRevenue + normalizedWholesaleRevenue;
-  const totalCost = normalizedQuantitySold * normalizedCostPrice;
-  const margin = totalRevenue - totalCost;
-  const marginPercent = totalRevenue > 0 ? (margin / totalRevenue) * 100 : 0;
-
-  return {
-    totalRevenue,
-    totalCost,
-    margin,
-    marginPercent,
-  };
+  const revenue = toFiniteNumber(totalRevenue);
+  const cost = toFiniteNumber(totalCost);
+  const margin = revenue - cost;
+  const marginPercent = revenue > 0 ? (margin / revenue) * 100 : 0;
+  return { totalRevenue: revenue, totalCost: cost, margin, marginPercent };
 }

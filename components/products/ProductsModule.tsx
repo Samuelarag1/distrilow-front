@@ -16,6 +16,7 @@ import { DeleteProductDialog } from "./components/DeleteProductDialog";
 import { useApiSessionSync } from "./hooks/useApiSessionAsync";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import { backendApi } from "@/lib/backend-api";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
@@ -52,8 +53,6 @@ function getMarginPercentForPrice(costPrice: unknown, sellPrice: unknown) {
 }
 
 function getRetailMarginPercent(product: Product) {
-  const explicitMargin = Number(product.marginPercent ?? NaN);
-  if (Number.isFinite(explicitMargin)) return explicitMargin;
   return getMarginPercentForPrice(product.costPrice, product.retailPrice);
 }
 
@@ -63,6 +62,32 @@ function getWholesaleMarginPercent(product: Product) {
 
 function hasSameRetailAndWholesalePrice(product: Product) {
   return Number(product.retailPrice ?? 0) === Number(product.wholesalePrice ?? 0);
+}
+
+function resolveStockMode(product: Product) {
+  const productId = String(product.id ?? "").trim();
+  const baseProductId = String(
+    (product as any).stockBaseProductId ?? product.id ?? ""
+  ).trim();
+  if (
+    product.trackStock !== false &&
+    productId &&
+    baseProductId &&
+    baseProductId !== productId
+  ) {
+    return "shared" as const;
+  }
+  return "own" as const;
+}
+
+function resolveStockConsumptionLabel(product: Product) {
+  if (product.trackStock === false) return null;
+  const qtyRaw = Number((product as any).stockConsumptionQuantity ?? 1);
+  const qty = Number.isFinite(qtyRaw) && qtyRaw > 0 ? qtyRaw : 1;
+  const unit = String(
+    (product as any).stockBaseUnit ?? product.measurementType ?? "unit"
+  );
+  return `Consume ${qty} ${unit}/venta`;
 }
 
 function escapeHtml(value: unknown) {
@@ -304,8 +329,11 @@ export function ProductsModule() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error al eliminar",
-        description: error?.message || "Ocurrio un error inesperado.",
+        title: "No pudimos eliminar el producto",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       setIsDeleteDialogOpen(false);
@@ -328,7 +356,10 @@ export function ProductsModule() {
       toast({
         variant: "destructive",
         title: "No se pudo actualizar",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     }
   };
@@ -431,9 +462,9 @@ export function ProductsModule() {
             "Categoria",
             "Costo",
             "Minorista",
-            "Margen Minorista",
+            "Margen Minorista (markup)",
             "Mayorista",
-            "Margen Mayorista",
+            "Margen Mayorista (markup)",
             "Pendiente",
           ],
           rows: rows.map((product) => {
@@ -537,7 +568,10 @@ export function ProductsModule() {
       toast({
         variant: "destructive",
         title: "No se pudo imprimir",
-        description: error?.message ?? "Intenta nuevamente.",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente y revisa si el navegador bloqueo la ventana de impresion."
+        ),
       });
     } finally {
       setIsPrinting(false);
@@ -691,12 +725,14 @@ export function ProductsModule() {
                       </th>
                       <th className="p-2 text-right text-xs font-semibold border-r">
                         Margen Minorista
+                        <span className="block text-[10px] font-normal text-muted-foreground">(markup)</span>
                       </th>
                       <th className="p-2 text-right text-xs font-semibold border-r">
                         Mayorista
                       </th>
                       <th className="p-2 text-right text-xs font-semibold border-r">
                         Margen Mayorista
+                        <span className="block text-[10px] font-normal text-muted-foreground">(markup)</span>
                       </th>
                       <th className="p-2 text-center text-xs font-semibold border-r">
                         Pendiente
@@ -745,7 +781,24 @@ export function ProductsModule() {
                               {product.pluCode ?? "-"}
                             </td>
                             <td className="p-2 text-sm border-r font-medium">
-                              {product.name}
+                              <div className="flex flex-col gap-1">
+                                <span>{product.name}</span>
+                                {product.trackStock !== false && (
+                                  <div className="flex flex-wrap items-center gap-1">
+                                    <Badge
+                                      variant="outline"
+                                      className="text-[10px] font-semibold py-0 px-2"
+                                    >
+                                      {resolveStockMode(product) === "shared"
+                                        ? "Stock compartido"
+                                        : "Stock propio"}
+                                    </Badge>
+                                    <span className="text-[10px] text-muted-foreground">
+                                      {resolveStockConsumptionLabel(product)}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
                             </td>
                             <td className="p-2 text-xs border-r">
                               {product.categoryId

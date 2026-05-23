@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
+import useSWR from "swr";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { DollarSign, Landmark, ShoppingCart, Target, Wallet } from "lucide-react";
 import {
@@ -16,8 +17,12 @@ import {
   YAxis,
   CartesianGrid,
 } from "recharts";
-import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
+import {
+  formatReportingPeriodLabel,
+  fetchReportingSalesSeries,
+} from "@/lib/reports/reporting-sales-history";
+import { backendApi } from "@/lib/backend-api";
 
 const chartConfig = {
   ventas: {
@@ -26,98 +31,83 @@ const chartConfig = {
   },
 };
 
-function isSameCalendarDay(a: Date, b: Date) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+function formatMoney(value: number) {
+  return Number(value ?? 0).toLocaleString("es-AR", {
+    maximumFractionDigits: 0,
+  });
 }
 
-function toDateKey(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+const DAILY_SALES_TZ = "America/Argentina/Cordoba";
+const dailySalesTzFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: DAILY_SALES_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function makeArgentinaDayBoundary(ymd: string, boundary: "start" | "end"): Date {
+  const [year, month, day] = ymd.split("-").map(Number);
+  // Argentina is UTC-3 year-round. Midnight ART = 03:00 UTC.
+  return boundary === "start"
+    ? new Date(Date.UTC(year, (month || 1) - 1, day || 1, 3, 0, 0, 0))
+    : new Date(Date.UTC(year, (month || 1) - 1, (day || 1) + 1, 2, 59, 59, 999));
 }
+
+const DAILY_TREND_DAYS = 14;
 
 export function DailySales() {
-  const { sales, isLoading } = useTransactions();
   const { branchId } = useUser();
-
-  const dailyTrend = (() => {
-    const today = new Date();
-    today.setHours(23, 59, 59, 999);
-
-    const start = new Date(today);
-    start.setDate(today.getDate() - 13);
-    start.setHours(0, 0, 0, 0);
-
-    const totalsByDate = new Map<string, number>();
-
-    sales.forEach((sale) => {
-      if (branchId && sale.branchId && sale.branchId !== branchId) return;
-      if (sale.lifecycleStatus === "CANCELLED") return;
-
-      const saleDate = new Date(sale.date);
-      if (Number.isNaN(saleDate.getTime())) return;
-      if (saleDate < start || saleDate > today) return;
-
-      const key = toDateKey(saleDate);
-      const current = totalsByDate.get(key) ?? 0;
-      totalsByDate.set(key, current + Number(sale.totalAmount ?? sale.amount ?? 0));
-    });
-
-    return Array.from({ length: 14 }).map((_, index) => {
-      const date = new Date(start);
-      date.setDate(start.getDate() + index);
-      const key = toDateKey(date);
-      return {
-        name: date.toLocaleDateString("es-AR", {
-          day: "2-digit",
-          month: "2-digit",
-        }),
-        ventas: Number(totalsByDate.get(key) ?? 0),
-      };
-    });
-  })();
-
-  const todaySales = useMemo(() => {
-    const today = new Date();
-    return sales
-      .filter((sale) => {
-        if (branchId && sale.branchId && sale.branchId !== branchId) return false;
-        if (sale.lifecycleStatus === "CANCELLED") return false;
-        const date = new Date(sale.date);
-        return isSameCalendarDay(date, today);
-      })
-      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-  }, [sales, branchId]);
-
-  const totalSales = todaySales.reduce(
-    (sum, sale) => sum + Number(sale.totalAmount ?? sale.amount ?? 0),
-    0
+  const dailyRange = useMemo(() => {
+    const todayYmd = dailySalesTzFormatter.format(new Date());
+    const [year, month, day] = todayYmd.split("-").map(Number);
+    const fromDate = new Date(Date.UTC(year, (month || 1) - 1, (day || 1) - (DAILY_TREND_DAYS - 1), 3, 0, 0, 0));
+    const fromYmd = dailySalesTzFormatter.format(fromDate);
+    return {
+      from: makeArgentinaDayBoundary(fromYmd, "start"),
+      to: makeArgentinaDayBoundary(todayYmd, "end"),
+    };
+  }, []);
+  const { data: dailyReporting, isLoading: isDailyTrendLoading } = useSWR(
+    branchId
+      ? [
+          "daily-sales-reporting",
+          branchId,
+          dailyRange.from.toISOString(),
+          dailyRange.to.toISOString(),
+        ]
+      : null,
+    () => fetchReportingSalesSeries(dailyRange, "day", ["revenue"]),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
   );
-  const completedOrders = todaySales.length;
+  const { data: salesSummary, isLoading: isSummaryLoading } = useSWR(
+    branchId ? ["daily-sales-summary", branchId] : null,
+    () => backendApi.reporting.sales.summary(),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
+
+  const dailyTrend = useMemo(
+    () =>
+      (dailyReporting?.revenue.points ?? []).map((point) => {
+        return {
+          name: formatReportingPeriodLabel(point.period, "day"),
+          ventas: Number(point.value ?? 0),
+        };
+      }),
+    [dailyReporting]
+  );
+
+  const todaySummary = salesSummary?.today;
+  const totalSales = Number(todaySummary?.revenue ?? 0);
+  const completedOrders = Number(todaySummary?.orders ?? 0);
   const avgOrder = completedOrders > 0 ? totalSales / completedOrders : 0;
-
-  const cashIncome = todaySales.reduce((sum, sale) => {
-    const breakdown = sale.paymentBreakdown ?? {};
-    return sum + Number(breakdown.CASH ?? breakdown.cash ?? 0);
-  }, 0);
-
-  const transferIncome = todaySales.reduce((sum, sale) => {
-    const breakdown = sale.paymentBreakdown ?? {};
-    return (
-      sum +
-      Number(
-        breakdown.TRANSFER ??
-          breakdown.transfer ??
-          breakdown.TRANSFERENCIA ??
-          0
-      )
-    );
-  }, 0);
+  const cashIncome = Number(todaySummary?.cashIncome ?? 0);
+  const transferIncome = Number(todaySummary?.transferIncome ?? 0);
 
   return (
     <div className="space-y-6">
@@ -126,6 +116,11 @@ export function DailySales() {
           <CardTitle>Evolucion diaria (ultimos 14 dias)</CardTitle>
         </CardHeader>
         <CardContent>
+          {isDailyTrendLoading && (
+            <div className="mb-3 text-sm text-muted-foreground">
+              Cargando evolucion diaria...
+            </div>
+          )}
           <div className="w-full h-[280px]">
             <ChartContainer config={chartConfig} className="w-full h-full">
               <ResponsiveContainer width="100%" height="100%">
@@ -156,7 +151,7 @@ export function DailySales() {
           <CardTitle>Analisis diario</CardTitle>
         </CardHeader>
         <CardContent>
-          {isLoading && (
+          {isSummaryLoading && (
             <div className="text-sm text-muted-foreground">
               Cargando metricas de hoy...
             </div>
@@ -168,7 +163,7 @@ export function DailySales() {
                   <DollarSign className="h-8 w-8 mx-auto text-green-500" />
                   <p className="text-sm text-muted-foreground">Total del dia</p>
                   <p className="text-2xl font-bold text-green-600">
-                    ${totalSales.toFixed(2)}
+                    ${formatMoney(totalSales)}
                   </p>
                 </div>
               </CardContent>
@@ -194,7 +189,7 @@ export function DailySales() {
                   <Target className="h-8 w-8 mx-auto text-purple-500" />
                   <p className="text-sm text-muted-foreground">Ticket promedio</p>
                   <p className="text-2xl font-bold text-purple-600">
-                    ${avgOrder.toFixed(2)}
+                    ${formatMoney(avgOrder)}
                   </p>
                 </div>
               </CardContent>
@@ -206,7 +201,7 @@ export function DailySales() {
                   <Wallet className="h-8 w-8 mx-auto text-emerald-500" />
                   <p className="text-sm text-muted-foreground">Ingreso efectivo</p>
                   <p className="text-2xl font-bold text-emerald-600">
-                    ${cashIncome.toFixed(2)}
+                    ${formatMoney(cashIncome)}
                   </p>
                 </div>
               </CardContent>
@@ -220,7 +215,7 @@ export function DailySales() {
                     Ingreso transferencia
                   </p>
                   <p className="text-2xl font-bold text-sky-600">
-                    ${transferIncome.toFixed(2)}
+                    ${formatMoney(transferIncome)}
                   </p>
                 </div>
               </CardContent>

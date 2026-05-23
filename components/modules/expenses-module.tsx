@@ -53,7 +53,6 @@ import { es } from "date-fns/locale";
 import { backendApi } from "@/lib/backend-api";
 import type {
   Expense,
-  SnapshotPeriod,
   ExpenseAnalyticsResponse,
 } from "@/lib/api-types";
 import {
@@ -65,18 +64,93 @@ import { BrandSpinner } from "@/components/common/brand-spinner";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
+import {
+  formatDecimalAmountInput,
+  parseDecimalAmountInput,
+} from "@/lib/numeric-input";
 
 const PAGE_SIZE = 15;
 const SEARCH_DEBOUNCE_MS = 350;
 const MAX_EXPENSE_AMOUNT = 9_999_999.99;
 const MAX_EXPENSE_DESCRIPTION_LENGTH = 180;
 const WINDOW_REFRESH_COOLDOWN_MS = 20_000;
+const ANALYTICS_PERIOD = "monthly";
 
 type ExpenseSituation = {
   label: string;
   detail: string;
   badgeClassName: string;
 };
+
+function startOfDay(value: Date) {
+  return new Date(
+    value.getFullYear(),
+    value.getMonth(),
+    value.getDate(),
+    0,
+    0,
+    0,
+    0
+  );
+}
+
+function endOfDay(value: Date) {
+  return new Date(
+    value.getFullYear(),
+    value.getMonth(),
+    value.getDate(),
+    23,
+    59,
+    59,
+    999
+  );
+}
+
+function toInputDate(value: Date) {
+  const year = value.getFullYear();
+  const month = String(value.getMonth() + 1).padStart(2, "0");
+  const day = String(value.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function parseInputDate(value: string, boundary: "start" | "end") {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(year, (month || 1) - 1, day || 1);
+  return boundary === "start" ? startOfDay(date) : endOfDay(date);
+}
+
+function getCurrentMonthToDateInputs() {
+  const now = new Date();
+  return {
+    from: toInputDate(new Date(now.getFullYear(), now.getMonth(), 1)),
+    to: toInputDate(now),
+  };
+}
+
+function buildDateRange(fromInput: string, toInput: string) {
+  if (!fromInput || !toInput) {
+    const defaults = getCurrentMonthToDateInputs();
+    return buildDateRange(defaults.from, defaults.to);
+  }
+
+  const from = parseInputDate(fromInput, "start");
+  const to = parseInputDate(toInput, "end");
+
+  if (Number.isNaN(from.getTime()) || Number.isNaN(to.getTime())) {
+    const defaults = getCurrentMonthToDateInputs();
+    return buildDateRange(defaults.from, defaults.to);
+  }
+
+  if (from.getTime() <= to.getTime()) {
+    return { from, to };
+  }
+
+  return {
+    from: startOfDay(to),
+    to: endOfDay(from),
+  };
+}
 
 function formatMoney(value: number) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -125,8 +199,9 @@ export function ExpensesModule() {
   const [searchInput, setSearchInput] = useState("");
   const [debouncedSearchQuery, setDebouncedSearchQuery] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
-  const [analyticsPeriod, setAnalyticsPeriod] =
-    useState<SnapshotPeriod>("monthly");
+  const defaultDateInputs = useMemo(() => getCurrentMonthToDateInputs(), []);
+  const [fromInput, setFromInput] = useState(defaultDateInputs.from);
+  const [toInput, setToInput] = useState(defaultDateInputs.to);
   const [isDialogOpen, setIsDialogOpen] = useState(false);
   const [isSubmittingExpense, setIsSubmittingExpense] = useState(false);
   const [isLoadingList, setIsLoadingList] = useState(false);
@@ -156,8 +231,19 @@ export function ExpensesModule() {
     category: "",
     description: "",
   });
+  const selectedDateRange = useMemo(
+    () => buildDateRange(fromInput, toInput),
+    [fromInput, toInput]
+  );
+  const selectedDateQuery = useMemo(
+    () => ({
+      from: toInputDate(selectedDateRange.from),
+      to: toInputDate(selectedDateRange.to),
+    }),
+    [selectedDateRange]
+  );
   const allowedCategories = useMemo(
-    () => new Set(EXPENSE_CATEGORY_OPTIONS.map((category) => category.value)),
+    () => new Set<string>(EXPENSE_CATEGORY_OPTIONS.map((category) => category.value)),
     []
   );
 
@@ -194,6 +280,8 @@ export function ExpensesModule() {
           take: PAGE_SIZE,
           search: debouncedSearchQuery || undefined,
           category: categoryFilter === "all" ? undefined : categoryFilter,
+          from: selectedDateQuery.from,
+          to: selectedDateQuery.to,
         },
         branchId
       );
@@ -212,14 +300,24 @@ export function ExpensesModule() {
       if (requestId !== listRequestIdRef.current) return;
       toast({
         variant: "destructive",
-        title: "Error al cargar gastos",
-        description: error?.message ?? "Intenta nuevamente.",
+        title: "No pudimos cargar los gastos",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       if (requestId !== listRequestIdRef.current) return;
       setIsLoadingList(false);
     }
-  }, [branchId, currentPage, debouncedSearchQuery, categoryFilter, toast]);
+  }, [
+    branchId,
+    currentPage,
+    debouncedSearchQuery,
+    categoryFilter,
+    selectedDateQuery,
+    toast,
+  ]);
 
   const loadAnalytics = useCallback(async () => {
     const requestId = ++analyticsRequestIdRef.current;
@@ -234,7 +332,9 @@ export function ExpensesModule() {
       setIsLoadingAnalytics(true);
       const response = await backendApi.reporting.expenses.history(
         {
-          period: analyticsPeriod,
+          period: ANALYTICS_PERIOD,
+          from: selectedDateQuery.from,
+          to: selectedDateQuery.to,
         },
         branchId
       );
@@ -248,14 +348,17 @@ export function ExpensesModule() {
       setAnalytics(null);
       toast({
         variant: "destructive",
-        title: "Error en analytics",
-        description: error?.message ?? "No se pudieron cargar las metricas.",
+        title: "No pudimos actualizar el resumen",
+        description: getUserFacingErrorMessage(
+          error,
+          "No se pudieron cargar las metricas del periodo."
+        ),
       });
     } finally {
       if (requestId !== analyticsRequestIdRef.current) return;
       setIsLoadingAnalytics(false);
     }
-  }, [branchId, analyticsPeriod, toast]);
+  }, [branchId, selectedDateQuery, toast]);
 
   const refreshAll = useCallback(
     async (origin: "manual" | "focus" | "mutation" = "manual") => {
@@ -384,7 +487,7 @@ export function ExpensesModule() {
     event.preventDefault();
     if (isSubmittingExpense) return;
 
-    const amount = Number(newExpense.amount);
+    const amount = parseDecimalAmountInput(newExpense.amount);
     if (
       !Number.isFinite(amount) ||
       amount <= 0 ||
@@ -434,7 +537,7 @@ export function ExpensesModule() {
       });
       toast({
         title: "Gasto registrado",
-        description: "El gasto se guardo correctamente.",
+        description: "El gasto quedo guardado correctamente.",
       });
       setNewExpense({
         amount: "",
@@ -447,8 +550,11 @@ export function ExpensesModule() {
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "No se pudo guardar",
-        description: error?.message ?? "Intenta nuevamente.",
+        title: "No pudimos guardar el gasto",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa los datos ingresados e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSubmittingExpense(false);
@@ -462,15 +568,18 @@ export function ExpensesModule() {
       await backendApi.expenses.remove(deleteTarget.id);
       toast({
         title: "Gasto eliminado",
-        description: "El registro fue eliminado correctamente.",
+        description: "El registro se elimino correctamente.",
       });
       setDeleteTarget(null);
       await refreshAll("mutation");
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "No se pudo eliminar",
-        description: error?.message ?? "Intenta nuevamente.",
+        title: "No pudimos eliminar el gasto",
+        description: getUserFacingErrorMessage(
+          error,
+          "Intenta nuevamente en unos segundos."
+        ),
       });
     } finally {
       setIsDeleting(false);
@@ -499,25 +608,37 @@ export function ExpensesModule() {
         </div>
 
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Button
-            variant="outline"
-            className="w-full sm:w-auto"
-            onClick={() => void refreshAll("manual")}
-            disabled={isRefreshing || isLoadingList || isLoadingAnalytics}
-          >
-            <RefreshCcw
-              className={`mr-2 h-4 w-4 ${
-                isRefreshing || isLoadingList || isLoadingAnalytics
-                  ? "animate-spin"
-                  : ""
-              }`}
+          <div className="grid gap-1">
+            <label className="text-xs font-medium text-muted-foreground">
+              Desde
+            </label>
+            <Input
+              type="date"
+              value={fromInput}
+              onChange={(event) => {
+                setFromInput(event.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full sm:w-40"
             />
-            Actualizar
-          </Button>
-
+          </div>
+          <div className="grid gap-1">
+            <label className="text-xs font-medium text-muted-foreground">
+              Hasta
+            </label>
+            <Input
+              type="date"
+              value={toInput}
+              onChange={(event) => {
+                setToInput(event.target.value);
+                setCurrentPage(1);
+              }}
+              className="w-full sm:w-40"
+            />
+          </div>
           <Dialog open={isDialogOpen} onOpenChange={setIsDialogOpen}>
             <DialogTrigger asChild>
-              <Button className="w-full sm:w-auto">
+              <Button className="w-full sm:w-auto sm:self-end">
                 <Plus className="mr-2 h-4 w-4" />
                 Nuevo Gasto
               </Button>
@@ -535,15 +656,16 @@ export function ExpensesModule() {
                     <Label htmlFor="amount">Monto</Label>
                     <Input
                       id="amount"
-                      type="number"
-                      step="0.01"
+                      type="text"
+                      inputMode="decimal"
                       value={newExpense.amount}
                       onChange={(event) =>
                         setNewExpense((prev) => ({
                           ...prev,
-                          amount: event.target.value,
+                          amount: formatDecimalAmountInput(event.target.value),
                         }))
                       }
+                      placeholder="0,00"
                       required
                     />
                   </div>
@@ -623,7 +745,7 @@ export function ExpensesModule() {
                   {formatMoney(analytics?.total ?? 0)}
                 </div>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  {analyticsPeriod}
+                  {selectedDateQuery.from} al {selectedDateQuery.to}
                 </p>
               </>
             )}
@@ -649,69 +771,6 @@ export function ExpensesModule() {
             </p>
           </CardContent>
         </Card>
-
-        <Card className="md:col-span-2">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">
-              Situacion del gasto
-            </CardTitle>
-            {evolutionSummary.trend === "UP" ? (
-              <ArrowUpRight className="h-4 w-4 text-red-500" />
-            ) : evolutionSummary.trend === "DOWN" ? (
-              <ArrowDownRight className="h-4 w-4 text-emerald-500" />
-            ) : (
-              <TrendingUp className="h-4 w-4 text-blue-500" />
-            )}
-          </CardHeader>
-          <CardContent className="grid gap-3 sm:grid-cols-3">
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                Ritmo
-              </p>
-              <p className="text-lg font-bold">
-                {evolutionSummary.trend === "UP"
-                  ? "En alza"
-                  : evolutionSummary.trend === "DOWN"
-                  ? "En baja"
-                  : "Estable"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {evolutionSummary.deltaPercent >= 0 ? "+" : ""}
-                {evolutionSummary.deltaPercent.toFixed(1)}% vs periodo previo
-              </p>
-            </div>
-
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                Concentracion
-              </p>
-              <p className="text-lg font-bold">
-                {topCategory?.sharePercent !== undefined
-                  ? `${topCategory.sharePercent.toFixed(1)}%`
-                  : "Sin datos"}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                {topCategory
-                  ? `Principal: ${getExpenseCategoryLabel(
-                      topCategory.category
-                    )}`
-                  : "No se identifica categoria dominante"}
-              </p>
-            </div>
-
-            <div className="rounded-md border bg-background p-3">
-              <p className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                Control
-              </p>
-              <p className="text-lg font-bold">
-                {formatMoney(averageVisibleExpense)}
-              </p>
-              <p className="text-xs text-muted-foreground">
-                Promedio de la pagina actual ({expenses.length} registros)
-              </p>
-            </div>
-          </CardContent>
-        </Card>
       </div>
 
       <Card>
@@ -719,18 +778,6 @@ export function ExpensesModule() {
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
             <CardTitle>Listado de gastos</CardTitle>
             <div className="flex flex-wrap items-center gap-2">
-              <select
-                value={analyticsPeriod}
-                onChange={(event) =>
-                  setAnalyticsPeriod(event.target.value as SnapshotPeriod)
-                }
-                className="px-3 py-2 border border-input bg-background rounded-md text-sm"
-              >
-                <option value="monthly">Mensual</option>
-                <option value="quarterly">Trimestral</option>
-                <option value="semiannual">Semestral</option>
-                <option value="annual">Anual</option>
-              </select>
               <select
                 value={categoryFilter}
                 onChange={(event) => {
@@ -746,10 +793,6 @@ export function ExpensesModule() {
                   </option>
                 ))}
               </select>
-              <Badge variant="secondary" className="h-9 px-3 text-xs">
-                <ShieldCheck className="mr-1 h-3 w-3" />
-                Refresh seguro activo
-              </Badge>
             </div>
           </div>
 
@@ -784,7 +827,7 @@ export function ExpensesModule() {
                   <TableHead>Fecha</TableHead>
                   <TableHead>Descripcion</TableHead>
                   <TableHead>Categoria</TableHead>
-                  <TableHead>Situacion</TableHead>
+                  {/* <TableHead>Situacion</TableHead> */}
                   <TableHead className="text-right">Monto</TableHead>
                   <TableHead className="text-right">Acciones</TableHead>
                 </TableRow>
@@ -819,26 +862,20 @@ export function ExpensesModule() {
                     return (
                       <TableRow key={expense.id}>
                         <TableCell className="whitespace-nowrap">
-                          {format(
-                            new Date(
-                              expense.createdAt ??
-                                expense.updatedAt ??
-                                new Date()
-                            ),
-                            "dd/MM/yyyy HH:mm",
-                            {
-                              locale: es,
-                            }
-                          )}
+                          {expense.date
+                            ? format(new Date(expense.date + "T00:00:00"), "dd/MM/yyyy", { locale: es })
+                            : format(
+                                new Date(expense.createdAt ?? expense.updatedAt ?? new Date()),
+                                "dd/MM/yyyy HH:mm",
+                                { locale: es }
+                              )}
                         </TableCell>
                         <TableCell>
                           <div className="max-w-[260px]">
                             <p className="truncate font-medium">
                               {expense.description}
                             </p>
-                            <p className="truncate text-xs text-muted-foreground">
-                              {expense.id}
-                            </p>
+                         
                           </div>
                         </TableCell>
                         <TableCell>
@@ -846,7 +883,7 @@ export function ExpensesModule() {
                             {getExpenseCategoryLabel(expense.category)}
                           </Badge>
                         </TableCell>
-                        <TableCell>
+                        {/* <TableCell>
                           <div className="space-y-1">
                             <Badge className={situation.badgeClassName}>
                               {situation.label}
@@ -855,7 +892,7 @@ export function ExpensesModule() {
                               {situation.detail}
                             </p>
                           </div>
-                        </TableCell>
+                        </TableCell> */}
                         <TableCell className="text-right font-semibold">
                           {formatMoney(expense.amount)}
                         </TableCell>
@@ -956,14 +993,14 @@ export function ExpensesModule() {
                     {getExpenseCategoryLabel(detailTarget.category)}
                   </p>
                 </div>
-                <div>
+                {/* <div>
                   <p className="text-muted-foreground">Situacion</p>
                   {detailSituation && (
                     <Badge className={detailSituation.badgeClassName}>
                       {detailSituation.label}
                     </Badge>
                   )}
-                </div>
+                </div> */}
               </div>
               <div className="rounded-md border p-3">
                 <p className="font-semibold">Descripcion</p>

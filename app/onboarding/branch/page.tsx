@@ -14,6 +14,7 @@ import { Building2, Loader2 } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
 import { setApiSession } from "@/lib/api-client";
 import { useToast } from "@/hooks/use-toast";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
   Dialog,
   DialogContent,
@@ -130,7 +131,10 @@ export default function OnboardingBranchesPage() {
       toast({
         variant: "destructive",
         title: "No se pudo crear la sucursal",
-        description: err?.message ?? "Error inesperado",
+        description: getUserFacingErrorMessage(
+          err,
+          "Revisa los datos de la sucursal e intenta nuevamente."
+        ),
       });
     } finally {
       setIsSaving(false);

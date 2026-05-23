@@ -23,7 +23,12 @@ import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
 import { Loader2 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
+import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { EXPENSE_CATEGORY_OPTIONS } from "@/lib/expense-categories";
+import {
+  formatDecimalAmountInput,
+  parseDecimalAmountInput,
+} from "@/lib/numeric-input";
 
 interface AddExpenseDialogProps {
   open: boolean;
@@ -75,22 +80,25 @@ export function AddExpenseDialog({
 
     try {
       await addExpense({
-        amount: Number(formData.amount),
+        amount: parseDecimalAmountInput(formData.amount),
         category: formData.category as any,
         description: formData.description,
       });
 
       toast({
         title: "Gasto registrado",
-        description: "El egreso se guardo correctamente.",
+        description: "El gasto quedo guardado correctamente.",
       });
       setFormData({ amount: "", category: "", description: "" });
       onOpenChange(false);
     } catch (error: any) {
       toast({
         variant: "destructive",
-        title: "Error al registrar gasto",
-        description: error?.message ?? "No se pudo registrar el gasto.",
+        title: "No pudimos registrar el gasto",
+        description: getUserFacingErrorMessage(
+          error,
+          "Revisa los datos ingresados e intenta nuevamente."
+        ),
       });
     } finally {
       setIsLoading(false);
@@ -116,11 +124,15 @@ export function AddExpenseDialog({
             <Label htmlFor="amount">Monto ($)</Label>
             <Input
               id="amount"
-              type="number"
-              placeholder="0.00"
+              type="text"
+              inputMode="decimal"
+              placeholder="0,00"
               value={formData.amount}
               onChange={(e) =>
-                setFormData({ ...formData, amount: e.target.value })
+                setFormData({
+                  ...formData,
+                  amount: formatDecimalAmountInput(e.target.value),
+                })
               }
               className="text-lg"
               autoFocus
