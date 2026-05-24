@@ -428,7 +428,7 @@ export function SalesModule() {
         </TabsContent>
 
         <TabsContent value="monthly" className="space-y-6">
-          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             <Card>
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
