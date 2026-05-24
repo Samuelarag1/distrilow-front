@@ -13,6 +13,7 @@ import {
   ShoppingCart,
   Target,
   Download,
+  Percent,
 } from "lucide-react";
 import { SalesChart } from "@/components/sales/sales-chart";
 import { DailySales } from "@/components/sales/daily-sales";
@@ -23,48 +24,53 @@ import { useUser } from "@/components/providers/user-provider";
 import { backendApi } from "@/lib/backend-api";
 import { fetchReportingSalesSeries } from "@/lib/reports/reporting-sales-history";
 
+const SALES_TZ = "America/Argentina/Cordoba";
+
+const salesTzFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: SALES_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function toArgYmd(date: Date): string {
+  return salesTzFormatter.format(date);
+}
+
+// Argentina is UTC-3 year-round (no DST).
+// Argentina midnight = 03:00 UTC; Argentina 23:59:59.999 = next day 02:59:59.999 UTC.
+function parseYmdToStart(ymd: string): Date {
+  const [year, month, day] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(year, (month || 1) - 1, day || 1, 3, 0, 0, 0));
+}
+
+function parseYmdToEnd(ymd: string): Date {
+  const [year, month, day] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(year, (month || 1) - 1, (day || 1) + 1, 2, 59, 59, 999));
+}
+
 function startOfDay(value: Date) {
-  return new Date(
-    value.getFullYear(),
-    value.getMonth(),
-    value.getDate(),
-    0,
-    0,
-    0,
-    0
-  );
+  return parseYmdToStart(toArgYmd(value));
 }
 
 function endOfDay(value: Date) {
-  return new Date(
-    value.getFullYear(),
-    value.getMonth(),
-    value.getDate(),
-    23,
-    59,
-    59,
-    999
-  );
+  return parseYmdToEnd(toArgYmd(value));
 }
 
 function toInputDate(value: Date) {
-  const year = value.getFullYear();
-  const month = String(value.getMonth() + 1).padStart(2, "0");
-  const day = String(value.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  return toArgYmd(value);
 }
 
 function parseInputDate(value: string, boundary: "start" | "end") {
-  const [year, month, day] = value.split("-").map(Number);
-  const date = new Date(year, (month || 1) - 1, day || 1);
-  return boundary === "start" ? startOfDay(date) : endOfDay(date);
+  return boundary === "start" ? parseYmdToStart(value) : parseYmdToEnd(value);
 }
 
 function getCurrentMonthToDateInputs() {
-  const now = new Date();
+  const todayStr = toArgYmd(new Date());
+  const [year, month] = todayStr.split("-").map(Number);
   return {
-    from: toInputDate(new Date(now.getFullYear(), now.getMonth(), 1)),
-    to: toInputDate(now),
+    from: `${String(year).padStart(4, "0")}-${String(month || 1).padStart(2, "0")}-01`,
+    to: todayStr,
   };
 }
 
@@ -120,7 +126,7 @@ export function SalesModule() {
       previous: getPreviousEquivalentRange(current),
     };
   }, [fromInput, toInput]);
-  const { data: monthlyReporting } = useSWR(
+  const { data: monthlyReporting, isValidating: isMonthlyLoading } = useSWR(
     branchId
       ? [
           "sales-module-monthly-reporting",
@@ -151,12 +157,26 @@ export function SalesModule() {
     },
     {
       revalidateOnFocus: false,
-      keepPreviousData: true,
     }
   );
   const { data: salesSummary, isLoading: isSummaryLoading } = useSWR(
     branchId ? ["sales-module-summary", branchId] : null,
     () => backendApi.reporting.sales.summary(),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
+
+  const { data: priceTypesSummary } = useSWR(
+    branchId
+      ? ["sales-price-types-summary", branchId, fromInput, toInput]
+      : null,
+    () =>
+      backendApi.reporting.sales.priceTypes.summary({
+        from: fromInput,
+        to: toInput,
+      }),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
@@ -170,67 +190,82 @@ export function SalesModule() {
     const yesterdayOrders = Number(salesSummary?.yesterday?.orders ?? 0);
     const todayAvgOrder = Number(salesSummary?.today.avgTicket ?? 0);
     const yesterdayAvgOrder = Number(salesSummary?.yesterday?.avgTicket ?? 0);
-    const reportingMonthRevenue = Number(
-      monthlyReporting?.currentSeries.revenue.total ??
-        salesSummary?.rollingMonth.revenue ??
-        0
-    );
-    const reportingPrevMonthRevenue = Number(
-      monthlyReporting?.previousSeries.revenue.total ??
-        salesSummary?.previousRollingMonth?.revenue ??
-        0
-    );
-    const reportingMonthOrders = Number(
-      monthlyReporting?.currentSeries.count.total ??
-        salesSummary?.rollingMonth.orders ??
-        0
-    );
-    const reportingPrevMonthOrders = Number(
-      monthlyReporting?.previousSeries.count.total ??
-        salesSummary?.previousRollingMonth?.orders ??
-        0
-    );
-    const reportingMonthAvgOrder = Number(
-      monthlyReporting?.currentSeries.avgTicket.total ??
-        salesSummary?.rollingMonth.avgTicket ??
-        0
-    );
-    const reportingPrevMonthAvgOrder = Number(
-      monthlyReporting?.previousSeries.avgTicket.total ??
-        salesSummary?.previousRollingMonth?.avgTicket ??
-        0
-    );
-    const reportingMonthProfit = Number(
-      monthlyReporting?.currentSeries.profit.total ?? 0
-    );
-    const reportingPrevMonthProfit = Number(
-      monthlyReporting?.previousSeries.profit.total ?? 0
-    );
+    const reportingMonthRevenue = Number(monthlyReporting?.currentSeries.revenue.total ?? 0);
+    const reportingPrevMonthRevenue = Number(monthlyReporting?.previousSeries.revenue.total ?? 0);
+    const reportingMonthOrders = Number(monthlyReporting?.currentSeries.count.total ?? 0);
+    const reportingPrevMonthOrders = Number(monthlyReporting?.previousSeries.count.total ?? 0);
+    const reportingMonthAvgOrder = Number(monthlyReporting?.currentSeries.avgTicket.total ?? 0);
+    const reportingPrevMonthAvgOrder = Number(monthlyReporting?.previousSeries.avgTicket.total ?? 0);
+    const reportingMonthProfit = Number(monthlyReporting?.currentSeries.profit.total ?? 0);
+    const reportingPrevMonthProfit = Number(monthlyReporting?.previousSeries.profit.total ?? 0);
+    const reportingMonthMarginPct =
+      reportingMonthRevenue > 0
+        ? (reportingMonthProfit / reportingMonthRevenue) * 100
+        : 0;
+    const reportingPrevMonthMarginPct =
+      reportingPrevMonthRevenue > 0
+        ? (reportingPrevMonthProfit / reportingPrevMonthRevenue) * 100
+        : 0;
 
     return {
       today: {
         sales: todayRevenue,
         orders: todayOrders,
         avgOrder: todayAvgOrder,
-        growth: salesSummary?.today.revenueGrowthPct ?? pct(todayRevenue, yesterdayRevenue),
-        ordersGrowth:
-          salesSummary?.today.ordersGrowthPct ?? pct(todayOrders, yesterdayOrders),
-        avgOrderGrowth:
-          salesSummary?.today.avgTicketGrowthPct ??
-          pct(todayAvgOrder, yesterdayAvgOrder),
+        growth: pct(todayRevenue, yesterdayRevenue),
+        ordersGrowth: pct(todayOrders, yesterdayOrders),
+        avgOrderGrowth: pct(todayAvgOrder, yesterdayAvgOrder),
       },
       monthly: {
         sales: reportingMonthRevenue,
         profit: reportingMonthProfit,
+        marginPct: reportingMonthMarginPct,
         orders: reportingMonthOrders,
         avgOrder: reportingMonthAvgOrder,
         growth: pct(reportingMonthRevenue, reportingPrevMonthRevenue),
         profitGrowth: pct(reportingMonthProfit, reportingPrevMonthProfit),
+        marginPctDelta: reportingMonthMarginPct - reportingPrevMonthMarginPct,
         ordersGrowth: pct(reportingMonthOrders, reportingPrevMonthOrders),
         avgOrderGrowth: pct(reportingMonthAvgOrder, reportingPrevMonthAvgOrder),
       },
     };
   }, [monthlyReporting, salesSummary]);
+
+  const priceBreakdown = useMemo(() => {
+    const items = priceTypesSummary?.items ?? [];
+    const find = (key: string) => items.find((i) => (i.key ?? i.priceType) === key);
+    const retail = find("RETAIL");
+    const wholesale = find("WHOLESALE");
+
+    function bucketMarginPct(item: typeof retail) {
+      if (!item) return null;
+      if (item.marginPercent != null && Number.isFinite(Number(item.marginPercent))) {
+        return Number(item.marginPercent);
+      }
+      const rev = Number(item.revenueTotal ?? 0);
+      const profit = Number(item.profitTotal ?? item.profit ?? 0);
+      return rev > 0 ? (profit / rev) * 100 : 0;
+    }
+
+    return {
+      retail: {
+        marginPct: bucketMarginPct(retail),
+        revenue: Number(retail?.revenueTotal ?? 0),
+        profit: Number(retail?.profitTotal ?? retail?.profit ?? 0),
+        units: Number(retail?.unitsTotal ?? 0),
+      },
+      wholesale: {
+        marginPct: bucketMarginPct(wholesale),
+        revenue: Number(wholesale?.revenueTotal ?? 0),
+        profit: Number(wholesale?.profitTotal ?? wholesale?.profit ?? 0),
+        units: Number(wholesale?.unitsTotal ?? 0),
+      },
+      totalMarginPct:
+        priceTypesSummary?.totals?.marginPercent != null
+          ? Number(priceTypesSummary.totals.marginPercent)
+          : null,
+    };
+  }, [priceTypesSummary]);
 
   const handleExport = (format: string) => {
     toast({
@@ -295,8 +330,14 @@ export function SalesModule() {
                     <p className="text-sm font-medium text-muted-foreground">Ventas Hoy</p>
                     <p className="text-2xl font-bold">${metrics.today.sales.toLocaleString()}</p>
                     <div className="flex items-center text-xs mt-1">
-                      <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
-                      <span className="text-green-500">{metrics.today.growth.toFixed(1)}%</span>
+                      {metrics.today.growth >= 0 ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
+                      ) : (
+                        <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
+                      )}
+                      <span className={metrics.today.growth >= 0 ? "text-green-500" : "text-orange-500"}>
+                        {metrics.today.growth >= 0 ? "+" : ""}{metrics.today.growth.toFixed(1)}%
+                      </span>
                       <span className="text-muted-foreground ml-1">vs ayer</span>
                     </div>
                   </div>
@@ -320,7 +361,7 @@ export function SalesModule() {
                         <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
                       )}
                       <span className={metrics.monthly.profitGrowth >= 0 ? "text-green-500" : "text-orange-500"}>
-                        {metrics.monthly.profitGrowth.toFixed(1)}%
+                        {metrics.monthly.profitGrowth >= 0 ? "+" : ""}{metrics.monthly.profitGrowth.toFixed(1)}%
                       </span>
                       <span className="text-muted-foreground ml-1">vs periodo anterior</span>
                     </div>
@@ -339,8 +380,14 @@ export function SalesModule() {
                     <p className="text-sm font-medium text-muted-foreground">Pedidos Hoy</p>
                     <p className="text-2xl font-bold">{metrics.today.orders}</p>
                     <div className="flex items-center text-xs mt-1">
-                      <TrendingUp className="mr-1 h-3 w-3 text-blue-500" />
-                      <span className="text-blue-500">{metrics.today.ordersGrowth.toFixed(1)}%</span>
+                      {metrics.today.ordersGrowth >= 0 ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-blue-500" />
+                      ) : (
+                        <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
+                      )}
+                      <span className={metrics.today.ordersGrowth >= 0 ? "text-blue-500" : "text-orange-500"}>
+                        {metrics.today.ordersGrowth >= 0 ? "+" : ""}{metrics.today.ordersGrowth.toFixed(1)}%
+                      </span>
                       <span className="text-muted-foreground ml-1">vs ayer</span>
                     </div>
                   </div>
@@ -387,10 +434,22 @@ export function SalesModule() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-medium text-muted-foreground">Ventas del Periodo</p>
-                    <p className="text-2xl font-bold">${metrics.monthly.sales.toLocaleString()}</p>
+                    <p className="text-2xl font-bold">
+                      {isMonthlyLoading ? (
+                        <span className="text-muted-foreground text-base">Cargando...</span>
+                      ) : (
+                        `$${metrics.monthly.sales.toLocaleString()}`
+                      )}
+                    </p>
                     <div className="flex items-center text-xs mt-1">
-                      <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
-                      <span className="text-green-500">{metrics.monthly.growth.toFixed(1)}%</span>
+                      {metrics.monthly.growth >= 0 ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
+                      ) : (
+                        <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
+                      )}
+                      <span className={metrics.monthly.growth >= 0 ? "text-green-500" : "text-orange-500"}>
+                        {metrics.monthly.growth >= 0 ? "+" : ""}{metrics.monthly.growth.toFixed(1)}%
+                      </span>
                       <span className="text-muted-foreground ml-1">vs periodo anterior</span>
                     </div>
                   </div>
@@ -405,16 +464,28 @@ export function SalesModule() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Pedidos del Periodo</p>
-                    <p className="text-2xl font-bold">{metrics.monthly.orders}</p>
+                    <p className="text-sm font-medium text-muted-foreground">Ganancia del Periodo</p>
+                    <p className="text-2xl font-bold">
+                      {isMonthlyLoading ? (
+                        <span className="text-muted-foreground text-base">Cargando...</span>
+                      ) : (
+                        `$${metrics.monthly.profit.toLocaleString()}`
+                      )}
+                    </p>
                     <div className="flex items-center text-xs mt-1">
-                      <TrendingUp className="mr-1 h-3 w-3 text-blue-500" />
-                      <span className="text-blue-500">{metrics.monthly.ordersGrowth.toFixed(1)}%</span>
+                      {metrics.monthly.profitGrowth >= 0 ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-emerald-500" />
+                      ) : (
+                        <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
+                      )}
+                      <span className={metrics.monthly.profitGrowth >= 0 ? "text-emerald-500" : "text-orange-500"}>
+                        {metrics.monthly.profitGrowth >= 0 ? "+" : ""}{metrics.monthly.profitGrowth.toFixed(1)}%
+                      </span>
                       <span className="text-muted-foreground ml-1">vs periodo anterior</span>
                     </div>
                   </div>
-                  <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                    <ShoppingCart className="h-4 w-4 text-blue-600" />
+                  <div className="h-8 w-8 rounded-full bg-emerald-100 flex items-center justify-center">
+                    <DollarSign className="h-4 w-4 text-emerald-600" />
                   </div>
                 </div>
               </CardContent>
@@ -424,33 +495,125 @@ export function SalesModule() {
               <CardContent className="p-6">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-sm font-medium text-muted-foreground">Ticket Promedio</p>
-                    <p className="text-2xl font-bold">${metrics.monthly.avgOrder.toFixed(2)}</p>
+                    <p className="text-sm font-medium text-muted-foreground">Margen del Periodo</p>
+                    <p className="text-2xl font-bold">
+                      {isMonthlyLoading ? (
+                        <span className="text-muted-foreground text-base">Cargando...</span>
+                      ) : (
+                        `${metrics.monthly.marginPct.toFixed(1)}%`
+                      )}
+                    </p>
                     <div className="flex items-center text-xs mt-1">
-                      {metrics.monthly.avgOrderGrowth >= 0 ? (
-                        <TrendingUp className="mr-1 h-3 w-3 text-green-500" />
+                      {metrics.monthly.marginPctDelta >= 0 ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-violet-500" />
                       ) : (
                         <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
                       )}
-                      <span className={metrics.monthly.avgOrderGrowth >= 0 ? "text-green-500" : "text-orange-500"}>
-                        {metrics.monthly.avgOrderGrowth.toFixed(1)}%
+                      <span className={metrics.monthly.marginPctDelta >= 0 ? "text-violet-500" : "text-orange-500"}>
+                        {metrics.monthly.marginPctDelta >= 0 ? "+" : ""}
+                        {metrics.monthly.marginPctDelta.toFixed(1)} pp
                       </span>
                       <span className="text-muted-foreground ml-1">vs periodo anterior</span>
                     </div>
                   </div>
-                  <div className="h-8 w-8 rounded-full bg-orange-100 flex items-center justify-center">
-                    <Target className="h-4 w-4 text-orange-600" />
+                  <div className="h-8 w-8 rounded-full bg-violet-100 flex items-center justify-center">
+                    <Percent className="h-4 w-4 text-violet-600" />
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Pedidos del Periodo</p>
+                    <p className="text-2xl font-bold">{metrics.monthly.orders}</p>
+                    <div className="flex items-center text-xs mt-1">
+                      {metrics.monthly.ordersGrowth >= 0 ? (
+                        <TrendingUp className="mr-1 h-3 w-3 text-blue-500" />
+                      ) : (
+                        <TrendingDown className="mr-1 h-3 w-3 text-orange-500" />
+                      )}
+                      <span className={metrics.monthly.ordersGrowth >= 0 ? "text-blue-500" : "text-orange-500"}>
+                        {metrics.monthly.ordersGrowth >= 0 ? "+" : ""}{metrics.monthly.ordersGrowth.toFixed(1)}%
+                      </span>
+                      <span className="text-muted-foreground ml-1">vs periodo anterior</span>
+                    </div>
+                  </div>
+                  <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                    <ShoppingCart className="h-4 w-4 text-blue-600" />
                   </div>
                 </div>
               </CardContent>
             </Card>
           </div>
 
-          <SalesChart period="monthly" dateRange={monthlyConfig.current} />
+          {/* <Card>
+            <CardContent className="p-6">
+              <p className="text-sm font-semibold mb-4">Margen real por canal de precio</p>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <div className="rounded-lg border bg-muted/30 p-4 space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Minorista</p>
+                  <p className="text-2xl font-bold text-blue-600">
+                    {priceBreakdown.retail.marginPct != null
+                      ? `${priceBreakdown.retail.marginPct.toFixed(1)}%`
+                      : "—"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Ganancia: ${priceBreakdown.retail.profit.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Facturado: ${priceBreakdown.retail.revenue.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-muted/30 p-4 space-y-1">
+                  <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide">Mayorista</p>
+                  <p className="text-2xl font-bold text-orange-600">
+                    {priceBreakdown.wholesale.marginPct != null
+                      ? `${priceBreakdown.wholesale.marginPct.toFixed(1)}%`
+                      : "—"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Ganancia: ${priceBreakdown.wholesale.profit.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Facturado: ${priceBreakdown.wholesale.revenue.toLocaleString()}
+                  </p>
+                </div>
+
+                <div className="rounded-lg border bg-violet-50 border-violet-200 p-4 space-y-1">
+                  <p className="text-xs font-medium text-violet-700 uppercase tracking-wide">Total combinado</p>
+                  <p className="text-2xl font-bold text-violet-700">
+                    {priceBreakdown.totalMarginPct != null
+                      ? `${Number(priceBreakdown.totalMarginPct).toFixed(1)}%`
+                      : metrics.monthly.marginPct > 0
+                      ? `${metrics.monthly.marginPct.toFixed(1)}%`
+                      : "—"}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Ganancia total: ${metrics.monthly.profit.toLocaleString()}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    Sobre precio de venta real
+                  </p>
+                </div>
+              </div>
+            </CardContent>
+          </Card> */}
+
+          <SalesChart
+            period="monthly"
+            dateRange={monthlyConfig.current}
+            preloadedData={monthlyReporting?.currentSeries}
+          />
           <GrowthAnalysis
             period="monthly"
             dateRange={monthlyConfig.current}
             previousDateRange={monthlyConfig.previous}
+            preloadedCurrent={monthlyReporting?.currentSeries}
+            preloadedPrevious={monthlyReporting?.previousSeries}
           />
         </TabsContent>
 

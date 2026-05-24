@@ -14,18 +14,18 @@ import {
 import {
   formatReportingPeriodLabel,
   fetchReportingSalesSeries,
+  type ReportingSalesMetricSeries,
 } from "@/lib/reports/reporting-sales-history";
+import type { AnalyticsMetric } from "@/lib/api-types";
+
+type SeriesMap = Record<AnalyticsMetric, ReportingSalesMetricSeries>;
 
 interface GrowthAnalysisProps {
   period: SalesAnalysisPeriod;
-  dateRange?: {
-    from: Date;
-    to: Date;
-  };
-  previousDateRange?: {
-    from: Date;
-    to: Date;
-  };
+  dateRange?: { from: Date; to: Date };
+  previousDateRange?: { from: Date; to: Date };
+  preloadedCurrent?: SeriesMap;
+  preloadedPrevious?: SeriesMap;
 }
 
 function growth(current: number, previous: number) {
@@ -37,6 +37,8 @@ export function GrowthAnalysis({
   period,
   dateRange,
   previousDateRange,
+  preloadedCurrent,
+  preloadedPrevious,
 }: GrowthAnalysisProps) {
   const { branchId } = useUser();
   const config = useMemo(() => getSalesAnalysisConfig(period), [period]);
@@ -45,8 +47,11 @@ export function GrowthAnalysis({
   const groupBy = dateRange ? ("day" as const) : config.groupBy;
   const comparisonLabel = dateRange ? "periodo" : config.comparisonLabel;
   const bestPointLabel = dateRange ? "Mejor dia" : config.bestPointLabel;
+
+  const hasPreloaded = preloadedCurrent !== undefined && preloadedPrevious !== undefined;
+
   const { data, isLoading } = useSWR(
-    branchId
+    !hasPreloaded && branchId
       ? [
           "reporting-growth-analysis",
           branchId,
@@ -72,31 +77,39 @@ export function GrowthAnalysis({
     }
   );
 
+  const resolvedData = hasPreloaded
+    ? { currentSeries: preloadedCurrent, previousSeries: preloadedPrevious }
+    : data;
+
   const bestPoint = useMemo(() => {
-    const points = data?.currentSeries.revenue.points ?? [];
+    const points = resolvedData?.currentSeries.revenue.points ?? [];
     const nonZeroPoints = points.filter((point) => point.value > 0);
     if (nonZeroPoints.length === 0) return null;
 
     return nonZeroPoints.reduce((acc, point) =>
       point.value > acc.value ? point : acc
     );
-  }, [data]);
+  }, [resolvedData]);
 
-  const currentRevenue = Number(data?.currentSeries.revenue.total ?? 0);
-  const previousRevenue = Number(data?.previousSeries.revenue.total ?? 0);
-  const currentCount = Number(data?.currentSeries.count.total ?? 0);
-  const previousCount = Number(data?.previousSeries.count.total ?? 0);
-  const currentAvgTicket = Number(data?.currentSeries.avgTicket.total ?? 0);
-  const previousAvgTicket = Number(data?.previousSeries.avgTicket.total ?? 0);
+  const currentRevenue = Number(resolvedData?.currentSeries.revenue.total ?? 0);
+  const previousRevenue = Number(resolvedData?.previousSeries.revenue.total ?? 0);
+  const currentCount = Number(resolvedData?.currentSeries.count.total ?? 0);
+  const previousCount = Number(resolvedData?.previousSeries.count.total ?? 0);
+  const currentAvgTicket = Number(resolvedData?.currentSeries.avgTicket.total ?? 0);
+  const previousAvgTicket = Number(resolvedData?.previousSeries.avgTicket.total ?? 0);
 
   const salesGrowth = growth(currentRevenue, previousRevenue);
   const ordersGrowth = growth(currentCount, previousCount);
   const avgOrderGrowth = growth(currentAvgTicket, previousAvgTicket);
 
-  const target = Math.max(currentRevenue * 1.1, 1);
-  const targetProgress = Math.min(100, (currentRevenue / target) * 100);
+  const targetProgress =
+    previousRevenue > 0
+      ? Math.min(100, (currentRevenue / previousRevenue) * 100)
+      : currentRevenue > 0
+      ? 100
+      : 0;
 
-  if (isLoading) {
+  if (!hasPreloaded && isLoading) {
     return <div className="text-sm text-muted-foreground">Cargando analisis...</div>;
   }
 
@@ -188,20 +201,20 @@ export function GrowthAnalysis({
           <CardContent>
             <div className="space-y-4">
               <div className="flex items-center justify-between">
-                <span className="font-medium">Meta de Ventas</span>
+                <span className="font-medium">Vs. {comparisonLabel} anterior</span>
                 <span className="text-sm text-muted-foreground">
-                  ${currentRevenue.toLocaleString()} / ${target.toLocaleString()}
+                  ${currentRevenue.toLocaleString()} / ${previousRevenue.toLocaleString()}
                 </span>
               </div>
               <Progress value={targetProgress} className="h-3" />
               <div className="flex items-center justify-between text-sm">
-                <span className="text-muted-foreground">{targetProgress.toFixed(1)}% completado</span>
+                <span className="text-muted-foreground">{targetProgress.toFixed(1)}% del periodo anterior</span>
                 <span
                   className={
-                    targetProgress >= 90 ? "text-green-600" : targetProgress >= 70 ? "text-yellow-600" : "text-red-600"
+                    targetProgress >= 100 ? "text-green-600" : targetProgress >= 80 ? "text-yellow-600" : "text-red-600"
                   }
                 >
-                  {targetProgress >= 90 ? "Excelente" : targetProgress >= 70 ? "Buen progreso" : "Necesita atencion"}
+                  {targetProgress >= 100 ? "Supero el periodo" : targetProgress >= 80 ? "Cerca del objetivo" : "Por debajo"}
                 </span>
               </div>
             </div>

@@ -27,9 +27,9 @@ type CachedHistoryResponse = {
   promise?: Promise<AnalyticsSalesResponse>;
 };
 
-const HISTORY_CACHE_TTL_MS = 30_000;
+const HISTORY_CACHE_TTL_MS = 5 * 60_000;
 const historyResponseCache = new Map<string, CachedHistoryResponse>();
-const REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
+export const REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
 const reportingYmdFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: REPORTING_TIME_ZONE,
   year: "numeric",

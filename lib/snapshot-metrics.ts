@@ -32,7 +32,7 @@ export interface NormalizedSnapshotMetrics {
   totalCostOfGoods?: number;
   netProfit?: number;
   averageTicket?: number;
-  growthTrend?: string;
+  growthTrend?: number;
   retentionRate?: string;
 }
 
@@ -295,7 +295,7 @@ export function normalizeSnapshotMetrics(
   );
   if (averageTicket !== undefined) normalized.averageTicket = averageTicket;
 
-  const growthTrend = toOptionalString(
+  const growthTrend = toOptionalNumber(
     source.growthTrend ?? salesAnalysis.growthTrend
   );
   if (growthTrend !== undefined) normalized.growthTrend = growthTrend;

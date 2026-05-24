@@ -462,9 +462,9 @@ export function ProductsModule() {
             "Categoria",
             "Costo",
             "Minorista",
-            "Margen Minorista",
+            "Margen Minorista (markup)",
             "Mayorista",
-            "Margen Mayorista",
+            "Margen Mayorista (markup)",
             "Pendiente",
           ],
           rows: rows.map((product) => {
@@ -725,12 +725,14 @@ export function ProductsModule() {
                       </th>
                       <th className="p-2 text-right text-xs font-semibold border-r">
                         Margen Minorista
+                        <span className="block text-[10px] font-normal text-muted-foreground">(markup)</span>
                       </th>
                       <th className="p-2 text-right text-xs font-semibold border-r">
                         Mayorista
                       </th>
                       <th className="p-2 text-right text-xs font-semibold border-r">
                         Margen Mayorista
+                        <span className="block text-[10px] font-normal text-muted-foreground">(markup)</span>
                       </th>
                       <th className="p-2 text-center text-xs font-semibold border-r">
                         Pendiente

@@ -171,7 +171,7 @@ export function SalesTable() {
   );
 
   const { data: detailSale } = useSWR(
-    detailSaleId ? (["/sales", detailSaleId] as const) : null,
+    detailSaleId ? (["/sales/detail", detailSaleId] as const) : null,
     () => getSaleDetail(detailSaleId as string),
     {
       revalidateOnFocus: false,
@@ -179,8 +179,8 @@ export function SalesTable() {
     }
   );
   const { data: payDialogDetail, isLoading: isPayDialogDetailLoading } = useSWR(
-    saleToPay ? (["/sales", "payment-dialog", saleToPay.id] as const) : null,
-    () => getSaleDetail(saleToPay?.id as string),
+    saleToPay ? (["/sales/detail", saleToPay.id] as const) : null,
+    () => getSaleDetail(saleToPay!.id),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,

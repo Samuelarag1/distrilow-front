@@ -309,15 +309,20 @@ export function SalesDetailModal({
                   return (
                     <div
                       key={`${payment.id ?? index}`}
-                      className="rounded-lg border bg-muted/25 p-3 text-sm"
+                      className={`rounded-lg border p-3 text-sm ${payment.cancelledAt ? "border-destructive/40 bg-destructive/5 opacity-60" : "bg-muted/25"}`}
                     >
                       <div className="flex items-start justify-between gap-3">
                         <div className="space-y-2">
                           <div className="flex flex-wrap items-center gap-2">
-                            <span className="font-medium">
+                            <span className={`font-medium ${payment.cancelledAt ? "line-through text-muted-foreground" : ""}`}>
                               {getPaymentMethodLabel(payment.method)}
                             </span>
-                            {hasTransferExcess ? (
+                            {payment.cancelledAt ? (
+                              <Badge variant="destructive" className="text-xs">
+                                Anulado
+                              </Badge>
+                            ) : null}
+                            {!payment.cancelledAt && hasTransferExcess ? (
                               <Badge className="bg-blue-100 text-blue-800">
                                 Excedente transferido
                               </Badge>

@@ -156,7 +156,7 @@ const stockCacheByBranch = new Map<
   string,
   { cachedAt: number; rows: Stock[] }
 >();
-const REPORTING_TIME_ZONE = "America/Argentina/Buenos_Aires";
+const REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
 const reportingDateFormatter = new Intl.DateTimeFormat("en-CA", {
   timeZone: REPORTING_TIME_ZONE,
   year: "numeric",

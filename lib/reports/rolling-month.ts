@@ -3,28 +3,35 @@ export type DateRange = {
   to: Date;
 };
 
+const ARGENTINA_TZ = "America/Argentina/Cordoba";
+
+const argYmdFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: ARGENTINA_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function toArgYmd(date: Date): string {
+  return argYmdFormatter.format(date);
+}
+
+function parseYmdToArgStart(ymd: string): Date {
+  const [year, month, day] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(year, (month || 1) - 1, day || 1, 3, 0, 0, 0));
+}
+
+function parseYmdToArgEnd(ymd: string): Date {
+  const [year, month, day] = ymd.split("-").map(Number);
+  return new Date(Date.UTC(year, (month || 1) - 1, (day || 1) + 1, 2, 59, 59, 999));
+}
+
 function startOfDay(value: Date) {
-  return new Date(
-    value.getFullYear(),
-    value.getMonth(),
-    value.getDate(),
-    0,
-    0,
-    0,
-    0
-  );
+  return parseYmdToArgStart(toArgYmd(value));
 }
 
 function endOfDay(value: Date) {
-  return new Date(
-    value.getFullYear(),
-    value.getMonth(),
-    value.getDate(),
-    23,
-    59,
-    59,
-    999
-  );
+  return parseYmdToArgEnd(toArgYmd(value));
 }
 
 function getDaysInMonth(year: number, monthIndex: number) {

@@ -22,6 +22,7 @@ import {
 import { backendApi } from "@/lib/backend-api";
 
 const reportingDateFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: "America/Argentina/Cordoba",
   year: "numeric",
   month: "2-digit",
   day: "2-digit",
@@ -47,27 +48,13 @@ export function SalesChart() {
           toKey,
         ]
       : null,
-    async () => {
-      const [revenue, count] = await Promise.all([
-        backendApi.reporting.sales.history({
-          from: fromKey ?? "",
-          to: toKey ?? "",
-          groupBy: "day",
-          metric: "revenue",
-        }),
-        backendApi.reporting.sales.history({
-          from: fromKey ?? "",
-          to: toKey ?? "",
-          groupBy: "day",
-          metric: "count",
-        }),
-      ]);
-
-      return {
-        revenuePoints: revenue.points ?? [],
-        countPoints: count.points ?? [],
-      };
-    },
+    () =>
+      backendApi.reporting.sales.history({
+        from: fromKey ?? "",
+        to: toKey ?? "",
+        groupBy: "day",
+        metric: "revenue",
+      }),
     {
       keepPreviousData: true,
     }
@@ -75,20 +62,15 @@ export function SalesChart() {
 
   if (!branchId) return null;
 
-  const revenuePoints = data?.revenuePoints ?? [];
-  const countByPeriod = new Map(
-    (data?.countPoints ?? []).map((point) => [point.period, point.value])
-  );
+  const revenuePoints = data?.points ?? [];
   const chartData = revenuePoints.map((point) => ({
-    name: formatReportingPeriodLabel(point.period, "day"),
+    name: formatReportingPeriodLabel(String(point.period), "day"),
     ventas: Number(point.value ?? 0),
-    pedidos: Number(countByPeriod.get(point.period) ?? 0),
   }));
   const weekLabel = `${formatReportingPeriodLabel(fromKey, "day", "long")} al ${formatReportingPeriodLabel(toKey, "day", "long")}`;
 
   const chartConfig = {
-    ventas: { label: "Ventas", color: "hsl(var(--chart-1))" },
-    pedidos: { label: "Pedidos", color: "hsl(var(--chart-2))" },
+    ventas: { label: "Ventas ($)", color: "hsl(var(--chart-1))" },
   };
 
   return (
@@ -141,17 +123,8 @@ export function SalesChart() {
                 <Area
                   type="monotone"
                   dataKey="ventas"
-                  stackId="1"
                   stroke="var(--color-ventas)"
                   fill="var(--color-ventas)"
-                  fillOpacity={0.6}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="pedidos"
-                  stackId="1"
-                  stroke="var(--color-pedidos)"
-                  fill="var(--color-pedidos)"
                   fillOpacity={0.6}
                 />
               </AreaChart>

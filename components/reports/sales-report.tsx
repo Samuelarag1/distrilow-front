@@ -806,7 +806,107 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
 
       {!isLoading && !error && (
         <>
-       
+
+          {/* Sección: Margen de venta total con desglose por canal */}
+          {profitabilitySummary.marginPct > 0 && (
+            <Card>
+              <CardHeader className="pb-3">
+                <CardTitle className="text-base">Margen de venta del período</CardTitle>
+                <CardDescription>
+                  Ganancia real sobre precio de venta — usando costo promedio ponderado (WAC) registrado en cada venta
+                </CardDescription>
+              </CardHeader>
+              <CardContent>
+                <div className="grid gap-4 sm:grid-cols-3">
+                  {/* Canal minorista */}
+                  {(() => {
+                    const retailItem = priceTypesSummaryItems.find(
+                      (i) =>
+                        String(i.key ?? i.priceType ?? "")
+                          .trim()
+                          .toUpperCase() === "RETAIL"
+                    );
+                    const rev = Number(retailItem?.revenueTotal ?? retailItem?.revenue ?? 0);
+                    const profit = Number(retailItem?.profitTotal ?? retailItem?.profit ?? 0);
+                    const marginPct =
+                      retailItem?.marginPercent != null
+                        ? Number(retailItem.marginPercent)
+                        : rev > 0
+                        ? (profit / rev) * 100
+                        : 0;
+                    if (rev <= 0) return null;
+                    return (
+                      <div className="rounded-lg border bg-muted/30 p-4 space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Minorista
+                        </p>
+                        <p className="text-3xl font-bold text-blue-600">
+                          {marginPct.toFixed(1)}%
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Ganancia: {formatMoney(profit)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Facturado: {formatMoney(rev)}
+                        </p>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Canal mayorista */}
+                  {(() => {
+                    const wholesaleItem = priceTypesSummaryItems.find(
+                      (i) =>
+                        String(i.key ?? i.priceType ?? "")
+                          .trim()
+                          .toUpperCase() === "WHOLESALE"
+                    );
+                    const rev = Number(wholesaleItem?.revenueTotal ?? wholesaleItem?.revenue ?? 0);
+                    const profit = Number(wholesaleItem?.profitTotal ?? wholesaleItem?.profit ?? 0);
+                    const marginPct =
+                      wholesaleItem?.marginPercent != null
+                        ? Number(wholesaleItem.marginPercent)
+                        : rev > 0
+                        ? (profit / rev) * 100
+                        : 0;
+                    if (rev <= 0) return null;
+                    return (
+                      <div className="rounded-lg border bg-muted/30 p-4 space-y-1">
+                        <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                          Mayorista
+                        </p>
+                        <p className="text-3xl font-bold text-orange-600">
+                          {marginPct.toFixed(1)}%
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Ganancia: {formatMoney(profit)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          Facturado: {formatMoney(rev)}
+                        </p>
+                      </div>
+                    );
+                  })()}
+
+                  {/* Total combinado */}
+                  <div className="rounded-lg border border-violet-200 bg-violet-50 p-4 space-y-1">
+                    <p className="text-xs font-semibold uppercase tracking-wide text-violet-700">
+                      Total combinado
+                    </p>
+                    <p className="text-3xl font-bold text-violet-700">
+                      {profitabilitySummary.marginPct.toFixed(1)}%
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Ganancia: {formatMoney(profitabilitySummary.marginTotal)}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      Considera el mix real de min/may vendido
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          )}
 
           <div className="grid gap-4 lg:grid-cols-7">
             <Card className="lg:col-span-4">
@@ -975,10 +1075,16 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                       item.marginTotalPct ?? item.marginPct ?? 0
                     );
 
+                    const marginRetailPct = Number(item.marginRetailPct ?? 0);
+                    const marginWholesalePct = Number(item.marginWholesalePct ?? 0);
+                    const profitTotal = Number(item.profitTotal ?? item.marginTotal ?? 0);
+                    const hasRetail = Number(item.revenueRetail ?? 0) > 0;
+                    const hasWholesale = Number(item.revenueWholesale ?? 0) > 0;
+
                     return (
                       <div
                         key={item.productId}
-                        className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-5"
+                        className="grid gap-2 rounded-md border p-3 text-xs sm:grid-cols-6"
                       >
                         <div className="sm:col-span-2">
                           <p className="font-semibold">
@@ -1006,13 +1112,21 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
                           </p>
                         </div>
                         <div>
-                          <p className="text-muted-foreground">
-                            Margen segun Ventas
+                          <p className="text-muted-foreground">Ganancia</p>
+                          <p className="font-medium">{formatMoney(profitTotal)}</p>
+                        </div>
+                        <div>
+                          <p className="text-muted-foreground">Margen s/ ventas</p>
+                          <p className="font-bold text-violet-700">
+                            {formatPercent(marginPct)}
                           </p>
-                          <p className="font-medium">
-                            {/* {formatPercent(marginPct)} */}
-                            En Desarrollo
-                          </p>
+                          {(hasRetail || hasWholesale) && (
+                            <p className="text-muted-foreground mt-0.5">
+                              {hasRetail && `Min: ${formatPercent(marginRetailPct)}`}
+                              {hasRetail && hasWholesale && " · "}
+                              {hasWholesale && `May: ${formatPercent(marginWholesalePct)}`}
+                            </p>
+                          )}
                         </div>
                       </div>
                     );

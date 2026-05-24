@@ -862,17 +862,13 @@ export function ExpensesModule() {
                     return (
                       <TableRow key={expense.id}>
                         <TableCell className="whitespace-nowrap">
-                          {format(
-                            new Date(
-                              expense.createdAt ??
-                                expense.updatedAt ??
-                                new Date()
-                            ),
-                            "dd/MM/yyyy HH:mm",
-                            {
-                              locale: es,
-                            }
-                          )}
+                          {expense.date
+                            ? format(new Date(expense.date + "T00:00:00"), "dd/MM/yyyy", { locale: es })
+                            : format(
+                                new Date(expense.createdAt ?? expense.updatedAt ?? new Date()),
+                                "dd/MM/yyyy HH:mm",
+                                { locale: es }
+                              )}
                         </TableCell>
                         <TableCell>
                           <div className="max-w-[260px]">

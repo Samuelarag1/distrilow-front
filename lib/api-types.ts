@@ -608,6 +608,7 @@ export interface SalePayment extends SalePaymentInput {
   saleId: string;
   receivedAmount?: number | null;
   changeAmount?: number | null;
+  cancelledAt?: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
@@ -750,7 +751,7 @@ export interface SnapshotMetricsResponse {
   totalCostOfGoods?: number;
   netProfit?: number;
   averageTicket?: number;
-  growthTrend?: string;
+  growthTrend?: number;
   retentionRate?: string;
   summary?: {
     totalIncome?: number;
@@ -772,7 +773,7 @@ export interface SnapshotMetricsResponse {
     totalSales?: number;
     uniqueClients?: number;
     averageTicket?: number;
-    growthTrend?: string;
+    growthTrend?: number;
   };
   history?: Array<{
     period?: string;
@@ -790,6 +791,7 @@ export interface CreateExpenseRequest {
   amount: number;
   category: ExpenseCategory;
   context?: ExpenseContext;
+  date?: string;
 }
 
 export interface Expense {
@@ -799,6 +801,7 @@ export interface Expense {
   amount: number;
   category: ExpenseCategory;
   context?: ExpenseContext;
+  date?: string;
   createdAt?: string;
   updatedAt?: string;
 }

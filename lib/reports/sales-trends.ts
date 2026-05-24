@@ -4,10 +4,10 @@ import {
   getRollingMonthRange,
   getRollingQuarterRange,
 } from "@/lib/reports/rolling-month";
+import { REPORTING_TIME_ZONE } from "@/lib/reports/reporting-sales-history";
 
 export type SalesAnalysisPeriod = "monthly" | "quarterly" | "yearly";
 export type SalesTrendGroupBy = "day" | "month" | "quarter" | "year";
-const REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
 
 type SaleLike = {
   amount?: number | null;

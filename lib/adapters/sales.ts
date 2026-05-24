@@ -33,6 +33,7 @@ export interface SalePaymentViewModel {
   notes?: string;
   receivedAmount?: number;
   changeAmount?: number;
+  cancelledAt?: string | null;
   date: string;
 }
 
@@ -174,6 +175,7 @@ function normalizeSalePayment(
       (payment as ApiSalePayment).receivedAmount
     ),
     changeAmount: toOptionalFiniteNumber((payment as ApiSalePayment).changeAmount),
+    cancelledAt: (payment as ApiSalePayment).cancelledAt ?? null,
     date: normalizeIsoDate(
       (payment as ApiSalePayment).createdAt,
       (payment as ApiSalePayment).updatedAt,

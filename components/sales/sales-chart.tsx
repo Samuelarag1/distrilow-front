@@ -32,14 +32,16 @@ import {
 import {
   formatReportingPeriodLabel,
   fetchReportingSalesSeries,
+  type ReportingSalesMetricSeries,
 } from "@/lib/reports/reporting-sales-history";
+import type { AnalyticsMetric } from "@/lib/api-types";
+
+type SeriesMap = Record<AnalyticsMetric, ReportingSalesMetricSeries>;
 
 interface SalesChartProps {
   period: SalesAnalysisPeriod;
-  dateRange?: {
-    from: Date;
-    to: Date;
-  };
+  dateRange?: { from: Date; to: Date };
+  preloadedData?: SeriesMap;
 }
 
 const chartConfig = {
@@ -53,7 +55,7 @@ const chartConfig = {
   },
 };
 
-export function SalesChart({ period, dateRange }: SalesChartProps) {
+export function SalesChart({ period, dateRange, preloadedData }: SalesChartProps) {
   const { branchId } = useUser();
   const config = useMemo(() => getSalesAnalysisConfig(period), [period]);
   const current = dateRange ?? config.current;
@@ -67,8 +69,9 @@ export function SalesChart({ period, dateRange }: SalesChartProps) {
   const volumeDescription = dateRange
     ? "Volumen de operaciones por dia del periodo seleccionado"
     : config.volumeDescription;
-  const { data, isLoading } = useSWR(
-    branchId
+
+  const { data: fetchedData, isLoading } = useSWR(
+    !preloadedData && branchId
       ? [
           "reporting-sales-chart",
           branchId,
@@ -86,6 +89,10 @@ export function SalesChart({ period, dateRange }: SalesChartProps) {
     }
   );
 
+  const data = preloadedData ?? fetchedData;
+
+  const revenueTotal = data?.revenue.total ?? null;
+
   const chartData = useMemo(() => {
     const revenuePoints = data?.revenue.points ?? [];
     const countByPeriod = new Map(
@@ -101,17 +108,30 @@ export function SalesChart({ period, dateRange }: SalesChartProps) {
     });
   }, [data, groupBy]);
   const hasSales = Number(data?.count.total ?? 0) > 0;
+  const showLoading = !preloadedData && isLoading;
 
   return (
     <div className="grid gap-6 lg:grid-cols-2">
       <Card>
         <CardHeader>
-          <CardTitle>{evolutionTitle} - Ventas</CardTitle>
-          <CardDescription>{revenueDescription}</CardDescription>
+          <div className="flex items-start justify-between">
+            <div>
+              <CardTitle>{evolutionTitle} - Ventas</CardTitle>
+              <CardDescription>{revenueDescription}</CardDescription>
+            </div>
+            {revenueTotal !== null && (
+              <div className="text-right">
+                <p className="text-xs text-muted-foreground">Total del periodo</p>
+                <p className="text-sm font-semibold">
+                  ${revenueTotal.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+            )}
+          </div>
         </CardHeader>
         <CardContent>
-          {isLoading && <p className="text-sm text-muted-foreground">Cargando datos...</p>}
-          {!isLoading && !hasSales && (
+          {showLoading && <p className="text-sm text-muted-foreground">Cargando datos...</p>}
+          {!showLoading && !hasSales && (
             <p className="text-sm text-muted-foreground">Sin datos en el periodo seleccionado.</p>
           )}
           <div className="w-full h-[300px]">

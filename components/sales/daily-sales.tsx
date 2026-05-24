@@ -37,17 +37,35 @@ function formatMoney(value: number) {
   });
 }
 
+const DAILY_SALES_TZ = "America/Argentina/Cordoba";
+const dailySalesTzFormatter = new Intl.DateTimeFormat("en-CA", {
+  timeZone: DAILY_SALES_TZ,
+  year: "numeric",
+  month: "2-digit",
+  day: "2-digit",
+});
+
+function makeArgentinaDayBoundary(ymd: string, boundary: "start" | "end"): Date {
+  const [year, month, day] = ymd.split("-").map(Number);
+  // Argentina is UTC-3 year-round. Midnight ART = 03:00 UTC.
+  return boundary === "start"
+    ? new Date(Date.UTC(year, (month || 1) - 1, day || 1, 3, 0, 0, 0))
+    : new Date(Date.UTC(year, (month || 1) - 1, (day || 1) + 1, 2, 59, 59, 999));
+}
+
+const DAILY_TREND_DAYS = 14;
+
 export function DailySales() {
   const { branchId } = useUser();
   const dailyRange = useMemo(() => {
-    const to = new Date();
-    to.setHours(23, 59, 59, 999);
-
-    const from = new Date(to);
-    from.setDate(to.getDate() - 13);
-    from.setHours(0, 0, 0, 0);
-
-    return { from, to };
+    const todayYmd = dailySalesTzFormatter.format(new Date());
+    const [year, month, day] = todayYmd.split("-").map(Number);
+    const fromDate = new Date(Date.UTC(year, (month || 1) - 1, (day || 1) - (DAILY_TREND_DAYS - 1), 3, 0, 0, 0));
+    const fromYmd = dailySalesTzFormatter.format(fromDate);
+    return {
+      from: makeArgentinaDayBoundary(fromYmd, "start"),
+      to: makeArgentinaDayBoundary(todayYmd, "end"),
+    };
   }, []);
   const { data: dailyReporting, isLoading: isDailyTrendLoading } = useSWR(
     branchId
