@@ -2061,12 +2061,9 @@ export const backendApi = {
   },
   stocks: {
     create: async (body: CreateStockRequest) => {
-      const payload: CreateStockRequest = {
-        ...body,
-        branchId: body.branchId ?? requireActiveBranchId(),
-      };
+      const { branchId: _branchId, ...payload } = body;
       const created = await apiClientFetch.post<unknown>("/stocks", payload);
-      invalidateStockCache(payload.branchId);
+      invalidateStockCache(getApiSession().branchId);
       return normalizeStockListItem(created);
     },
     list: async (
@@ -2335,15 +2332,12 @@ export const backendApi = {
       );
     },
     create: async (body: CreateMovementRequest) => {
-      const payload: CreateMovementRequest = {
-        ...body,
-        branchId: body.branchId ?? requireActiveBranchId(),
-      };
+      const { branchId: _branchId, ...payload } = body;
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements",
         payload
       );
-      invalidateStockCache(payload.branchId);
+      invalidateStockCache(getApiSession().branchId);
       return movement;
     },
     transfer: async (body: TransferMovementRequest) => {
@@ -2385,18 +2379,14 @@ export const backendApi = {
   },
   sales: {
     create: async (body: CreateSaleRequest) => {
-      const payload: CreateSaleRequest = {
-        ...body,
-        branchId: body.branchId ?? requireActiveBranchId(),
-      };
+      const { branchId: _branchId, ...payload } = body;
       const sale = await apiClientFetch.post<SaleDetail | SaleSummary>(
         "/sales",
         payload
       );
-      invalidateStockCache(payload.branchId);
+      invalidateStockCache(getApiSession().branchId);
       emitSalesSync(
         (sale as { branchId?: string | null }).branchId ??
-          payload.branchId ??
           getApiSession().branchId
       );
       return sale;
