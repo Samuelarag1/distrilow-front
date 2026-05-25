@@ -2365,27 +2365,21 @@ export const backendApi = {
       return movement;
     },
     adjustmentIn: async (body: CreateMovementRequest) => {
-      const payload: CreateMovementRequest = {
-        ...body,
-        branchId: body.branchId ?? requireActiveBranchId(),
-      };
+      const { branchId: _branchId, ...payload } = body;
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements/adjustment-in",
         payload
       );
-      invalidateStockCache(payload.branchId);
+      invalidateStockCache(getApiSession().branchId);
       return movement;
     },
     adjustmentOut: async (body: CreateMovementRequest) => {
-      const payload: CreateMovementRequest = {
-        ...body,
-        branchId: body.branchId ?? requireActiveBranchId(),
-      };
+      const { branchId: _branchId, ...payload } = body;
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements/adjustment-out",
         payload
       );
-      invalidateStockCache(payload.branchId);
+      invalidateStockCache(getApiSession().branchId);
       return movement;
     },
   },
@@ -3019,15 +3013,12 @@ export const backendApi = {
   },
   expenses: {
     create: (body: CreateExpenseRequest) => {
-      const payload: CreateExpenseRequest = {
-        ...body,
-        branchId: body.branchId ?? requireActiveBranchId(),
-      };
+      const { branchId: _branchId, ...payload } = body;
       return apiClientFetch
         .post<Expense>("/expenses", payload)
         .then((created) => {
           emitExpensesSync(
-            created.branchId ?? payload.branchId ?? getApiSession().branchId
+            created.branchId ?? getApiSession().branchId
           );
           return created;
         });
