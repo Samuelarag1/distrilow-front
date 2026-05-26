@@ -98,6 +98,8 @@ export interface SaleDetailViewModel extends SaleViewModel {
 
 const KNOWN_PENDING_REASON_LABELS: Record<string, string> = {
   OUTSTANDING_BALANCE: "Saldo pendiente",
+  PAYMENT_PENDING: "Sin pago registrado",
+  SALE_CANCELLED: "Venta cancelada",
   NO_INITIAL_PAYMENT: "Sin pago inicial",
   PARTIAL_PAYMENT: "Pago parcial",
 };
@@ -342,9 +344,10 @@ export function normalizeSale(
     toOptionalText(row.notes);
   const originalNotes = toOptionalText(row.originalNotes) ?? notesRaw;
   const parsedNotes = parseSaleNotesPayload(originalNotes ?? notesRaw);
+  const hasBackendPendingReason = toOptionalText(row.pendingReason) != null;
   const pendingReason =
+    (hasBackendPendingReason ? parsedNotes.pendingReason : undefined) ??
     toOptionalText(row.pendingReason) ??
-    parsedNotes.pendingReason ??
     (outstandingAmount > 0 && !note && !parsedNotes.note ? originalNotes : undefined);
   const pendingReasonLabel = getSalePendingReasonLabel(pendingReason);
   const normalizedNote =
