@@ -54,7 +54,7 @@ export function normalizeProductPayload(productData: Partial<Product>) {
         : undefined,
     isActive: productData.isActive,
     categoryId,
-    branchId: (productData as any).branchId ?? undefined,
+    // branchId: (productData as any).branchId ?? undefined,
     brand,
     trackStock: true,
     stockBaseProductId,
