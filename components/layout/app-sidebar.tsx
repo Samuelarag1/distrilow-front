@@ -13,6 +13,7 @@ import {
   Package2,
   Receipt,
   MapPin,
+  BrainCircuit,
 } from "lucide-react";
 import {
   Sidebar,
@@ -48,6 +49,7 @@ const businessMenus: { [key: string]: ISidebarMenu[] } = {
     { title: "Ventas", url: "/sales", icon: TrendingUp },
     { title: "Gastos", url: "/expenses", icon: Receipt },
     { title: "Reportes", url: "/reports", icon: FileText },
+    { title: "Análisis", url: "/intelligence", icon: BrainCircuit },
     { title: "Sucursales", url: "/branches", icon: MapPin },
   ],
 };
@@ -66,6 +68,10 @@ export function AppSidebar() {
     }
 
     if (!canSeeExpenses && item.url === "/expenses") {
+      return false;
+    }
+
+    if (!isManagementRole(role) && item.url === "/intelligence") {
       return false;
     }
 

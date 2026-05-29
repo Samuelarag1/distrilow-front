@@ -579,7 +579,9 @@ export interface MovementQuery {
   take?: number;
   offset?: number;
   limit?: number;
+  page?: number;
   productId?: string;
+  search?: string;
   type?: MovementType;
   from?: string;
   to?: string;
@@ -1528,3 +1530,208 @@ export interface AuditQuery {
   to?: string;
   search?: string;
 }
+
+// =============================================================================
+// INTELIGENCIA COMERCIAL
+// =============================================================================
+
+export type CIParetoMetric = "REVENUE" | "PROFIT" | "UNITS";
+export type CIPriceType = "ALL" | "RETAIL" | "WHOLESALE";
+export type CIVelocityClassification =
+  | "ALL" | "A" | "B" | "C" | "DEAD" | "NEVER_SOLD" | "NEW";
+export type CISlowMoverClassification =
+  | "ALL" | "DEAD" | "SLOW" | "NEVER_SOLD" | "NEW" | "STOCKOUT" | "ACTIVE";
+export type CIStockBreakSortBy = "FREQUENCY" | "DURATION" | "ESTIMATED_LOSS";
+export type CIHourlySalesGroupBy = "HOUR_OF_DAY" | "DAY_OF_WEEK_X_HOUR";
+export type CIEstimateConfidence = "HIGH" | "MEDIUM" | "LOW" | "INSUFFICIENT_DATA";
+
+// --- Pareto ---
+export interface CIParetoItem {
+  rank: number;
+  productId: string;
+  name: string;
+  sku: string;
+  totalUnits: number;
+  totalRevenue: number;
+  totalProfit: number;
+  profitMarginPct: number | null;
+  pctOfTotal: number;
+  cumulativePct: number;
+  inParetoSet: boolean;
+  allCostsReliable: boolean;
+  transactionCount: number;
+}
+export interface CIParetoResponse {
+  data: CIParetoItem[];
+  summary: {
+    metric: CIParetoMetric;
+    priceType: CIPriceType;
+    cutoff: number;
+    paretoProductCount: number;
+    totalProductCount: number;
+    paretoProductPct: number;
+    dateRange: { from: string; to: string };
+    dataQuality: { productsWithFallbackCost: number; fallbackCostWarning: boolean };
+  };
+}
+
+// --- Slow Movers ---
+export interface CISlowMoverItem {
+  productId: string;
+  name: string;
+  sku: string;
+  productCreatedAt: string;
+  productAgeDays: number;
+  currentStock: number;
+  stockValueAtCost: number;
+  stockValueAtRetail: number;
+  lastSaleAt: string | null;
+  daysSinceLastSale: number | null;
+  unitsSoldInPeriod: number;
+  unitsSoldTotal: number;
+  firstSaleAt: string | null;
+  classification: CISlowMoverClassification;
+  suggestedAction: string | null;
+}
+export interface CISlowMoversResponse {
+  data: CISlowMoverItem[];
+  meta: { currentPage: number; pageSize: number; totalItems: number; totalPages: number };
+  summary: {
+    thresholdDays: number;
+    productsActionable: number;
+    totalImmobilizedValueAtCost: number;
+  };
+}
+
+// --- Hourly Sales ---
+export interface CIHourlyRow {
+  hour: number;
+  dayOfWeek: number | null;
+  label: string;
+  revenue: number;
+  ticketCount: number;
+  profit: number;
+  avgTicket: number;
+  avgRevenuePerDay: number;
+  profitMarginPct: number | null;
+  isPeakHour: boolean;
+  isDeadHour: boolean;
+  percentOfDailyTotal: number;
+}
+export interface CIHourlySalesResponse {
+  data: CIHourlyRow[];
+  summary: {
+    dateRange: { from: string; to: string };
+    totalDays: number;
+    groupBy: CIHourlySalesGroupBy;
+    peakHours: number[];
+    deadHours: number[];
+    grandRevenue: number;
+    avgDailyRevenue: number;
+  };
+}
+
+// --- Product Velocity ---
+export interface CIVelocityItem {
+  productId: string;
+  name: string;
+  sku: string;
+  productCreatedAt: string;
+  productAgeDays: number;
+  currentStock: number;
+  totalUnitsSold: number;
+  totalRevenue: number;
+  totalProfit: number;
+  ticketCount: number;
+  daysInStock: number;
+  daysStockout: number;
+  daysWithMovements: number;
+  totalDaysInRange: number;
+  dailyVelocityEffective: number;
+  dailyVelocityMarket: number;
+  weeklyVelocity: number;
+  monthlyVelocity: number;
+  stockCoverageDays: number | null;
+  classification: CIVelocityClassification;
+  isCriticalStock: boolean;
+}
+export interface CIVelocityResponse {
+  data: CIVelocityItem[];
+  meta: { currentPage: number; pageSize: number; totalItems: number; totalPages: number };
+  summary: {
+    dateRange: { from: string; to: string };
+    totalDaysInRange: number;
+    criticalStockProducts: {
+      productId: string;
+      name: string;
+      stockCoverageDays: number | null;
+      currentStock: number;
+      classification: string;
+    }[];
+    dataQuality: { note: string };
+  };
+}
+
+// --- Stock Breaks ---
+export interface CIStockBreakItem {
+  productId: string;
+  name: string;
+  sku: string;
+  breakCount: number;
+  totalStockoutDays: number;
+  lastBreakStartedAt: string;
+  isCurrentlyBroken: boolean;
+  currentStock: number;
+  estimatedLostUnits: number;
+  estimatedLostRevenue: number;
+  estimatedLostProfit: number;
+  estimateConfidence: CIEstimateConfidence;
+}
+export interface CIStockBreaksResponse {
+  data: CIStockBreakItem[];
+  meta: { currentPage: number; pageSize: number; totalItems: number; totalPages: number };
+  summary: {
+    dateRange: { from: string; to: string };
+    totalProductsWithBreaks: number;
+    currentlyOutOfStock: number;
+    totalEstimatedLostRevenue: number;
+    dataQuality: { note: string; warning: string };
+  };
+}
+
+// --- Summary ---
+export interface CISummaryResponse {
+  slowMovers: {
+    productsWithoutSales30d: number;
+    productsDead: number;
+    immobilizedValueAtCost: number;
+  };
+  stockBreaks: {
+    productsWithBreaks: number;
+    currentlyOutOfStock: number;
+    totalBreaks: number;
+    totalStockoutDays: number;
+    period: { from: string; to: string };
+  };
+  pareto: {
+    paretoProductCount: number;
+    totalProductCount: number;
+    paretoProductPct: number;
+    totalRevenue30d: number;
+    period: { from: string; to: string };
+  };
+  hourlyPeak: {
+    peakHour: number | null;
+    deadHour: number | null;
+    peakHourAvgRevenue: number | null;
+    period: { from: string; to: string };
+  };
+  generatedAt: string;
+}
+
+// --- Query types ---
+export interface CIParetoQuery { from?: string; to?: string; metric?: CIParetoMetric; priceType?: CIPriceType; cutoff?: number; limit?: number }
+export interface CISlowMoversQuery { days?: number; classification?: CISlowMoverClassification; page?: number; limit?: number }
+export interface CIHourlySalesQuery { from?: string; to?: string; groupBy?: CIHourlySalesGroupBy }
+export interface CIVelocityQuery { from?: string; to?: string; classification?: CIVelocityClassification; page?: number; limit?: number }
+export interface CIStockBreaksQuery { from?: string; to?: string; sortBy?: CIStockBreakSortBy; page?: number; limit?: number }

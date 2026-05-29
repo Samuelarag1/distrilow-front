@@ -108,6 +108,17 @@ import type {
   UpdateUserRequest,
   UploadImageResponse,
   User,
+  CIParetoQuery,
+  CIParetoResponse,
+  CISlowMoversQuery,
+  CISlowMoversResponse,
+  CIHourlySalesQuery,
+  CIHourlySalesResponse,
+  CIVelocityQuery,
+  CIVelocityResponse,
+  CIStockBreaksQuery,
+  CIStockBreaksResponse,
+  CISummaryResponse,
 } from "@/lib/api-types";
 
 export interface NormalizedProductsPage {
@@ -3667,5 +3678,36 @@ export const backendApi = {
   productByBarcodeWithStock: async (code: string) => {
     const resolved = await backendApi.products.resolveBarcode(code);
     return resolved.product;
+  },
+  commercialIntelligence: {
+    summary: () =>
+      apiClientFetch.get<CISummaryResponse>("/commercial-intelligence/summary", {
+        branchScoped: true,
+      }),
+    pareto: (query: CIParetoQuery = {}) =>
+      apiClientFetch.get<CIParetoResponse>(
+        `/commercial-intelligence/pareto${buildQuery(query, { preserveLimitAndOffset: true })}`,
+        { branchScoped: true }
+      ),
+    slowMovers: (query: CISlowMoversQuery = {}) =>
+      apiClientFetch.get<CISlowMoversResponse>(
+        `/commercial-intelligence/slow-movers${buildQuery(query, { preserveLimitAndOffset: true })}`,
+        { branchScoped: true }
+      ),
+    hourlySales: (query: CIHourlySalesQuery = {}) =>
+      apiClientFetch.get<CIHourlySalesResponse>(
+        `/commercial-intelligence/hourly-sales${buildQuery(query, { preserveLimitAndOffset: true })}`,
+        { branchScoped: true }
+      ),
+    productVelocity: (query: CIVelocityQuery = {}) =>
+      apiClientFetch.get<CIVelocityResponse>(
+        `/commercial-intelligence/product-velocity${buildQuery(query, { preserveLimitAndOffset: true })}`,
+        { branchScoped: true }
+      ),
+    stockBreaks: (query: CIStockBreaksQuery = {}) =>
+      apiClientFetch.get<CIStockBreaksResponse>(
+        `/commercial-intelligence/stock-breaks${buildQuery(query, { preserveLimitAndOffset: true })}`,
+        { branchScoped: true }
+      ),
   },
 };
