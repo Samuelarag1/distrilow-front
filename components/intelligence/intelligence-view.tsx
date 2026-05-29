@@ -24,7 +24,7 @@ export function IntelligenceView() {
         </h2>
       </div>
 
-      <CISummaryCards />
+      {/* <CISummaryCards /> */}
 
       <Tabs value={activeTab} onValueChange={setActiveTab} className="space-y-4">
         <TabsList className="h-auto w-full justify-start gap-1 overflow-x-auto bg-muted p-1">
