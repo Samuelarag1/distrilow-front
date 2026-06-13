@@ -157,7 +157,9 @@ export function ReportsModule() {
   }, [products]);
 
   const currentSales = sales.filter(
-    (sale) => sale.businessType === businessType
+    (sale) =>
+      sale.businessType === businessType &&
+      sale.lifecycleStatus !== "CANCELLED"
   );
 
   const salesByCashier = currentSales.reduce((acc, sale) => {

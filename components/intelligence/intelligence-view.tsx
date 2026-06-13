@@ -9,8 +9,9 @@ import { SlowMoversReport } from "./slow-movers-report";
 import { HourlySalesReport } from "./hourly-sales-report";
 import { ProductVelocityReport } from "./product-velocity-report";
 import { StockBreakReport } from "./stock-break-report";
+import { ProductInspector } from "./product-inspector";
 
-const CI_TABS = new Set(["pareto", "slowMovers", "hourly", "velocity", "stockBreaks"]);
+const CI_TABS = new Set(["pareto", "slowMovers", "hourly", "velocity", "stockBreaks", "product"]);
 
 export function IntelligenceView() {
   const [activeTab, setActiveTab] = useState("pareto");
@@ -43,6 +44,9 @@ export function IntelligenceView() {
           <TabsTrigger className="shrink-0" value="stockBreaks">
             Quiebres de Stock
           </TabsTrigger>
+          <TabsTrigger className="shrink-0" value="product">
+            Detalle Producto
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="pareto" className="space-y-4">
@@ -59,6 +63,9 @@ export function IntelligenceView() {
         </TabsContent>
         <TabsContent value="stockBreaks" className="space-y-4">
           <StockBreakReport />
+        </TabsContent>
+        <TabsContent value="product" className="space-y-4">
+          <ProductInspector />
         </TabsContent>
       </Tabs>
     </div>

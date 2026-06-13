@@ -260,9 +260,8 @@ export function ProductDialog({
   }, [imageFile]);
 
   const computeMargin = (cost: number, retail: number) => {
-    if (!cost || cost <= 0) return 0;
-    const m = ((retail - cost) / cost) * 100;
-    // redondeo 2 decimales
+    if (!retail || retail <= 0) return 0;
+    const m = ((retail - cost) / retail) * 100;
     return Math.round(m * 100) / 100;
   };
 
@@ -554,6 +553,9 @@ export function ProductDialog({
                     setFormData((p) => ({
                       ...p,
                       measurementType: value as MeasurementType,
+                      ...(!p.useSharedStock && {
+                        stockBaseUnit: value as MeasurementType,
+                      }),
                     }))
                   }
                   disabled={disableForm}

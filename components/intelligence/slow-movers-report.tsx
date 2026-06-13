@@ -7,7 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ChevronLeft, ChevronRight, Info } from "lucide-react";
+import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUser } from "@/components/providers/user-provider";
 import { backendApi } from "@/lib/backend-api";
@@ -121,6 +121,12 @@ export function SlowMoversReport() {
                 ? `${data.meta.totalItems} productos encontrados — ${fmt(data.summary.totalImmobilizedValueAtCost)} inmovilizado`
                 : "Productos sin movimiento o con baja rotación"}
             </CardDescription>
+            {data && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
+                <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+                <span>Últimos {data.summary.thresholdDays} días</span>
+              </div>
+            )}
           </div>
           <Select
             value={classification}

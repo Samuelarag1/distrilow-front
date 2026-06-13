@@ -369,7 +369,7 @@ export function normalizeSale(
         ? row.paymentStatus
         : undefined,
     lifecycleStatus,
-    customerName: row.clientId ? `Cliente ${row.clientId}` : "Consumidor Final",
+    customerName: row.clientId ? String(row.clientId) : "Consumidor Final",
     items: itemsQuantity,
     itemsCount,
     itemsQuantity,

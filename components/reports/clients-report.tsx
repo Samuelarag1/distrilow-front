@@ -32,6 +32,7 @@ export function ClientsReport({ dateRange }: { dateRange: any }) {
 
         const filteredSales = sales.filter((sale) => {
             if (sale.businessType !== businessType) return false;
+            if (sale.lifecycleStatus === "CANCELLED") return false;
             if (!dateRange?.from) return true;
             const saleDate = new Date(sale.date);
             const from = new Date(dateRange.from);

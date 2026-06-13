@@ -18,11 +18,69 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, Info } from "lucide-react";
+import { Input } from "@/components/ui/input";
+import { AlertCircle, CalendarDays, Info } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUser } from "@/components/providers/user-provider";
 import { backendApi } from "@/lib/backend-api";
 import type { CIParetoMetric, CIPriceType } from "@/lib/api-types";
+
+// ---------------------------------------------------------------------------
+// Date range helpers
+// ---------------------------------------------------------------------------
+
+type DatePreset = "this_month" | "last_month" | "last_3_months" | "last_6_months" | "this_year" | "custom";
+
+const PRESET_LABELS: Record<DatePreset, string> = {
+  this_month:    "Este mes",
+  last_month:    "Mes anterior",
+  last_3_months: "Últimos 3 meses",
+  last_6_months: "Últimos 6 meses",
+  this_year:     "Este año",
+  custom:        "Personalizado",
+};
+
+function toDateStr(d: Date) {
+  return d.toISOString().slice(0, 10);
+}
+
+function getPresetRange(preset: DatePreset, customFrom: string, customTo: string): { from: string; to: string } {
+  const today = new Date();
+  const todayStr = toDateStr(today);
+  switch (preset) {
+    case "this_month": {
+      const from = new Date(today.getFullYear(), today.getMonth(), 1);
+      return { from: toDateStr(from), to: todayStr };
+    }
+    case "last_month": {
+      const from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+      const to   = new Date(today.getFullYear(), today.getMonth(), 0);
+      return { from: toDateStr(from), to: toDateStr(to) };
+    }
+    case "last_3_months": {
+      const from = new Date(today.getFullYear(), today.getMonth() - 3, today.getDate());
+      return { from: toDateStr(from), to: todayStr };
+    }
+    case "last_6_months": {
+      const from = new Date(today.getFullYear(), today.getMonth() - 6, today.getDate());
+      return { from: toDateStr(from), to: todayStr };
+    }
+    case "this_year": {
+      const from = new Date(today.getFullYear(), 0, 1);
+      return { from: toDateStr(from), to: todayStr };
+    }
+    case "custom":
+      return { from: customFrom, to: customTo };
+  }
+}
+
+function defaultCustomDates() {
+  const today = new Date();
+  return {
+    from: toDateStr(new Date(today.getFullYear(), today.getMonth(), 1)),
+    to:   toDateStr(today),
+  };
+}
 
 function InfoTip({ text }: { text: string }) {
   return (
@@ -60,10 +118,15 @@ export function ParetoReport() {
   const { branchId } = useUser();
   const [metric, setMetric] = useState<CIParetoMetric>("REVENUE");
   const [priceType, setPriceType] = useState<CIPriceType>("ALL");
+  const [preset, setPreset] = useState<DatePreset>("this_month");
+  const [customFrom, setCustomFrom] = useState(() => defaultCustomDates().from);
+  const [customTo, setCustomTo]     = useState(() => defaultCustomDates().to);
+
+  const { from, to } = getPresetRange(preset, customFrom, customTo);
 
   const { data, isLoading, error } = useSWR(
-    branchId ? ["ci-pareto", branchId, metric, priceType] : null,
-    () => backendApi.commercialIntelligence.pareto({ metric, priceType, cutoff: 80, limit: 100 }),
+    branchId && from && to ? ["ci-pareto", branchId, metric, priceType, from, to] : null,
+    () => backendApi.commercialIntelligence.pareto({ metric, priceType, cutoff: 80, limit: 100, from, to }),
     { revalidateOnFocus: false, keepPreviousData: true }
   );
 
@@ -95,8 +158,52 @@ export function ParetoReport() {
                   ? `${data.summary.paretoProductCount} productos concentran el 80% de los ${METRIC_LABELS[metric].toLowerCase()} (${data.summary.paretoProductPct.toFixed(1)}% del catálogo)`
                   : "Top productos por contribución al negocio"}
               </CardDescription>
+              {data && (
+                <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
+                  <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+                  <span>
+                    {new Date(data.summary.dateRange.from).toLocaleDateString("es-AR")}
+                    {" — "}
+                    {new Date(data.summary.dateRange.to).toLocaleDateString("es-AR")}
+                  </span>
+                </div>
+              )}
             </div>
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2 items-start">
+              <Select value={preset} onValueChange={(v) => setPreset(v as DatePreset)}>
+                <SelectTrigger className="w-44">
+                  <CalendarDays className="h-3.5 w-3.5 mr-1.5 text-muted-foreground" />
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {(Object.keys(PRESET_LABELS) as DatePreset[]).map((p) => (
+                    <SelectItem key={p} value={p}>
+                      {PRESET_LABELS[p]}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              {preset === "custom" && (
+                <div className="flex items-center gap-1.5">
+                  <Input
+                    type="date"
+                    value={customFrom}
+                    max={customTo || undefined}
+                    onChange={(e) => setCustomFrom(e.target.value)}
+                    className="w-36 h-9 text-sm"
+                  />
+                  <span className="text-muted-foreground text-xs">—</span>
+                  <Input
+                    type="date"
+                    value={customTo}
+                    min={customFrom || undefined}
+                    onChange={(e) => setCustomTo(e.target.value)}
+                    className="w-36 h-9 text-sm"
+                  />
+                </div>
+              )}
+
               <Select value={metric} onValueChange={(v) => setMetric(v as CIParetoMetric)}>
                 <SelectTrigger className="w-36">
                   <SelectValue />
@@ -109,6 +216,7 @@ export function ParetoReport() {
                   ))}
                 </SelectContent>
               </Select>
+
               <Select value={priceType} onValueChange={(v) => setPriceType(v as CIPriceType)}>
                 <SelectTrigger className="w-36">
                   <SelectValue />

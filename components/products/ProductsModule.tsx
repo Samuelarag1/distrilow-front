@@ -87,7 +87,7 @@ function resolveStockConsumptionLabel(product: Product) {
   const unit = String(
     (product as any).stockBaseUnit ?? product.measurementType ?? "unit"
   );
-  return `Consume ${qty} ${unit}/venta`;
+  // return `Consume ${qty} ${unit}/venta`;
 }
 
 function escapeHtml(value: unknown) {

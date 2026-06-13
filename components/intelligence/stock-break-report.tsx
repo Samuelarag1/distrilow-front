@@ -6,7 +6,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { AlertCircle, ChevronLeft, ChevronRight, Info } from "lucide-react";
+import { AlertCircle, CalendarDays, ChevronLeft, ChevronRight, Info } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUser } from "@/components/providers/user-provider";
 import { backendApi } from "@/lib/backend-api";
@@ -95,6 +95,16 @@ export function StockBreakReport() {
                 "Episodios de stockout y venta perdida estimada"
               )}
             </CardDescription>
+            {data && (
+              <div className="flex items-center gap-1.5 text-xs text-muted-foreground mt-1">
+                <CalendarDays className="h-3.5 w-3.5 shrink-0" />
+                <span>
+                  {new Date(data.summary.dateRange.from).toLocaleDateString("es-AR")}
+                  {" — "}
+                  {new Date(data.summary.dateRange.to).toLocaleDateString("es-AR")}
+                </span>
+              </div>
+            )}
           </div>
           <Select
             value={sortBy}

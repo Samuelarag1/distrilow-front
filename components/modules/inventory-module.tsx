@@ -59,11 +59,6 @@ import { InventoryLotsSection } from "@/components/modules/inventory-lots-sectio
 import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
-  formatWholeAmountInput,
-  normalizeWholeAmountInput,
-  parseWholeAmount,
-} from "@/lib/sales-payments";
-import {
   Popover,
   PopoverContent,
   PopoverTrigger,
@@ -237,18 +232,28 @@ function resolveInventoryRowPrices(item: InventoryRow) {
   const retailPrice = Number(
     item.retailPrice ?? (product as any).retailPrice ?? Number.NaN
   );
-  const wholesale =
-    Number.isFinite(wholesalePrice) && wholesalePrice > 0
-      ? wholesalePrice
-      : Number.isFinite(retailPrice) && retailPrice > 0
-      ? retailPrice
-      : Number.isFinite(costPrice)
-      ? costPrice
-      : 0;
+
+  let wholesaleUnitPrice: number;
+  let priceLabel: string;
+
+  if (Number.isFinite(wholesalePrice) && wholesalePrice > 0) {
+    wholesaleUnitPrice = wholesalePrice;
+    priceLabel = "mayorista";
+  } else if (Number.isFinite(retailPrice) && retailPrice > 0) {
+    wholesaleUnitPrice = retailPrice;
+    priceLabel = "minorista";
+  } else if (Number.isFinite(costPrice) && costPrice > 0) {
+    wholesaleUnitPrice = costPrice;
+    priceLabel = "costo";
+  } else {
+    wholesaleUnitPrice = 0;
+    priceLabel = "sin precio";
+  }
 
   return {
     costPrice: Number.isFinite(costPrice) ? costPrice : 0,
-    wholesaleUnitPrice: wholesale,
+    wholesaleUnitPrice,
+    priceLabel,
   };
 }
 
@@ -322,8 +327,8 @@ function AdjustStockDialog({
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isSubmitting) return;
-    const quantity = Math.abs(parseWholeAmount(amount));
-    if (!quantity || quantity < 1) return;
+    const quantity = Math.abs(parseFloat(amount) || 0);
+    if (!quantity || quantity <= 0) return;
 
     if (operation === "transfer" && !toBranchId) return;
 
@@ -364,8 +369,8 @@ function AdjustStockDialog({
     operation === "expired" ||
     operation === "transfer";
   const currentTotal = outgoing
-    ? Math.max(0, item.stock - parseWholeAmount(amount))
-    : item.stock + parseWholeAmount(amount);
+    ? Math.max(0, item.stock - (parseFloat(amount) || 0))
+    : item.stock + (parseFloat(amount) || 0);
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -463,19 +468,30 @@ function AdjustStockDialog({
             </div>
 
             <div className="grid gap-2">
-              <Label htmlFor="amount" className="font-bold text-sm">
-                Cantidad
-              </Label>
+              <div className="flex items-center justify-between">
+                <Label htmlFor="amount" className="font-bold text-sm">
+                  Cantidad
+                </Label>
+                {outgoing && item.stock > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => setAmount(String(item.stock))}
+                    className="text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground transition-colors"
+                    disabled={isSubmitting}
+                  >
+                    Vaciar stock ({item.stock} {item.unit || "uds"})
+                  </button>
+                )}
+              </div>
               <div className="relative">
                 <Input
                   id="amount"
-                  type="text"
-                  inputMode="numeric"
+                  type="number"
+                  step="any"
+                  min="0"
                   placeholder="0"
-                  value={formatWholeAmountInput(amount)}
-                  onChange={(e) =>
-                    setAmount(normalizeWholeAmountInput(e.target.value))
-                  }
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
                   autoFocus
                   className="text-2xl font-black h-14 pl-12 focus-visible:ring-primary/20"
                   disabled={isSubmitting}
@@ -1075,6 +1091,8 @@ export function InventoryModule() {
   const inventoryValueKpi = Number(
     inventorySummary?.inventoryValueWholesale ?? totalValueFallback
   );
+  const inventoryValueIsFallback =
+    inventorySummary?.inventoryValueWholesale == null && totalValueFallback > 0;
   const categoriesTotalKpi = Number(
     inventorySummary?.byCategory?.length ?? categories.length
   );
@@ -1154,7 +1172,7 @@ export function InventoryModule() {
     const unitLabel = toDisplayMeasurementUnit(measurementType);
     const status = getStockStatus(item, stockQuantity, minStock, maxStock);
     const progressValue = getProgressValue(stockQuantity, maxStock);
-    const { costPrice, wholesaleUnitPrice } = resolveInventoryRowPrices(item);
+    const { costPrice, wholesaleUnitPrice, priceLabel } = resolveInventoryRowPrices(item);
     const inventoryValue = stockQuantity * wholesaleUnitPrice;
     const linkedProducts = resolveLinkedProducts(item);
     const linkedProductsCount = Number(
@@ -1434,7 +1452,7 @@ export function InventoryModule() {
                 ${inventoryValue.toLocaleString()}
               </span>
               <span className="text-[10px] text-muted-foreground font-medium italic mt-0.5">
-                (Calc. a ${wholesaleUnitPrice.toLocaleString()}/{unitLabel} mayorista)
+                (Calc. a ${wholesaleUnitPrice.toLocaleString()}/{unitLabel} {priceLabel})
               </span>
             </div>
           </div>
@@ -1535,7 +1553,9 @@ export function InventoryModule() {
                   ${inventoryValueKpi.toLocaleString()}
                 </p>
                 <span className="text-xs text-muted-foreground">
-                  Valor en Precio de Venta Mayorista
+                  {inventoryValueIsFallback
+                    ? "Estimado parcial (solo pagina visible)"
+                    : "Valor en Precio de Venta Mayorista"}
                 </span>
               </div>
               <div className="h-12 w-12 rounded-full bg-green-500/10 flex items-center justify-center">
