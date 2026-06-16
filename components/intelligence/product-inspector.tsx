@@ -106,7 +106,7 @@ function fmtDateShort(iso: string | null | undefined) {
 }
 
 const UNIT_LABELS: Record<string, string> = {
-  unit: "uds",
+  unit: "u",
   gram: "g",
   kg: "kg",
   ml: "ml",
@@ -483,7 +483,7 @@ export function ProductInspector() {
               icon={TrendingUp}
             />
             <KpiCard
-              label="Margen (precio min.)"
+              label="Margen MarkUp"
               loading={false}
               value={retMargin != null ? `${retMargin.toFixed(1)}%` : "—"}
               valueColor={
