@@ -13,6 +13,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Box,
+  ShoppingCart,
 } from "lucide-react";
 import {
   Card,
@@ -118,6 +119,13 @@ function thisMonthRange() {
   };
 }
 
+function last30Days() {
+  const today = new Date();
+  const from = new Date(today);
+  from.setDate(from.getDate() - 30);
+  return { from: toDateStr(from), to: toDateStr(today) };
+}
+
 const PRODUCT_PAGE_SIZE = 30;
 const MOV_PAGE_SIZE = 25;
 
@@ -141,6 +149,11 @@ export function ProductInspector() {
   const [movTo, setMovTo] = useState(defaultRange.to);
   const [movPage, setMovPage] = useState(1);
 
+  // Sales summary filters — default: last 30 days
+  const defaultSalesRange = last30Days();
+  const [salesFrom, setSalesFrom] = useState(defaultSalesRange.from);
+  const [salesTo, setSalesTo] = useState(defaultSalesRange.to);
+
   // ── Product list ──────────────────────────────────────────────────────────
   const { data: productsData, isLoading: productsLoading } = useSWR(
     branchId
@@ -161,6 +174,21 @@ export function ProductInspector() {
       ? ["pi-stock", branchId, selected.id]
       : null,
     () => backendApi.stocks.getByBranchAndProduct(branchId!, selected!.id),
+    { revalidateOnFocus: false }
+  );
+
+  // ── Sales summary for selected product ──────────────────────────────────
+  const { data: salesData, isLoading: salesLoading } = useSWR(
+    branchId && selected
+      ? ["pi-sales", branchId, selected.id, salesFrom, salesTo]
+      : null,
+    () =>
+      backendApi.reporting.sales.topProducts.report({
+        from: salesFrom,
+        to: salesTo,
+        search: selected!.sku,
+        limit: 20,
+      }),
     { revalidateOnFocus: false }
   );
 
@@ -216,6 +244,10 @@ export function ProductInspector() {
   const sameRetailWholesale =
     selected &&
     Number(selected.retailPrice) === Number(selected.wholesalePrice);
+
+  const salesItem = (salesData?.items ?? []).find(
+    (item) => item.productId === selected?.id
+  );
 
   function selectProduct(p: ProductListItem) {
     setSelected(p);
@@ -514,6 +546,143 @@ export function ProductInspector() {
             )}
           </div>
 
+          {/* Sales summary */}
+          <Card>
+            <CardHeader className="pb-3">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <CardTitle className="text-base flex items-center gap-2">
+                  <ShoppingCart className="h-4 w-4" />
+                  Ventas del período
+                </CardTitle>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Input
+                    type="date"
+                    value={salesFrom}
+                    max={salesTo || undefined}
+                    onChange={(e) => setSalesFrom(e.target.value)}
+                    className="w-36 h-8 text-sm"
+                  />
+                  <span className="text-muted-foreground text-xs">—</span>
+                  <Input
+                    type="date"
+                    value={salesTo}
+                    min={salesFrom || undefined}
+                    onChange={(e) => setSalesTo(e.target.value)}
+                    className="w-36 h-8 text-sm"
+                  />
+                </div>
+              </div>
+            </CardHeader>
+            <CardContent>
+              {salesLoading ? (
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {Array.from({ length: 4 }).map((_, i) => (
+                    <Skeleton key={i} className="h-14 w-full" />
+                  ))}
+                </div>
+              ) : !salesItem ? (
+                <p className="py-6 text-center text-sm text-muted-foreground">
+                  Sin ventas registradas en el período seleccionado
+                </p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
+                    <SalesStat
+                      label="Unidades vendidas"
+                      value={fmtQty(salesItem.unitsTotal, unit)}
+                    />
+                    <SalesStat
+                      label="Facturación"
+                      value={fmt(salesItem.revenueTotal)}
+                    />
+                    {salesItem.profitTotal != null && (
+                      <SalesStat
+                        label="Ganancia bruta"
+                        value={fmt(salesItem.profitTotal)}
+                      />
+                    )}
+                    {(salesItem.marginTotalPct ?? salesItem.marginPct) != null && (
+                      <SalesStat
+                        label="Margen"
+                        value={`${Number(
+                          salesItem.marginTotalPct ?? salesItem.marginPct
+                        ).toFixed(1)}%`}
+                        colorClass={
+                          Number(salesItem.marginTotalPct ?? salesItem.marginPct) >= 30
+                            ? "text-emerald-600"
+                            : Number(salesItem.marginTotalPct ?? salesItem.marginPct) >= 15
+                            ? "text-amber-500"
+                            : "text-red-500"
+                        }
+                      />
+                    )}
+                  </div>
+
+                  {(salesItem.unitsRetail > 0 || salesItem.unitsWholesale > 0) && (
+                    <div className="rounded-md border divide-y text-sm">
+                      {salesItem.unitsRetail > 0 && (
+                        <div className="flex items-center justify-between px-3 py-2 gap-4">
+                          <span className="text-muted-foreground shrink-0">
+                            Minorista
+                          </span>
+                          <div className="flex items-center gap-4 ml-auto">
+                            <span className="text-muted-foreground">
+                              {fmtQty(salesItem.unitsRetail, unit)}
+                            </span>
+                            <span className="font-medium">
+                              {fmt(salesItem.revenueRetail)}
+                            </span>
+                            {salesItem.marginRetailPct != null && (
+                              <span
+                                className={`text-xs font-medium ${
+                                  salesItem.marginRetailPct >= 30
+                                    ? "text-emerald-600"
+                                    : salesItem.marginRetailPct >= 15
+                                    ? "text-amber-500"
+                                    : "text-red-500"
+                                }`}
+                              >
+                                {salesItem.marginRetailPct.toFixed(1)}% mg
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                      {salesItem.unitsWholesale > 0 && (
+                        <div className="flex items-center justify-between px-3 py-2 gap-4">
+                          <span className="text-muted-foreground shrink-0">
+                            Mayorista
+                          </span>
+                          <div className="flex items-center gap-4 ml-auto">
+                            <span className="text-muted-foreground">
+                              {fmtQty(salesItem.unitsWholesale, unit)}
+                            </span>
+                            <span className="font-medium">
+                              {fmt(salesItem.revenueWholesale)}
+                            </span>
+                            {salesItem.marginWholesalePct != null && (
+                              <span
+                                className={`text-xs font-medium ${
+                                  salesItem.marginWholesalePct >= 20
+                                    ? "text-emerald-600"
+                                    : salesItem.marginWholesalePct >= 10
+                                    ? "text-amber-500"
+                                    : "text-red-500"
+                                }`}
+                              >
+                                {salesItem.marginWholesalePct.toFixed(1)}% mg
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {/* Movement history */}
           <Card>
             <CardHeader className="pb-3">
@@ -697,6 +866,27 @@ export function ProductInspector() {
           </Card>
         </div>
       )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SalesStat helper
+// ---------------------------------------------------------------------------
+
+function SalesStat({
+  label,
+  value,
+  colorClass,
+}: {
+  label: string;
+  value: string;
+  colorClass?: string;
+}) {
+  return (
+    <div className="space-y-0.5">
+      <p className="text-xs text-muted-foreground">{label}</p>
+      <p className={`text-xl font-bold leading-tight ${colorClass ?? ""}`}>{value}</p>
     </div>
   );
 }
