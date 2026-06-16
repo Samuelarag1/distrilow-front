@@ -393,6 +393,65 @@ export interface BarcodeLookupResolved {
 
 export type BarcodeLookupResponse = ProductListItem | BarcodeLookupResolved;
 
+export interface ProductInsightsSalesPeriod {
+  units: number;
+  revenue: number;
+  cost: number;
+  profit: number;
+  transactions: number;
+  avgDailyUnits: number;
+}
+
+export interface ProductInsightsTrendPoint {
+  month: string;
+  units: number;
+  revenue: number;
+  profit: number;
+}
+
+export interface ProductInsightsAlert {
+  type: string;
+  severity: "INFO" | "WARNING" | "CRITICAL";
+  message: string;
+}
+
+export interface ProductInsightsPurchase {
+  date: string;
+  quantity: number;
+  unitCost: number;
+  totalCost: number;
+}
+
+export interface ProductInsightsVelocity {
+  dailyAvg30d: number;
+  weeklyAvg30d: number;
+  monthlyAvg30d: number;
+  trend: "UP" | "DOWN" | "STABLE";
+  growthPct: number | null;
+}
+
+export interface ProductInsightsResponse {
+  lastSaleAt: string | null;
+  daysSinceLastSale: number | null;
+  stockCoverageDays: number | null;
+  currentStock: number;
+  classification: string;
+  isCriticalStock: boolean;
+  sales7d: ProductInsightsSalesPeriod;
+  sales30d: ProductInsightsSalesPeriod;
+  sales90d: ProductInsightsSalesPeriod;
+  sales365d: ProductInsightsSalesPeriod;
+  monthlyTrend: ProductInsightsTrendPoint[];
+  velocity: ProductInsightsVelocity;
+  paretoRank: number | null;
+  paretoTotal: number | null;
+  categoryRank: number | null;
+  categoryTotal: number | null;
+  revenueSharePct: number | null;
+  alerts: ProductInsightsAlert[];
+  purchaseHistory: ProductInsightsPurchase[];
+}
+
 export interface Stock {
   id: string;
   branchId: string;

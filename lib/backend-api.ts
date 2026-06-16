@@ -2065,6 +2065,10 @@ export const backendApi = {
       emitProductsSync(uploaded.product?.branchId ?? getApiSession().branchId);
       return uploaded;
     },
+    getInsights: (id: string) =>
+      apiClientFetch.get<import("./api-types").ProductInsightsResponse>(
+        `/products/${id}/insights`
+      ),
   },
   files: {
     uploadProductImage: (formData: FormData) =>
