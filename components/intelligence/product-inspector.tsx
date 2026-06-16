@@ -378,7 +378,7 @@ export function ProductInspector() {
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <h2 className="text-xl font-bold leading-tight">{selected.name}</h2>
-                    {!selected.isActive && <Badge variant="secondary">Inactivo</Badge>}
+                    {selected.isActive === false && <Badge variant="secondary">Inactivo</Badge>}
                     {selected.priceReviewPending && (
                       <Badge className="bg-amber-100 text-amber-800 dark:bg-amber-950 dark:text-amber-200 text-xs gap-1">
                         <AlertTriangle className="h-3 w-3" />
