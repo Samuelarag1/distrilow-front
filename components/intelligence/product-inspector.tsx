@@ -172,8 +172,8 @@ const TABS: { id: Tab; label: string; icon: typeof BarChart2 }[] = [
   { id: "analysis", label: "Análisis", icon: BarChart2 },
   { id: "prices", label: "Precios", icon: Tag },
   { id: "stock", label: "Stock", icon: Box },
-  { id: "purchases", label: "Compras", icon: Truck },
-  { id: "movements", label: "Movimientos", icon: History },
+  // { id: "purchases", label: "Compras", icon: Truck },
+  // { id: "movements", label: "Movimientos", icon: History },
 ];
 
 const PRODUCT_PAGE_SIZE = 30;
@@ -681,6 +681,7 @@ export function ProductInspector() {
             {/* ── Tab: Precios ── */}
             {activeTab === "prices" && (
               <div className="space-y-4">
+                {/* Price summary cards */}
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   <PriceCard
                     label="Costo"
@@ -710,52 +711,15 @@ export function ProductInspector() {
                   )}
                 </div>
 
-                {/* Margin guide */}
-                <Card>
-                  <CardContent className="py-4">
-                    <p className="text-xs text-muted-foreground mb-3 font-semibold uppercase tracking-wide">
-                      Estructura de precio (minorista)
-                    </p>
-                    <div className="space-y-2 text-sm">
-                      <DataRow label="Costo" value={fmt(Number(selected.costPrice))} />
-                      <DataRow label="Precio de venta" value={fmt(Number(selected.retailPrice))} />
-                      <DataRow
-                        label="Ganancia unitaria"
-                        value={
-                          <span
-                            className={
-                              Number(selected.retailPrice) > Number(selected.costPrice)
-                                ? "text-emerald-600 font-medium"
-                                : "text-red-500 font-medium"
-                            }
-                          >
-                            {fmt(Number(selected.retailPrice) - Number(selected.costPrice))}
-                          </span>
-                        }
-                      />
-                      <DataRow
-                        label="Margen sobre costo"
-                        value={
-                          retMargin != null ? (
-                            <span
-                              className={
-                                retMargin >= 30
-                                  ? "text-emerald-600 font-medium"
-                                  : retMargin >= 15
-                                  ? "text-amber-500 font-medium"
-                                  : "text-red-500 font-medium"
-                              }
-                            >
-                              {retMargin.toFixed(1)}%
-                            </span>
-                          ) : (
-                            "—"
-                          )
-                        }
-                      />
-                    </div>
-                  </CardContent>
-                </Card>
+                {/* Comprehensive margin breakdown */}
+                <MarginBreakdown
+                  cost={Number(selected.costPrice)}
+                  retail={Number(selected.retailPrice)}
+                  wholesale={Number(selected.wholesalePrice)}
+                  avgCost={stockData ? Number(stockData.averageCost) : undefined}
+                  insights={insights}
+                  unit={unit}
+                />
               </div>
             )}
 
@@ -1171,6 +1135,170 @@ function KpiCard({
             {sub && <p className="text-xs text-muted-foreground mt-0.5">{sub}</p>}
           </>
         )}
+      </CardContent>
+    </Card>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// MarginBreakdown
+// ---------------------------------------------------------------------------
+
+function pctColor(pct: number | null, thresholds: [number, number]) {
+  if (pct == null) return "";
+  const [good, mid] = thresholds;
+  return pct >= good
+    ? "text-emerald-600 font-medium"
+    : pct >= mid
+    ? "text-amber-500 font-medium"
+    : "text-red-500 font-medium";
+}
+
+function MarginBreakdown({
+  cost,
+  retail,
+  wholesale,
+  avgCost,
+  insights,
+  unit,
+}: {
+  cost: number;
+  retail: number;
+  wholesale: number;
+  avgCost?: number;
+  insights: ProductInsightsResponse | undefined;
+  unit: string;
+}) {
+  const samePrice = retail === wholesale;
+
+  // Markup = (precio - costo) / costo × 100
+  const markupRetail = cost > 0 ? ((retail - cost) / cost) * 100 : null;
+  const markupWholesale = cost > 0 ? ((wholesale - cost) / cost) * 100 : null;
+
+  // Margen sobre venta = (precio - costo) / precio × 100
+  const marginRetail = retail > 0 ? ((retail - cost) / retail) * 100 : null;
+  const marginWholesale = wholesale > 0 ? ((wholesale - cost) / wholesale) * 100 : null;
+
+  // Global real from actual sales (30d)
+  const rev30 = insights?.sales30d?.revenue ?? 0;
+  const profit30 = insights?.sales30d?.profit ?? 0;
+  const globalMargin = rev30 > 0 ? (profit30 / rev30) * 100 : null;
+
+  const cols = samePrice ? 2 : 3;
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm font-semibold text-muted-foreground uppercase tracking-wide">
+          Detalle de márgenes
+        </CardTitle>
+      </CardHeader>
+      <CardContent className="space-y-5">
+        {/* Margin table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b bg-muted/40">
+                <th className="px-4 py-2 text-left font-medium text-muted-foreground">Indicador</th>
+                <th className="px-4 py-2 text-right font-medium text-muted-foreground">Minorista</th>
+                {!samePrice && (
+                  <th className="px-4 py-2 text-right font-medium text-muted-foreground">Mayorista</th>
+                )}
+              </tr>
+            </thead>
+            <tbody>
+              <tr className="border-b">
+                <td className="px-4 py-2 text-muted-foreground">Precio de venta</td>
+                <td className="px-4 py-2 text-right font-medium tabular-nums">{fmt(retail)}</td>
+                {!samePrice && (
+                  <td className="px-4 py-2 text-right font-medium tabular-nums">{fmt(wholesale)}</td>
+                )}
+              </tr>
+              <tr className="border-b">
+                <td className="px-4 py-2 text-muted-foreground">Costo</td>
+                <td className="px-4 py-2 text-right tabular-nums text-muted-foreground" colSpan={samePrice ? 1 : 2}>
+                  {fmt(cost)}
+                  {avgCost != null && avgCost > 0 && Math.abs(avgCost - cost) > 1 && (
+                    <span className="ml-1 text-xs">(prom. stock: {fmt(avgCost)})</span>
+                  )}
+                </td>
+              </tr>
+              <tr className="border-b">
+                <td className="px-4 py-2 text-muted-foreground">Ganancia por unidad</td>
+                <td className={`px-4 py-2 text-right font-medium tabular-nums ${retail > cost ? "text-emerald-600" : "text-red-500"}`}>
+                  {fmt(retail - cost)}
+                </td>
+                {!samePrice && (
+                  <td className={`px-4 py-2 text-right font-medium tabular-nums ${wholesale > cost ? "text-emerald-600" : "text-red-500"}`}>
+                    {fmt(wholesale - cost)}
+                  </td>
+                )}
+              </tr>
+              <tr className="border-b">
+                <td className="px-4 py-2">
+                  <span className="font-medium">Markup</span>
+                  <span className="text-xs text-muted-foreground ml-1">(ganancia / costo)</span>
+                </td>
+                <td className={`px-4 py-2 text-right tabular-nums ${pctColor(markupRetail, [30, 15])}`}>
+                  {markupRetail != null ? `${markupRetail.toFixed(1)}%` : "—"}
+                </td>
+                {!samePrice && (
+                  <td className={`px-4 py-2 text-right tabular-nums ${pctColor(markupWholesale, [20, 10])}`}>
+                    {markupWholesale != null ? `${markupWholesale.toFixed(1)}%` : "—"}
+                  </td>
+                )}
+              </tr>
+              <tr>
+                <td className="px-4 py-2">
+                  <span className="font-medium">Margen</span>
+                  <span className="text-xs text-muted-foreground ml-1">(ganancia / precio venta)</span>
+                </td>
+                <td className={`px-4 py-2 text-right tabular-nums ${pctColor(marginRetail, [23, 12])}`}>
+                  {marginRetail != null ? `${marginRetail.toFixed(1)}%` : "—"}
+                </td>
+                {!samePrice && (
+                  <td className={`px-4 py-2 text-right tabular-nums ${pctColor(marginWholesale, [17, 9])}`}>
+                    {marginWholesale != null ? `${marginWholesale.toFixed(1)}%` : "—"}
+                  </td>
+                )}
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        {/* Global real margin */}
+        <div className="rounded-lg border bg-muted/30 p-4">
+          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-3">
+            Margen global real — últimos 30 días (min. + may.)
+          </p>
+          {globalMargin != null ? (
+            <div className="flex flex-wrap items-end gap-6">
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Margen efectivo</p>
+                <p className={`text-2xl font-bold ${pctColor(globalMargin, [23, 12])}`}>
+                  {globalMargin.toFixed(1)}%
+                </p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Facturado</p>
+                <p className="text-xl font-bold">{fmt(rev30)}</p>
+              </div>
+              <div>
+                <p className="text-xs text-muted-foreground mb-0.5">Ganancia bruta</p>
+                <p className="text-xl font-bold text-emerald-600">{fmt(profit30)}</p>
+              </div>
+              <p className="text-xs text-muted-foreground self-end pb-0.5">
+                {insights!.sales30d.transactions} ticket{insights!.sales30d.transactions !== 1 ? "s" : ""}
+                {" · "}
+                {fmtQty(insights!.sales30d.units, unit)} unid. vendidas
+              </p>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Sin ventas en los últimos 30 días para calcular margen real
+            </p>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
