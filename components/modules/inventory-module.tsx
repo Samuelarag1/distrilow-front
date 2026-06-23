@@ -225,7 +225,7 @@ function resolveInventoryRowName(item: InventoryRow) {
 
 function resolveInventoryRowPrices(item: InventoryRow) {
   const product = item.product ?? {};
-  const costPrice = Number(item.averageCost ?? (product as any).costPrice ?? 0);
+  const costPrice = item.averageCost > 0 ? item.averageCost : Number(item.costPrice ?? (product as any).costPrice ?? 0);
   const wholesalePrice = Number(
     item.wholesalePrice ?? (product as any).wholesalePrice ?? Number.NaN
   );
@@ -1226,7 +1226,7 @@ export function InventoryModule() {
           branchId: item.branchId ?? effectiveBranchId ?? undefined,
           quantity: input.quantity,
           type: input.type,
-          unitCost: costPrice,
+          unitCost: costPrice > 0 ? costPrice : undefined,
           direction: input.direction,
           reason: input.reason,
           toBranchId: input.toBranchId,

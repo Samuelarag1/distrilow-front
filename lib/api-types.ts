@@ -1426,6 +1426,7 @@ export interface ReportsInventoryOverviewItem {
   stockStatus?: InventoryOverviewStockStatus | null;
   sharedStock?: StockSharedRelation | null;
   averageCost?: number | null;
+  costPrice?: number | null;
   retailPrice?: number | null;
   wholesalePrice?: number | null;
   updatedAt?: string | null;

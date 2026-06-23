@@ -43,6 +43,7 @@ export interface InventoryOverviewRow {
   stockStatus?: InventoryOverviewStatus | null;
   sharedStock: StockSharedRelation | null;
   averageCost: number;
+  costPrice: number;
   retailPrice?: number | null;
   wholesalePrice?: number | null;
   updatedAt?: string | null;
@@ -216,6 +217,7 @@ export function normalizeInventoryOverviewRow(
         : null,
     sharedStock,
     averageCost: toFiniteNumber(row.averageCost, 0),
+    costPrice: toFiniteNumber(row.costPrice, 0),
     retailPrice: toOptionalFiniteNumber(row.retailPrice) ?? null,
     wholesalePrice: toOptionalFiniteNumber(row.wholesalePrice) ?? null,
     updatedAt: toOptionalText(row.updatedAt) ?? null,
@@ -348,6 +350,7 @@ export function buildInventoryOverviewRowFromLegacy(input: {
         : "NORMAL",
     sharedStock,
     averageCost: toFiniteNumber(stockRow?.averageCost ?? product?.costPrice, 0),
+    costPrice: toFiniteNumber(product?.costPrice, 0),
     retailPrice: toOptionalFiniteNumber(product?.retailPrice) ?? null,
     wholesalePrice: toOptionalFiniteNumber(product?.wholesalePrice) ?? null,
     updatedAt: toOptionalText(stockRow?.updatedAt) ?? toOptionalText(product?.updatedAt) ?? null,
