@@ -162,7 +162,7 @@ export interface CashSessionSnapshotResponse {
   lastModified: string | null;
 }
 
-const STOCK_CACHE_TTL_MS = 10_000;
+const STOCK_CACHE_TTL_MS = 60_000;
 const stockCacheByBranch = new Map<
   string,
   { cachedAt: number; rows: Stock[] }

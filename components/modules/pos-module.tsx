@@ -261,6 +261,7 @@ type PosCatalogCardProps = PosCartListProps & {
   isPaymentConfirmOpen: boolean;
   searchRefreshTick: number;
   onScanCode: (code: string) => Promise<boolean>;
+  onWarmScanCache: (code: string) => void;
   onSelectSearchProduct: (product: Product) => Promise<boolean>;
 };
 
@@ -989,6 +990,7 @@ const PosCatalogCard = memo(function PosCatalogCard({
   isPaymentConfirmOpen,
   searchRefreshTick,
   onScanCode,
+  onWarmScanCache,
   onSelectSearchProduct,
   onUpdatePricingPreference,
   onUpdateQuantity,
@@ -1061,6 +1063,10 @@ const PosCatalogCard = memo(function PosCatalogCard({
         const nextCode = scanQueueRef.current.shift();
         setQueuedScanCount(scanQueueRef.current.length);
         if (!nextCode) continue;
+        // Fire HTTP for the next queued item in background so its response
+        // may arrive while this scan is being processed (cache hit on next iteration).
+        const upNextCode = scanQueueRef.current[0];
+        if (upNextCode) void onWarmScanCache(upNextCode);
         await onScanCode(nextCode);
       }
     } finally {
@@ -1069,7 +1075,7 @@ const PosCatalogCard = memo(function PosCatalogCard({
       setQueuedScanCount(scanQueueRef.current.length);
       focusScanInput();
     }
-  }, [onScanCode, focusScanInput]);
+  }, [onScanCode, onWarmScanCache, focusScanInput]);
 
   const enqueueScannedCodes = useCallback(
     (rawCode: string) => {
@@ -2375,6 +2381,33 @@ export function POSModule() {
     setIsSaleCommitted(false);
   }, []);
 
+  const warmScanCache = useCallback(
+    (code: string) => {
+      const normalizedCode = code.trim();
+      if (!normalizedCode || !branchId) return;
+      const cacheKey = `${branchId}:${normalizedCode}`;
+      const cached = scanCacheRef.current.get(cacheKey);
+      if (cached && Date.now() - cached.cachedAt < POS_SCAN_CACHE_TTL_MS) return;
+      void backendApi.products
+        .resolveBarcode(normalizedCode, { hydrateProductDetails: true, branchId })
+        .then((resolved) => {
+          const scanned = resolved?.product
+            ? normalizeProductForPos(
+                resolved.product as Product & { id: string; name: string }
+              )
+            : null;
+          if (scanned) {
+            scanCacheRef.current.set(cacheKey, {
+              cachedAt: Date.now(),
+              value: { ...resolved, product: scanned },
+            });
+          }
+        })
+        .catch(() => {});
+    },
+    [branchId]
+  );
+
   const handleScanProduct = useCallback(
     async (code?: unknown) => {
       if (isSaleCommitted) return false;
@@ -2909,6 +2942,7 @@ export function POSModule() {
               isPaymentConfirmOpen={isPaymentConfirmOpen}
               searchRefreshTick={searchRefreshTick}
               onScanCode={handleScanProduct}
+              onWarmScanCache={warmScanCache}
               onSelectSearchProduct={handleSelectSearchProduct}
               onUpdatePricingPreference={updatePricingPreference}
               onUpdateQuantity={updateQuantity}

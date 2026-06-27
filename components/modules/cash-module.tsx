@@ -35,7 +35,7 @@ import type {
   ExpenseContext,
 } from "@/lib/api-types";
 
-const SESSION_POLL_INTERVAL_MS = 8_000;
+const SESSION_POLL_INTERVAL_MS = 30_000;
 const SESSION_HISTORY_DAYS = 60;
 const PURCHASE_WITH_CASH = "PURCHASE_WITH_CASH" as const;
 type CashMovementMode = CashMovementType | typeof PURCHASE_WITH_CASH;

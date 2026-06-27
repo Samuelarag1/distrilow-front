@@ -107,8 +107,8 @@ export function useProducts(args: UseProductsArgs = {}) {
       }
     },
     {
-      revalidateOnFocus: true,
-      dedupingInterval: 2_500,
+      revalidateOnFocus: false,
+      dedupingInterval: 15_000,
       refreshInterval: 0,
       refreshWhenHidden: false,
       keepPreviousData: true,
