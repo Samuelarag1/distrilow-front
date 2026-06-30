@@ -86,7 +86,7 @@ export function CashModule() {
   const [isSaving, setIsSaving] = useState(false);
 
   const [openingFloat, setOpeningFloat] = useState("");
-  const [movementType, setMovementType] = useState<CashMovementMode>("IN");
+  const [movementType, setMovementType] = useState<CashMovementMode>("OUT");
   const [movementReason, setMovementReason] = useState("");
   const [movementAmount, setMovementAmount] = useState("");
   const [purchaseExpenseCategory, setPurchaseExpenseCategory] = useState<
@@ -725,7 +725,6 @@ export function CashModule() {
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="IN">Ingreso manual</SelectItem>
                     <SelectItem value="OUT">Retiro de caja</SelectItem>
                     <SelectItem value={PURCHASE_WITH_CASH}>
                       Compra con dinero en caja
