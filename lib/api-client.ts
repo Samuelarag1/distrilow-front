@@ -1,5 +1,5 @@
 import type { AuthResponse, SessionResponse } from "@/lib/api-types";
-import { clearSessionCookies, syncClientAuthCookies } from "@/lib/client-cookies";
+import { clearSessionCookies } from "@/lib/client-cookies";
 
 type ApiSessionInput =
   | {
@@ -91,17 +91,13 @@ function getCookie(name: string): string | null {
   return match ? decodeURIComponent(match.split("=").slice(1).join("=")) : null;
 }
 
+// The access token lives ONLY in this module-level variable, populated from
+// login/refresh response bodies — never persisted to a cookie or storage.
+// It resets on every full page load/reload by design: the refresh token
+// (httpOnly, never touched by JS) is what actually keeps the session alive
+// across reloads, via bootstrapFromRefresh() in UserProvider.
 function getSessionToken() {
-  return (
-    authToken ??
-    getCookie("accessToken") ??
-    getCookie("token") ??
-    getCookie("access_token")
-  );
-}
-
-function getSessionRefreshToken() {
-  return getCookie("refreshToken") ?? getCookie("refresh_token");
+  return authToken;
 }
 
 function getSessionBranchId() {
@@ -270,11 +266,7 @@ async function refreshSession(): Promise<boolean> {
 
   refreshPromise = (async () => {
     try {
-      const refreshToken = getSessionRefreshToken();
       const accessToken = getSessionToken();
-      if (!refreshToken && !accessToken) {
-        return false;
-      }
       const headers: Record<string, string> = {
         "Content-Type": "application/json",
       };
@@ -283,13 +275,14 @@ async function refreshSession(): Promise<boolean> {
         headers.Authorization = `Bearer ${accessToken}`;
       }
 
+      // No token in the body: the httpOnly refreshToken cookie travels on
+      // its own via credentials:"include". The backend reads it straight
+      // off the cookie header.
       const res = await fetch(`${resolveApiBaseUrl()}/auth/refresh`, {
         method: "POST",
         credentials: "include",
         headers,
-        body: JSON.stringify(
-          refreshToken ? { refreshToken } : {}
-        ),
+        body: JSON.stringify({}),
       });
 
       if (!res.ok) {
@@ -307,13 +300,8 @@ async function refreshSession(): Promise<boolean> {
       if (payload?.session?.activeBranchId !== undefined) {
         activeBranchId = payload.session.activeBranchId ?? null;
       }
-      syncClientAuthCookies({
-        accessToken: nextAccessToken,
-        refreshToken: payload?.refreshToken,
-      });
 
-      const hasUsableToken = Boolean(nextAccessToken || getSessionToken());
-      if (!hasUsableToken) {
+      if (!nextAccessToken) {
         lastFailedRefreshAt = Date.now();
         return false;
       }
@@ -339,12 +327,7 @@ export async function refreshSessionIfNeeded(
   expiryBufferMs = REFRESH_EXPIRY_BUFFER_MS
 ) {
   const accessToken = getSessionToken();
-  const refreshToken = getSessionRefreshToken();
   const tokenExpiryTime = getTokenExpiryTime(accessToken);
-
-  if (!refreshToken) {
-    return Boolean(accessToken);
-  }
 
   if (
     accessToken &&
@@ -363,6 +346,11 @@ export async function refreshSessionIfNeeded(
   ) {
     return true;
   }
+
+  // No usable access token in memory (fresh tab, reload, or it expired) —
+  // ask the backend directly. It will succeed if the httpOnly refresh
+  // cookie is still valid, and fail fast (cheaply, via the cooldown below)
+  // if there's genuinely no session.
   return refreshSession();
 }
 
@@ -501,14 +489,30 @@ async function executeRequest(
   return res;
 }
 
+let isRedirectingToLogin = false;
+
+/**
+ * Single place that tears a dead/killed session down and sends the user to
+ * /login. Guarded so that a fan-out of concurrent failures (every widget on
+ * a page 401ing at once, or a background idle-timeout firing alongside a
+ * failed request) only navigates once instead of racing several redirects.
+ */
+export function forceLogout() {
+  if (typeof window === "undefined" || isRedirectingToLogin) return;
+  if (window.location.pathname.startsWith("/login")) return;
+
+  isRedirectingToLogin = true;
+  authToken = null;
+  activeBranchId = null;
+  clearSessionCookies();
+  window.location.href = "/login";
+}
+
 async function ensureResponseOkOrThrow(res: Response): Promise<void> {
   if (res.ok) return;
 
-  if (res.status === 401 && typeof window !== "undefined") {
-    authToken = null;
-    activeBranchId = null;
-    clearSessionCookies();
-    window.location.href = "/login";
+  if (res.status === 401) {
+    forceLogout();
   }
 
   const contentType = res.headers.get("content-type") ?? "";

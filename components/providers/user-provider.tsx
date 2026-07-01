@@ -2,6 +2,7 @@
 
 import { usePathname } from "next/navigation";
 import {
+  forceLogout,
   getLastRefreshPayload,
   getApiSession,
   refreshSessionIfNeeded,
@@ -11,9 +12,10 @@ import { backendApi } from "@/lib/backend-api";
 import {
   clearSessionCookies,
   setPersistentSessionCookie,
-  syncClientAuthCookies,
 } from "@/lib/client-cookies";
 import { isManagementRole } from "@/lib/permissions";
+import { useIdleLogout } from "@/hooks/use-idle-logout";
+import { useToast } from "@/hooks/use-toast";
 import React, {
   useCallback,
   createContext,
@@ -23,6 +25,13 @@ import React, {
   useState,
 } from "react";
 import type { SessionBranch, UserRole } from "@/lib/api-types";
+
+// 20 min of no mouse/keyboard/touch/scroll activity anywhere in the app
+// (including POS — an unattended, still-logged-in terminal is the case
+// this exists to close) logs the session out automatically. Override with
+// NEXT_PUBLIC_IDLE_TIMEOUT_MS for a different site-wide value.
+const IDLE_LOGOUT_TIMEOUT_MS =
+  Number(process.env.NEXT_PUBLIC_IDLE_TIMEOUT_MS) || 20 * 60 * 1000;
 
 export interface User {
   id: string;
@@ -168,6 +177,7 @@ function writeSessionCookies(payload: {
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
+  const { toast } = useToast();
   const [currentUser, setCurrentUserState] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
   const [branchId, setBranchIdState] = useState<string | null>(null);
@@ -234,8 +244,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     setSessionBootstrapped(false);
 
-    const tokenCookie =
-      getCookie("token") ?? getCookie("accessToken") ?? getCookie("access_token");
+    // accessToken is httpOnly now — there is no cookie to read here. Every
+    // fresh page load must ask the backend to confirm the session via the
+    // httpOnly refresh cookie instead of trusting a client-visible value.
     const userCookie = getCookie("user");
     const activeBranchCookie =
       getCookie("activeBranchId") ?? getCookie("branchId");
@@ -278,19 +289,25 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       setPersistentSessionCookie("activeBranchId", resolvedBranchId);
     }
 
-    if (tokenCookie) {
-      setToken(tokenCookie);
-      setApiSession({ accessToken: tokenCookie, branchId: resolvedBranchId ?? undefined });
-      setSessionBootstrapped(true);
-      return;
-    }
-
     let cancelled = false;
 
     const bootstrapFromRefresh = async () => {
       try {
         const refreshed = await refreshSessionIfNeeded(0);
-        if (!refreshed || cancelled) return;
+        if (cancelled) return;
+
+        if (!refreshed) {
+          // No valid session at all — don't leave the UI hydrated from a
+          // stale "user" cookie pretending someone is still logged in.
+          clearSessionCookies();
+          setCurrentUserState(null);
+          setToken(null);
+          setBranches([]);
+          setBranchId(null);
+          setNeedsOnboarding(false);
+          forceLogout();
+          return;
+        }
 
         const payload = getLastRefreshPayload();
         const session = getApiSession();
@@ -307,11 +324,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
         const refreshedNeedsOnboarding =
           payload?.session?.needsOnboarding ??
           (onboardingCookie ? onboardingCookie === "true" : false);
-
-        syncClientAuthCookies({
-          accessToken: refreshedToken,
-          refreshToken: payload?.refreshToken,
-        });
 
         if (payload?.user) {
           const hydratedUser = hydrateUserAvatar({
@@ -355,7 +367,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     if (!sessionBootstrapped) return;
 
     setApiSession({ accessToken: token, branchId: branchId ?? undefined });
-    syncClientAuthCookies({ accessToken: token });
     if (branchId !== undefined) {
       setPersistentSessionCookie("activeBranchId", branchId ?? "");
     }
@@ -403,11 +414,6 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const nextNeedsOnboarding =
       response.session?.needsOnboarding ?? needsOnboarding;
 
-    syncClientAuthCookies({
-      accessToken: nextToken,
-      refreshToken: response.refreshToken,
-    });
-
     if (nextToken !== token) {
       setToken(nextToken);
     }
@@ -429,12 +435,12 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (isPosRoute) return;
-
-    const hasRefreshCookie = Boolean(
-      getCookie("refreshToken") ?? getCookie("refresh_token")
-    );
-    if (!currentUser && !token && !hasRefreshCookie) return;
     if (typeof window === "undefined") return;
+
+    // "hasSession" is the non-secret marker cookie the backend sets
+    // alongside the real (httpOnly) tokens — see client-cookies.ts.
+    const hasSessionMarker = Boolean(getCookie("hasSession"));
+    if (!currentUser && !token && !hasSessionMarker) return;
 
     const refreshIntervalMs = 5 * 60 * 1000;
     let destroyed = false;
@@ -498,6 +504,20 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     window.location.href = "/login";
   }, [setCurrentUser, setBranchId]);
+
+  useIdleLogout({
+    enabled: Boolean(currentUser),
+    timeoutMs: IDLE_LOGOUT_TIMEOUT_MS,
+    onWarn: () => {
+      toast({
+        title: "Tu sesion esta por cerrarse",
+        description: "No detectamos actividad. Movete o hace click para seguir conectado.",
+      });
+    },
+    onIdle: () => {
+      void logout();
+    },
+  });
 
   const value = useMemo(
     () => ({

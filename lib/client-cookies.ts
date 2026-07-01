@@ -1,8 +1,13 @@
+// accessToken/refreshToken are intentionally NOT in this list — they must
+// only ever exist as httpOnly cookies set by the backend. Storing them in a
+// JS-readable cookie here would hand any XSS on this page a 30-day-lived
+// refresh token via a plain document.cookie read.
 const SESSION_COOKIE_NAMES = [
   "token",
   "accessToken",
   "access_token",
   "refreshToken",
+  "refresh_token",
   "user",
   "branches",
   "activeBranchId",
@@ -10,8 +15,6 @@ const SESSION_COOKIE_NAMES = [
   "needsOnboarding",
 ] as const;
 
-const ACCESS_TOKEN_COOKIE_ALIASES = ["token", "access_token"] as const;
-const REFRESH_TOKEN_COOKIE_ALIASES = ["refresh_token"] as const;
 export const SESSION_COOKIE_MAX_AGE_SECONDS = 60 * 60 * 24 * 30;
 
 function shouldUseSecureCookie() {
@@ -71,35 +74,4 @@ export function deleteClientCookie(name: string) {
 
 export function clearSessionCookies() {
   SESSION_COOKIE_NAMES.forEach((cookieName) => deleteClientCookie(cookieName));
-}
-
-export function syncClientAuthCookies(payload: {
-  accessToken?: string | null;
-  refreshToken?: string | null;
-}) {
-  if (payload.accessToken !== undefined) {
-    ACCESS_TOKEN_COOKIE_ALIASES.forEach((cookieName) =>
-      deleteClientCookie(cookieName)
-    );
-
-    const accessToken = payload.accessToken?.trim();
-    if (accessToken) {
-      setPersistentSessionCookie("accessToken", accessToken);
-    } else {
-      deleteClientCookie("accessToken");
-    }
-  }
-
-  if (payload.refreshToken !== undefined) {
-    REFRESH_TOKEN_COOKIE_ALIASES.forEach((cookieName) =>
-      deleteClientCookie(cookieName)
-    );
-
-    const refreshToken = payload.refreshToken?.trim();
-    if (refreshToken) {
-      setPersistentSessionCookie("refreshToken", refreshToken);
-    } else {
-      deleteClientCookie("refreshToken");
-    }
-  }
 }

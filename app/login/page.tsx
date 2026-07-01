@@ -10,10 +10,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
 import { setApiSession } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
-import {
-  setPersistentSessionCookie,
-  syncClientAuthCookies,
-} from "@/lib/client-cookies";
+import { setPersistentSessionCookie } from "@/lib/client-cookies";
 import { isPosCashOnlyUser } from "@/lib/permissions";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import type { SessionBranch } from "@/lib/api-types";
@@ -87,10 +84,6 @@ export default function LoginPage() {
       setApiSession({
         accessToken: data.accessToken,
         branchId: activeBranchId ?? undefined,
-      });
-      syncClientAuthCookies({
-        accessToken: data.accessToken,
-        refreshToken: data.refreshToken,
       });
 
       setPersistentSessionCookie("branches", JSON.stringify(availableBranches));

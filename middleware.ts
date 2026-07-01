@@ -5,17 +5,6 @@ type SessionUser = {
   role?: string;
 };
 
-function getFirstCookie(
-  request: NextRequest,
-  names: readonly string[]
-): string | undefined {
-  for (const name of names) {
-    const value = request.cookies.get(name)?.value;
-    if (value) return value;
-  }
-  return undefined;
-}
-
 function hasCookieValue(value?: string) {
   if (!value) return false;
   const normalized = value.trim().toLowerCase();
@@ -40,24 +29,11 @@ function isRestrictedUser(role?: string, branchesCount = 0) {
 
 export function middleware(request: NextRequest) {
   try {
-    const token = getFirstCookie(request, [
-      "accessToken",
-      "token",
-      "access_token",
-      "__Host-accessToken",
-      "__Secure-accessToken",
-      "__Host-access_token",
-      "__Secure-access_token",
-    ]);
-    const refreshToken = getFirstCookie(request, [
-      "refreshToken",
-      "refresh_token",
-      "__Host-refreshToken",
-      "__Secure-refreshToken",
-      "__Host-refresh_token",
-      "__Secure-refresh_token",
-    ]);
-    const hasSession = hasCookieValue(token) || hasCookieValue(refreshToken);
+    // The real tokens are httpOnly and may live on the API's own subdomain —
+    // this middleware can't and shouldn't try to read them. `hasSession` is
+    // a non-secret marker cookie the backend sets/clears alongside them
+    // purely so routing decisions can be made here without touching the JWT.
+    const hasSession = hasCookieValue(request.cookies.get("hasSession")?.value);
     const user = parseCookieJson<SessionUser>(request.cookies.get("user")?.value);
     const branches = parseCookieJson<Array<{ id: string }>>(
       request.cookies.get("branches")?.value
