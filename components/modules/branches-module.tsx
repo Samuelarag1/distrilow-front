@@ -217,8 +217,8 @@ export function BranchesModule() {
               ¿Está seguro de eliminar esta sucursal?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              Esta acción no se puede deshacer. Se eliminarán los registros
-              asociados a esta sucursal.
+              Solo se puede eliminar una sucursal sin ventas, cajas ni stock
+              registrados. Esta acción no se puede deshacer.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

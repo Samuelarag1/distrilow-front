@@ -7,7 +7,7 @@ import { SWRConfig } from "swr";
 import { BusinessProvider } from "./business-provider";
 import { TransactionsProvider } from "./transactions-provider";
 import { ProductProvider } from "./product-provider";
-import { UserProvider } from "./user-provider";
+import { ActiveBranchBoundary, UserProvider } from "./user-provider";
 import { AuditProvider } from "./audit-provider";
 import { OfflineProvider } from "./offline-provider";
 import { BranchProvider } from "./branch-provider";
@@ -27,7 +27,9 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         }}
       >
         <OfflineProvider>
-          <UserProvider>{children}</UserProvider>
+          <UserProvider>
+            <ActiveBranchBoundary>{children}</ActiveBranchBoundary>
+          </UserProvider>
         </OfflineProvider>
       </SWRConfig>
     );
@@ -47,9 +49,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
           <BusinessProvider>
             <AuditProvider>
               <BranchProvider>
-                <TransactionsProvider autoLoadSales={false}>
-                  <ProductProvider>{children}</ProductProvider>
-                </TransactionsProvider>
+                <ActiveBranchBoundary>
+                  <TransactionsProvider autoLoadSales={false}>
+                    <ProductProvider>{children}</ProductProvider>
+                  </TransactionsProvider>
+                </ActiveBranchBoundary>
               </BranchProvider>
             </AuditProvider>
           </BusinessProvider>

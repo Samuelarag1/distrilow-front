@@ -1,53 +1,35 @@
-import type { AuthResponse, SessionResponse } from "@/lib/api-types";
-import { clearSessionCookies } from "@/lib/client-cookies";
-
-type ApiSessionInput =
-  | {
-      accessToken?: string | null;
-      branchId?: string | null;
-    }
-  | string
-  | null;
+import type { SessionResponse } from "@/lib/api-types";
+import { getActiveBranchId } from "@/lib/active-branch";
+import {
+  applySession,
+  clearSession,
+  getAccessToken,
+  getSessionEpoch,
+  markIdentityChanged,
+} from "@/lib/session";
 
 type RequestOptions = RequestInit & {
   _retried?: boolean;
-  branchScoped?: boolean;
   disableCache?: boolean;
 };
 
-let authToken: string | null = null;
-let activeBranchId: string | null = null;
-let refreshPromise: Promise<boolean> | null = null;
+/**
+ * Outcome of renewing the access token (docs/design/01-login-y-sesion.md §6.4).
+ * - ok: there is a fresh access token.
+ * - invalid: the server said no (401/403): the session is over.
+ * - unavailable: no answer (network error, 5xx, 429). The session may be
+ *   perfectly valid, so it is kept — a failure to ask is not a "no" (H2, I3).
+ */
+export type RefreshResult = "ok" | "invalid" | "unavailable";
+
+let refreshPromise: Promise<RefreshResult> | null = null;
 let lastSuccessfulRefreshAt = 0;
-let lastFailedRefreshAt = 0;
-let lastRefreshPayload: SessionResponse | AuthResponse | null = null;
+// Set only when the server explicitly asks to wait (Retry-After on 429/503).
+let refreshBlockedUntil = 0;
 
-const REFRESH_FAILURE_COOLDOWN_MS = 30_000;
 const REFRESH_EXPIRY_BUFFER_MS = 2 * 60 * 1000;
-
-const BRANCH_SCOPED_PREFIXES = [
-  "/products",
-  "/files/upload",
-  "/stocks",
-  "/stock-movements",
-  "/sales",
-  "/expenses",
-  "/cash",
-  "/reporting",
-  "/analytics",
-  "/reports",
-] as const;
-
-function sanitizeBranchId(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  const lowered = trimmed.toLowerCase();
-  if (lowered === "null" || lowered === "undefined") return null;
-
-  return trimmed;
-}
+const SESSION_UNAVAILABLE_MESSAGE =
+  "No pudimos confirmar tu sesion con el servidor. Revisa la conexion e intenta de nuevo.";
 
 function normalizeBaseUrl(base: string) {
   return base.endsWith("/") ? base.slice(0, -1) : base;
@@ -81,69 +63,6 @@ function resolveApiBaseUrl() {
   const origin = normalizeApiBaseCandidate(originRaw);
   const prefix = normalizeApiPrefix(process.env.NEXT_PUBLIC_API_PREFIX);
   return `${normalizeBaseUrl(origin)}${prefix.startsWith("/") ? "" : "/"}${prefix}`;
-}
-
-function getCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie
-    .split("; ")
-    .find((row) => row.startsWith(`${name}=`));
-  return match ? decodeURIComponent(match.split("=").slice(1).join("=")) : null;
-}
-
-// The access token lives ONLY in this module-level variable, populated from
-// login/refresh response bodies — never persisted to a cookie or storage.
-// It resets on every full page load/reload by design: the refresh token
-// (httpOnly, never touched by JS) is what actually keeps the session alive
-// across reloads, via bootstrapFromRefresh() in UserProvider.
-function getSessionToken() {
-  return authToken;
-}
-
-function getSessionBranchId() {
-  const explicitBranchId =
-    sanitizeBranchId(activeBranchId) ??
-    sanitizeBranchId(getCookie("activeBranchId")) ??
-    sanitizeBranchId(getCookie("branchId"));
-  if (explicitBranchId) return explicitBranchId;
-
-  const branchesRaw = getCookie("branches");
-  if (!branchesRaw) return null;
-
-  try {
-    const parsed = JSON.parse(branchesRaw);
-    if (!Array.isArray(parsed)) return null;
-    const first = parsed.find((branch) => {
-      if (typeof branch === "string") return branch.trim().length > 0;
-      if (!branch || typeof branch !== "object") return false;
-      const obj = branch as { id?: unknown; branchId?: unknown };
-      return (
-        (typeof obj.id === "string" && obj.id.trim().length > 0) ||
-        (typeof obj.branchId === "string" && obj.branchId.trim().length > 0)
-      );
-    });
-
-    if (typeof first === "string") {
-      return sanitizeBranchId(first);
-    }
-    if (first && typeof first === "object") {
-      const obj = first as { id?: unknown; branchId?: unknown };
-      const byId = sanitizeBranchId(obj.id);
-      if (byId) return byId;
-      const byBranchId = sanitizeBranchId(obj.branchId);
-      if (byBranchId) return byBranchId;
-    }
-  } catch {
-    return null;
-  }
-
-  return null;
-}
-
-function isBranchScopedPath(path: string) {
-  return BRANCH_SCOPED_PREFIXES.some(
-    (prefix) => path === prefix || path.startsWith(`${prefix}/`)
-  );
 }
 
 function isJsonBody(body: BodyInit | null | undefined) {
@@ -258,62 +177,53 @@ function extractApiMessage(body: unknown, fallback: string) {
   return fallback;
 }
 
-async function refreshSession(): Promise<boolean> {
+async function refreshSession(): Promise<RefreshResult> {
   if (refreshPromise) return refreshPromise;
-  if (Date.now() - lastFailedRefreshAt < REFRESH_FAILURE_COOLDOWN_MS) {
-    return false;
-  }
+  if (Date.now() < refreshBlockedUntil) return "unavailable";
 
-  refreshPromise = (async () => {
+  refreshPromise = (async (): Promise<RefreshResult> => {
+    // If a login/logout replaces the session while this refresh is in flight,
+    // its answer is about the OLD session and must not touch the new one —
+    // e.g. the page-load refresh failing right after the user logged in.
+    // "ok" lets a waiting request retry with the new token.
+    const epoch = getSessionEpoch();
+    const superseded = () => epoch !== getSessionEpoch();
+
     try {
-      const accessToken = getSessionToken();
-      const headers: Record<string, string> = {
-        "Content-Type": "application/json",
-      };
-
-      if (accessToken) {
-        headers.Authorization = `Bearer ${accessToken}`;
-      }
-
-      // No token in the body: the httpOnly refreshToken cookie travels on
-      // its own via credentials:"include". The backend reads it straight
-      // off the cookie header.
+      // Neither the refresh token nor an Authorization header: the httpOnly
+      // refreshToken cookie travels on its own via credentials:"include".
       const res = await fetch(`${resolveApiBaseUrl()}/auth/refresh`, {
         method: "POST",
         credentials: "include",
-        headers,
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({}),
       });
 
+      if (superseded()) return "ok";
+      if (res.status === 401 || res.status === 403) return "invalid";
       if (!res.ok) {
-        lastFailedRefreshAt = Date.now();
-        return false;
-      }
-      const payload = (await parseResponse<SessionResponse | AuthResponse>(
-        res
-      )) as SessionResponse | AuthResponse | null;
-      lastRefreshPayload = payload ?? null;
-      const nextAccessToken = payload?.accessToken?.trim();
-      if (nextAccessToken) {
-        authToken = nextAccessToken;
-      }
-      if (payload?.session?.activeBranchId !== undefined) {
-        activeBranchId = payload.session.activeBranchId ?? null;
+        const retryAfterSeconds = parseRetryAfterSeconds(
+          res.headers.get("Retry-After")
+        );
+        if (retryAfterSeconds) {
+          refreshBlockedUntil = Date.now() + retryAfterSeconds * 1000;
+        }
+        return "unavailable";
       }
 
-      if (!nextAccessToken) {
-        lastFailedRefreshAt = Date.now();
-        return false;
+      const payload = await parseResponse<SessionResponse | null>(res);
+      if (superseded()) return "ok";
+      if (!payload?.accessToken?.trim()) return "unavailable";
+
+      if (applySession(payload, "refresh") === "identity-changed") {
+        reloadAfterIdentityChange();
+        return "invalid";
       }
 
       lastSuccessfulRefreshAt = Date.now();
-      lastFailedRefreshAt = 0;
-
-      return true;
+      return "ok";
     } catch {
-      lastRefreshPayload = null;
-      lastFailedRefreshAt = Date.now();
-      return false;
+      return superseded() ? "ok" : "unavailable";
     } finally {
       refreshPromise = null;
     }
@@ -325,8 +235,8 @@ async function refreshSession(): Promise<boolean> {
 export async function refreshSessionIfNeeded(
   minIntervalMs = 10 * 60 * 1000,
   expiryBufferMs = REFRESH_EXPIRY_BUFFER_MS
-) {
-  const accessToken = getSessionToken();
+): Promise<RefreshResult> {
+  const accessToken = getAccessToken();
   const tokenExpiryTime = getTokenExpiryTime(accessToken);
 
   if (
@@ -334,7 +244,7 @@ export async function refreshSessionIfNeeded(
     tokenExpiryTime !== null &&
     tokenExpiryTime - Date.now() > expiryBufferMs
   ) {
-    return true;
+    return "ok";
   }
 
   const elapsed = Date.now() - lastSuccessfulRefreshAt;
@@ -344,48 +254,19 @@ export async function refreshSessionIfNeeded(
     lastSuccessfulRefreshAt > 0 &&
     elapsed < minIntervalMs
   ) {
-    return true;
+    return "ok";
   }
 
   // No usable access token in memory (fresh tab, reload, or it expired) —
-  // ask the backend directly. It will succeed if the httpOnly refresh
-  // cookie is still valid, and fail fast (cheaply, via the cooldown below)
-  // if there's genuinely no session.
+  // ask the backend directly. It succeeds if the httpOnly refresh cookie is
+  // still valid.
   return refreshSession();
-}
-
-export function getLastRefreshPayload() {
-  return lastRefreshPayload;
-}
-
-export function setApiSession(token: ApiSessionInput, branchId?: string | null) {
-  if (typeof token === "string" || token === null) {
-    authToken = token;
-    if (token) {
-      lastSuccessfulRefreshAt = Date.now();
-      lastFailedRefreshAt = 0;
-    }
-    activeBranchId =
-      branchId === undefined ? activeBranchId : sanitizeBranchId(branchId);
-    return;
-  }
-
-  authToken =
-    token?.accessToken === undefined ? authToken : token?.accessToken ?? null;
-  if (token?.accessToken) {
-    lastSuccessfulRefreshAt = Date.now();
-    lastFailedRefreshAt = 0;
-  }
-  activeBranchId =
-    token?.branchId === undefined
-      ? activeBranchId
-      : sanitizeBranchId(token?.branchId);
 }
 
 export function getApiSession() {
   return {
-    accessToken: getSessionToken(),
-    branchId: getSessionBranchId(),
+    accessToken: getAccessToken(),
+    branchId: getActiveBranchId(),
   };
 }
 
@@ -436,10 +317,6 @@ async function executeRequest(
   options: RequestOptions = {}
 ): Promise<Response> {
   const method = (options.method ?? "GET").toUpperCase();
-  const branchScoped =
-    options.branchScoped === undefined
-      ? isBranchScopedPath(path)
-      : options.branchScoped;
   const disableCache =
     options.disableCache === undefined
       ? false
@@ -450,8 +327,8 @@ async function executeRequest(
     headers.set("Content-Type", "application/json");
   }
 
-  const tokenToUse = getSessionToken();
-  const branchToUse = branchScoped ? getSessionBranchId() : null;
+  const tokenToUse = getAccessToken();
+  const branchToUse = getActiveBranchId();
 
   if (
     tokenToUse &&
@@ -460,14 +337,16 @@ async function executeRequest(
   ) {
     headers.set("Authorization", `Bearer ${tokenToUse}`);
   }
-  if (branchScoped && branchToUse && !headers.has("x-branch-id")) {
+  // Every request carries the active branch; routes without branch scope
+  // ignore it. With no active branch the header is omitted and branch-scoped
+  // routes answer 400 — failing loudly instead of guessing a branch.
+  if (branchToUse && !headers.has("x-branch-id")) {
     headers.set("x-branch-id", branchToUse);
   }
 
-  const { _retried: _ignoredRetried, branchScoped: _ignoredBranchScoped, disableCache: _ignoredDisableCache, ...fetchOptions } =
+  const { _retried: _ignoredRetried, disableCache: _ignoredDisableCache, ...fetchOptions } =
     options;
   void _ignoredRetried;
-  void _ignoredBranchScoped;
   void _ignoredDisableCache;
 
   const res = await fetch(`${resolveApiBaseUrl()}${path}`, {
@@ -481,15 +360,30 @@ async function executeRequest(
 
   if (res.status === 401 && !options._retried && shouldTryRefresh(path, method)) {
     const refreshed = await refreshSession();
-    if (refreshed) {
-      return executeRequest(path, { ...options, _retried: true });
+    if (refreshed === "unavailable") {
+      // The server couldn't confirm the session, which doesn't mean it's
+      // over: fail this request without logging the user out (H2, I3).
+      throw new ApiError(503, SESSION_UNAVAILABLE_MESSAGE);
+    }
+    if (refreshed === "ok") {
+      // Retry against the same branch as the first attempt, even if the user
+      // switched meanwhile — otherwise data from the new branch would land
+      // under the caller's (old-branch) cache key. Authorization is dropped
+      // so the retry picks up the refreshed token.
+      const retryHeaders = new Headers(headers);
+      retryHeaders.delete("Authorization");
+      return executeRequest(path, {
+        ...options,
+        headers: retryHeaders,
+        _retried: true,
+      });
     }
   }
 
   return res;
 }
 
-let isRedirectingToLogin = false;
+let isLeavingPage = false;
 
 /**
  * Single place that tears a dead/killed session down and sends the user to
@@ -498,14 +392,26 @@ let isRedirectingToLogin = false;
  * failed request) only navigates once instead of racing several redirects.
  */
 export function forceLogout() {
-  if (typeof window === "undefined" || isRedirectingToLogin) return;
+  if (typeof window === "undefined" || isLeavingPage) return;
   if (window.location.pathname.startsWith("/login")) return;
 
-  isRedirectingToLogin = true;
-  authToken = null;
-  activeBranchId = null;
-  clearSessionCookies();
+  isLeavingPage = true;
+  clearSession();
   window.location.href = "/login";
+}
+
+/**
+ * Another user signed in on this browser (the refresh cookie is shared by
+ * every tab), so this tab must never act as them (H7, invariant I1). Nothing
+ * of the new session is applied: the tab reloads and starts over as whoever
+ * is signed in now. The cookies are left alone — they belong to the new user.
+ */
+function reloadAfterIdentityChange() {
+  if (typeof window === "undefined" || isLeavingPage) return;
+
+  isLeavingPage = true;
+  markIdentityChanged();
+  window.location.reload();
 }
 
 async function ensureResponseOkOrThrow(res: Response): Promise<void> {

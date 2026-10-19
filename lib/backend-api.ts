@@ -81,7 +81,6 @@ import type {
   SaleSummary,
   SalePaymentInput,
   SalePaymentsListQuery,
-  SessionResponse,
   SnapshotPeriod,
   SnapshotMetricsResponse,
   Stock,
@@ -96,7 +95,6 @@ import type {
   StockSummaryCategoryItem,
   StockSummaryResponse,
   StockQuery,
-  SwitchBranchRequest,
   TransferMovementRequest,
   UpsertStockLotRequest,
   UpdateBranchRequest,
@@ -1704,21 +1702,11 @@ async function withRateLimitRetry<T>(
 export const backendApi = {
   auth: {
     login: (body: LoginRequest) =>
-      apiClientFetch.post<AuthResponse>("/auth/login", body, {
-        branchScoped: false,
-      }),
-    switchBranch: (body: SwitchBranchRequest) =>
-      apiClientFetch.post<SessionResponse>("/auth/switch-branch", body, {
-        branchScoped: false,
-      }),
+      apiClientFetch.post<AuthResponse>("/auth/login", body),
     refresh: (body?: RefreshRequest) =>
-      apiClientFetch.post<AuthResponse>("/auth/refresh", body ?? {}, {
-        branchScoped: false,
-      }),
+      apiClientFetch.post<AuthResponse>("/auth/refresh", body ?? {}),
     logout: (body?: LogoutRequest) =>
-      apiClientFetch.post<LogoutResponse>("/auth/logout", body ?? {}, {
-        branchScoped: false,
-      }),
+      apiClientFetch.post<LogoutResponse>("/auth/logout", body ?? {}),
   },
   pos: {
     search: async (
@@ -1763,65 +1751,48 @@ export const backendApi = {
     },
   },
   users: {
-    list: () => apiClientFetch.get<User[]>("/users", { branchScoped: false }),
+    list: () => apiClientFetch.get<User[]>("/users"),
     getById: (id: string) =>
-      apiClientFetch.get<User>(`/users/${id}`, { branchScoped: false }),
+      apiClientFetch.get<User>(`/users/${id}`),
     create: (body: CreateUserRequest) =>
-      apiClientFetch.post<User>("/users", body, { branchScoped: false }),
+      apiClientFetch.post<User>("/users", body),
     update: (id: string, body: UpdateUserRequest) =>
-      apiClientFetch.patch<User>(`/users/${id}`, body, { branchScoped: false }),
+      apiClientFetch.patch<User>(`/users/${id}`, body),
     updateBranches: (id: string, body: UpdateUserBranchesRequest) =>
-      apiClientFetch.patch<User>(`/users/${id}/branches`, body, {
-        branchScoped: false,
-      }),
+      apiClientFetch.patch<User>(`/users/${id}/branches`, body),
     remove: (id: string) =>
-      apiClientFetch.delete<boolean>(`/users/${id}`, { branchScoped: false }),
+      apiClientFetch.delete<boolean>(`/users/${id}`),
   },
   userBranches: {
     updateBranches: (id: string, body: UpdateUserBranchesRequest) =>
-      apiClientFetch.patch<User>(`/user-branches/${id}/branches`, body, {
-        branchScoped: false,
-      }),
+      apiClientFetch.patch<User>(`/user-branches/${id}/branches`, body),
   },
   branches: {
     list: () =>
-      apiClientFetch.get<Branch[]>("/branches", { branchScoped: false }),
+      apiClientFetch.get<Branch[]>("/branches"),
     getById: (id: string) =>
-      apiClientFetch.get<Branch>(`/branches/${id}`, { branchScoped: false }),
+      apiClientFetch.get<Branch>(`/branches/${id}`),
     create: (body: CreateBranchRequest) =>
-      apiClientFetch.post<Branch>("/branches", body, { branchScoped: false }),
+      apiClientFetch.post<Branch>("/branches", body),
     update: (id: string, body: UpdateBranchRequest) =>
-      apiClientFetch.patch<Branch>(`/branches/${id}`, body, {
-        branchScoped: false,
-      }),
+      apiClientFetch.patch<Branch>(`/branches/${id}`, body),
     remove: (id: string) =>
-      apiClientFetch.delete<boolean>(`/branches/${id}`, {
-        branchScoped: false,
-      }),
+      apiClientFetch.delete<boolean>(`/branches/${id}`),
     bootstrap: (body: CreateBranchRequest) =>
       apiClientFetch.post<BootstrapBranchResponse>(
         "/branches/bootstrap",
-        body,
-        {
-          branchScoped: false,
-        }
+        body
       ),
   },
   categories: {
     list: () =>
-      apiClientFetch.get<Category[]>("/categories", { branchScoped: false }),
+      apiClientFetch.get<Category[]>("/categories"),
     create: (body: CreateCategoryRequest) =>
-      apiClientFetch.post<Category>("/categories", body, {
-        branchScoped: false,
-      }),
+      apiClientFetch.post<Category>("/categories", body),
     update: (id: string, body: UpdateCategoryRequest) =>
-      apiClientFetch.patch<UpdateResult>(`/categories/${id}`, body, {
-        branchScoped: false,
-      }),
+      apiClientFetch.patch<UpdateResult>(`/categories/${id}`, body),
     remove: (id: string) =>
-      apiClientFetch.delete<DeleteResult>(`/categories/${id}`, {
-        branchScoped: false,
-      }),
+      apiClientFetch.delete<DeleteResult>(`/categories/${id}`),
   },
   products: {
     create: async (body: CreateProductRequest) => {
@@ -1859,7 +1830,6 @@ export const backendApi = {
       const payload = await apiClientFetch.get<BarcodeLookupResponse>(
         `/pos/scan/${encodeURIComponent(normalizedCode)}${query}`,
         {
-          branchScoped: true,
           headers: {
             "x-branch-id": effectiveBranchId,
           },
@@ -2287,6 +2257,7 @@ export const backendApi = {
         }
 
         const payload: UpsertStockLotRequest = {
+          branchId: effectiveBranchId,
           productId: toTrimmedOrUndefined(body.productId) ?? "",
           lotCode: toTrimmedOrUndefined(body.lotCode) ?? "",
           expiresAt: toTrimmedOrUndefined(body.expiresAt) ?? "",
@@ -2346,11 +2317,13 @@ export const backendApi = {
         Number(query.take ?? query.limit ?? 50)
       );
     },
+    // Money and stock writes keep the caller's branchId in the body — the
+    // branch the screen was showing. If it differs from x-branch-id, the
+    // backend answers 400 instead of writing into another branch (SUC-10).
     create: async (body: CreateMovementRequest) => {
-      const { branchId: _branchId, ...payload } = body;
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements",
-        payload
+        body
       );
       invalidateStockCache(getApiSession().branchId);
       return movement;
@@ -2374,19 +2347,17 @@ export const backendApi = {
       return movement;
     },
     adjustmentIn: async (body: CreateMovementRequest) => {
-      const { branchId: _branchId, ...payload } = body;
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements/adjustment-in",
-        payload
+        body
       );
       invalidateStockCache(getApiSession().branchId);
       return movement;
     },
     adjustmentOut: async (body: CreateMovementRequest) => {
-      const { branchId: _branchId, ...payload } = body;
       const movement = await apiClientFetch.post<Movement>(
         "/stock-movements/adjustment-out",
-        payload
+        body
       );
       invalidateStockCache(getApiSession().branchId);
       return movement;
@@ -2394,10 +2365,9 @@ export const backendApi = {
   },
   sales: {
     create: async (body: CreateSaleRequest) => {
-      const { branchId: _branchId, ...payload } = body;
       const sale = await apiClientFetch.post<SaleDetail | SaleSummary>(
         "/sales",
-        payload
+        body
       );
       invalidateStockCache(getApiSession().branchId);
       emitSalesSync(
@@ -2513,7 +2483,6 @@ export const backendApi = {
             lowStockThreshold: query.lowStockThreshold,
           })}`,
           {
-            branchScoped: true,
             disableCache: true,
             headers: branchIdOverride
               ? {
@@ -3018,9 +2987,8 @@ export const backendApi = {
   },
   expenses: {
     create: (body: CreateExpenseRequest) => {
-      const { branchId: _branchId, ...payload } = body;
       return apiClientFetch
-        .post<Expense>("/expenses", payload)
+        .post<Expense>("/expenses", body)
         .then((created) => {
           emitExpensesSync(
             created.branchId ?? getApiSession().branchId
@@ -3580,7 +3548,7 @@ export const backendApi = {
     list: async (query: AuditQuery = {}) => {
       const payload = await apiClientFetch.get<
         PaginatedResponse<AuditLog> | AuditLog[]
-      >(`/audit${buildOffsetQuery(query)}`, { branchScoped: false });
+      >(`/audit${buildOffsetQuery(query)}`);
 
       return toPaginatedResponse(
         payload,
@@ -3591,15 +3559,13 @@ export const backendApi = {
     byEntity: async (entityType: string, entityId?: string) => {
       const payload = await apiClientFetch.get<
         PaginatedResponse<AuditLog> | AuditLog[]
-      >(`/audit/entity/${entityType}${buildQuery({ entityId })}`, {
-        branchScoped: false,
-      });
+      >(`/audit/entity/${entityType}${buildQuery({ entityId })}`);
       return toPaginatedResponse(payload, 0, 50);
     },
     byUser: async (userId: string) => {
       const payload = await apiClientFetch.get<
         PaginatedResponse<AuditLog> | AuditLog[]
-      >(`/audit/user/${userId}`, { branchScoped: false });
+      >(`/audit/user/${userId}`);
       return toPaginatedResponse(payload, 0, 50);
     },
   },
@@ -3685,33 +3651,26 @@ export const backendApi = {
   },
   commercialIntelligence: {
     summary: () =>
-      apiClientFetch.get<CISummaryResponse>("/commercial-intelligence/summary", {
-        branchScoped: true,
-      }),
+      apiClientFetch.get<CISummaryResponse>("/commercial-intelligence/summary"),
     pareto: (query: CIParetoQuery = {}) =>
       apiClientFetch.get<CIParetoResponse>(
-        `/commercial-intelligence/pareto${buildQuery(query, { preserveLimitAndOffset: true })}`,
-        { branchScoped: true }
+        `/commercial-intelligence/pareto${buildQuery(query, { preserveLimitAndOffset: true })}`
       ),
     slowMovers: (query: CISlowMoversQuery = {}) =>
       apiClientFetch.get<CISlowMoversResponse>(
-        `/commercial-intelligence/slow-movers${buildQuery(query, { preserveLimitAndOffset: true })}`,
-        { branchScoped: true }
+        `/commercial-intelligence/slow-movers${buildQuery(query, { preserveLimitAndOffset: true })}`
       ),
     hourlySales: (query: CIHourlySalesQuery = {}) =>
       apiClientFetch.get<CIHourlySalesResponse>(
-        `/commercial-intelligence/hourly-sales${buildQuery(query, { preserveLimitAndOffset: true })}`,
-        { branchScoped: true }
+        `/commercial-intelligence/hourly-sales${buildQuery(query, { preserveLimitAndOffset: true })}`
       ),
     productVelocity: (query: CIVelocityQuery = {}) =>
       apiClientFetch.get<CIVelocityResponse>(
-        `/commercial-intelligence/product-velocity${buildQuery(query, { preserveLimitAndOffset: true })}`,
-        { branchScoped: true }
+        `/commercial-intelligence/product-velocity${buildQuery(query, { preserveLimitAndOffset: true })}`
       ),
     stockBreaks: (query: CIStockBreaksQuery = {}) =>
       apiClientFetch.get<CIStockBreaksResponse>(
-        `/commercial-intelligence/stock-breaks${buildQuery(query, { preserveLimitAndOffset: true })}`,
-        { branchScoped: true }
+        `/commercial-intelligence/stock-breaks${buildQuery(query, { preserveLimitAndOffset: true })}`
       ),
   },
 };

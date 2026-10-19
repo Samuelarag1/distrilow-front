@@ -1,7 +1,6 @@
 "use client";
 
 import React, { createContext, useContext, useEffect, useState } from "react";
-import { setApiSession } from "@/lib/api-client";
 import type { BusinessType } from "@/lib/data-service";
 import { useUser } from "./user-provider";
 
@@ -18,9 +17,7 @@ interface BranchContextType {
   activeBranchId: string | null;
   availableBranches: Branch[];
   businessType: BusinessType;
-  setActiveBranch: (branchId: string) => void;
   setBusinessType: (type: BusinessType) => void;
-  setSessionBranches: (branches: Branch[], activeId: string | null) => void;
 }
 
 const BranchContext = createContext<BranchContextType | undefined>(undefined);
@@ -37,14 +34,7 @@ function inferBusinessType(branch: Branch | null): BusinessType {
 }
 
 export function BusinessProvider({ children }: { children: React.ReactNode }) {
-  const {
-    token,
-    branchId,
-    branches,
-    setBranchId,
-    switchBranch,
-    setBranches: setUserBranches,
-  } = useUser();
+  const { branchId, branches } = useUser();
   const [businessType, setBusinessTypeState] = useState<BusinessType>(() => {
     if (typeof window === "undefined") return "retail";
     const saved = localStorage.getItem("businessType");
@@ -64,21 +54,11 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
     }
   }, [activeBranchId, availableBranches]);
 
-  const setActiveBranch = (branchId: string) => {
-    void switchBranch(branchId);
-  };
-
   const setBusinessType = (type: BusinessType) => {
     setBusinessTypeState(type);
     if (typeof window !== "undefined") {
       localStorage.setItem("businessType", type);
     }
-  };
-
-  const setSessionBranches = (branches: Branch[], activeId: string | null) => {
-    setUserBranches(branches);
-    setBranchId(activeId);
-    if (token) setApiSession({ accessToken: token, branchId: activeId ?? null });
   };
 
   return (
@@ -87,9 +67,7 @@ export function BusinessProvider({ children }: { children: React.ReactNode }) {
         activeBranchId,
         availableBranches,
         businessType,
-        setActiveBranch,
         setBusinessType,
-        setSessionBranches,
       }}
     >
       {children}

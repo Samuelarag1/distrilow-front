@@ -74,16 +74,16 @@ export interface AuthUser {
   role: UserRole;
 }
 
+// The refresh token never comes in a response body: it lives only in an
+// httpOnly cookie that JS cannot read (docs/design/01-login-y-sesion.md, H4).
 export interface AuthResponse {
   accessToken: string;
-  refreshToken: string;
   user: AuthUser;
   session: SessionInfo;
 }
 
 export interface SessionResponse {
   accessToken?: string;
-  refreshToken?: string;
   user?: AuthUser;
   session: SessionInfo;
 }
@@ -567,6 +567,7 @@ export interface StockLotsListResponse {
 }
 
 export interface UpsertStockLotRequest {
+  branchId?: string;
   productId: string;
   lotCode: string;
   expiresAt: string;
@@ -942,16 +943,19 @@ export interface CashMovement {
 }
 
 export interface OpenCashSessionRequest {
+  branchId?: string;
   openingFloat: number;
 }
 
 export interface CreateCashMovementRequest {
+  branchId?: string;
   type: CashMovementType;
   reason: string;
   amount: number;
 }
 
 export interface CloseCashSessionRequest {
+  branchId?: string;
   countedCash: number;
   notes?: string;
 }

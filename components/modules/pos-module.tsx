@@ -67,6 +67,11 @@ import {
   parseWholeAmount,
 } from "@/lib/sales-payments";
 import { buildSaleNotesPayload } from "@/lib/sale-notes";
+import {
+  buildPosCartStorageKey,
+  parsePersistedPosCart,
+  type PersistedPosCart,
+} from "@/lib/pos-cart-storage";
 
 interface CartItem extends Product {
   quantity: number;
@@ -84,21 +89,6 @@ interface CartItem extends Product {
   backendManualOverrideReason?: string | null;
 }
 
-type PersistedPosCart = {
-  version: 1;
-  updatedAt: number;
-  userId: string;
-  branchId: string;
-  cart: CartItem[];
-  cashPaymentAmount: string;
-  transferPaymentAmount: string;
-  transferReference: string;
-  pendingPaymentReason: string;
-  saleNote: string;
-};
-
-const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
-const POS_CART_TTL_MS = 12 * 60 * 60 * 1000;
 const POS_SCAN_CACHE_TTL_MS = 5_000;
 const POS_PENDING_REASON_MAX_LENGTH = 180;
 const POS_SALE_NOTE_MAX_LENGTH = 240;
@@ -308,60 +298,6 @@ type PosPaymentConfirmDialogProps = {
   onSaleNoteChange: (value: string) => void;
   onProcessPayment: () => Promise<void>;
 };
-
-function buildPosCartStorageKey(
-  userId: string | null | undefined,
-  branchId: string | null | undefined
-) {
-  if (!userId || !branchId) return null;
-  return `${POS_CART_STORAGE_PREFIX}:${userId}:${branchId}`;
-}
-
-function parsePersistedPosCart(raw: string | null): PersistedPosCart | null {
-  if (!raw) return null;
-
-  try {
-    const parsed = JSON.parse(raw) as Partial<PersistedPosCart>;
-    if (!parsed || typeof parsed !== "object") return null;
-    if (parsed.version !== 1) return null;
-    if (typeof parsed.userId !== "string" || !parsed.userId.trim()) return null;
-    if (typeof parsed.branchId !== "string" || !parsed.branchId.trim())
-      return null;
-
-    const updatedAt = Number(parsed.updatedAt ?? 0);
-    if (!Number.isFinite(updatedAt)) return null;
-    if (Date.now() - updatedAt > POS_CART_TTL_MS) return null;
-
-    const cart = Array.isArray(parsed.cart) ? (parsed.cart as CartItem[]) : [];
-
-    return {
-      version: 1,
-      updatedAt,
-      userId: parsed.userId,
-      branchId: parsed.branchId,
-      cart,
-      cashPaymentAmount:
-        typeof parsed.cashPaymentAmount === "string"
-          ? parsed.cashPaymentAmount
-          : "",
-      transferPaymentAmount:
-        typeof parsed.transferPaymentAmount === "string"
-          ? parsed.transferPaymentAmount
-          : "",
-      transferReference:
-        typeof parsed.transferReference === "string"
-          ? parsed.transferReference
-          : "",
-      pendingPaymentReason:
-        typeof parsed.pendingPaymentReason === "string"
-          ? parsed.pendingPaymentReason
-          : "",
-      saleNote: typeof parsed.saleNote === "string" ? parsed.saleNote : "",
-    };
-  } catch {
-    return null;
-  }
-}
 
 function toSafeNumber(value: unknown, fallback = 0): number {
   const parsed =
@@ -1896,7 +1832,7 @@ export function POSModule() {
       return;
     }
 
-    const persisted = parsePersistedPosCart(
+    const persisted = parsePersistedPosCart<CartItem>(
       window.localStorage.getItem(posCartStorageKey)
     );
 
@@ -1959,7 +1895,7 @@ export function POSModule() {
 
       if (!currentUser?.id || !branchId) return;
 
-      const payload: PersistedPosCart = {
+      const payload: PersistedPosCart<CartItem> = {
         version: 1,
         updatedAt: Date.now(),
         userId: currentUser.id,

@@ -1,7 +1,8 @@
-// accessToken/refreshToken are intentionally NOT in this list — they must
-// only ever exist as httpOnly cookies set by the backend. Storing them in a
-// JS-readable cookie here would hand any XSS on this page a 30-day-lived
-// refresh token via a plain document.cookie read.
+// Cookies cleared on logout. The front only WRITES `user`, `branches` and
+// `needsOnboarding` (routing hints for middleware.ts). The rest are legacy
+// names deleted here so old browsers get cleaned up: tokens now live only as
+// httpOnly cookies set by the backend, and the active branch lives per tab in
+// lib/active-branch.ts, never in a cookie.
 const SESSION_COOKIE_NAMES = [
   "token",
   "accessToken",
@@ -30,6 +31,21 @@ function buildCookieAttributes(extra: string[] = []) {
     attrs.push("Secure");
   }
   return attrs.join("; ");
+}
+
+export function readClientCookie(name: string): string | null {
+  if (typeof document === "undefined") return null;
+  const match = document.cookie
+    .split("; ")
+    .find((row) => row.startsWith(`${name}=`));
+  if (!match) return null;
+  const value = match.split("=").slice(1).join("=");
+
+  try {
+    return decodeURIComponent(value);
+  } catch {
+    return value;
+  }
 }
 
 export function setClientCookie(

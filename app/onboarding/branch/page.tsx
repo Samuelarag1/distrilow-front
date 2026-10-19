@@ -12,7 +12,8 @@ import {
 import { Button } from "@/components/ui/button";
 import { Building2, Loader2 } from "lucide-react";
 import { useUser } from "@/components/providers/user-provider";
-import { setApiSession } from "@/lib/api-client";
+import { selectBranch } from "@/lib/active-branch";
+import { applySession } from "@/lib/session";
 import { useToast } from "@/hooks/use-toast";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
@@ -34,7 +35,6 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { backendApi } from "@/lib/backend-api";
-import { setPersistentSessionCookie } from "@/lib/client-cookies";
 
 type BranchPayload = {
   code: string;
@@ -49,15 +49,7 @@ type BranchPayload = {
 export default function OnboardingBranchesPage() {
   const router = useRouter();
   const { toast } = useToast();
-  const {
-    token,
-    currentUser,
-    branchId,
-    needsOnboarding,
-    setBranches,
-    setBranchId,
-    setNeedsOnboarding,
-  } = useUser();
+  const { token, currentUser, branchId, needsOnboarding } = useUser();
 
   const [open, setOpen] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -111,20 +103,11 @@ export default function OnboardingBranchesPage() {
         );
       }
 
-      const availableBranches = res.session.availableBranches;
-      const activeBranchId = res.session.activeBranchId;
-
-      setBranches(availableBranches);
-      setBranchId(activeBranchId);
-      setNeedsOnboarding(false);
-      setApiSession({
-        accessToken: token ?? undefined,
-        branchId: activeBranchId,
-      });
-
-      setPersistentSessionCookie("branches", JSON.stringify(availableBranches));
-      setPersistentSessionCookie("activeBranchId", createdBranchId);
-      setPersistentSessionCookie("needsOnboarding", false);
+      applySession(
+        { session: { ...res.session, needsOnboarding: false } },
+        "onboarding"
+      );
+      selectBranch(createdBranchId);
 
       router.push("/");
     } catch (err: any) {
