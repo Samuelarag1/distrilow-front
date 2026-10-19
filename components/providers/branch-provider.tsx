@@ -1,6 +1,6 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useMemo, useState } from "react";
 import { useAudit } from "./audit-provider";
 import { useUser } from "./user-provider";
 import { backendApi } from "@/lib/backend-api";
@@ -27,7 +27,6 @@ interface BranchContextType {
   branches: Branch[];
   isLoading: boolean;
   activeBranch: Branch | null;
-  setActiveBranch: (branch: Branch | null) => void;
   addBranch: (branch: Omit<Branch, "id" | "createdAt">) => Promise<void>;
   updateBranch: (id: string, branchData: Partial<Branch>) => Promise<void>;
   removeBranch: (id: string) => Promise<void>;
@@ -57,10 +56,16 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
   });
   const [branches, setBranches] = useState<Branch[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const [activeBranch, setActiveBranch] = useState<Branch | null>(null);
   const { logEvent } = useAudit();
-  const { token, branchId, branches: sessionBranches, setBranchId, switchBranch } =
-    useUser();
+  const { token, branchId } = useUser();
+
+  // Derived, never stored: the active branch is owned by lib/active-branch.ts.
+  // If the list doesn't contain it, there is no active branch here — no
+  // fallback to "the first one" (docs/design/01-login-y-sesion.md R2).
+  const activeBranch = useMemo(
+    () => branches.find((branch) => branch.id === branchId) ?? null,
+    [branches, branchId]
+  );
 
   useEffect(() => {
     const fetchBranches = async () => {
@@ -81,43 +86,8 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     }
 
     setBranches([]);
-    setActiveBranch(null);
     setIsLoading(false);
   }, [token]);
-
-  useEffect(() => {
-    if (!branches.length) {
-      setActiveBranch(null);
-      return;
-    }
-
-    if (branchId) {
-      const selected = branches.find((branch) => branch.id === branchId) ?? null;
-      if (selected) {
-        setActiveBranch(selected);
-        return;
-      }
-    }
-
-    const fallbackSessionBranchId = sessionBranches[0]?.id;
-    if (fallbackSessionBranchId) {
-      const fallback =
-        branches.find((branch) => branch.id === fallbackSessionBranchId) ?? null;
-      setActiveBranch(fallback);
-      if (fallback && fallback.id !== branchId) {
-        void switchBranch(fallback.id).catch(() => {
-          setBranchId(fallback.id);
-        });
-      }
-      return;
-    }
-
-    const firstBranch = branches[0] ?? null;
-    setActiveBranch(firstBranch);
-    if (firstBranch && !branchId) {
-      setBranchId(firstBranch.id);
-    }
-  }, [branches, branchId, sessionBranches, switchBranch, setBranchId]);
 
   const addBranch = async (branchData: Omit<Branch, "id" | "createdAt">) => {
     const payload: CreateBranchRequest = {
@@ -160,10 +130,6 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
     }
 
     setBranches((prev) => prev.map((b) => (b.id === id ? updated : b)));
-
-    if (activeBranch?.id === id) {
-      setActiveBranch(updated);
-    }
   };
 
   const removeBranch = async (id: string) => {
@@ -174,23 +140,11 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
       logEvent("delete", "branch", `Elimino sucursal ${existing.name}`, id);
     }
 
+    // Only a branch with no history can be deleted (the backend answers 409
+    // otherwise, B2). If it was the active one, the next token refresh drops
+    // it from the user's allowed list and lib/active-branch.ts clears it. No
+    // client-side "pick another" guess.
     setBranches((prev) => prev.filter((b) => b.id !== id));
-
-    if (activeBranch?.id === id) {
-      const fallbackSessionBranchId =
-        sessionBranches.find((branch) => branch.id !== id)?.id ?? null;
-      const fallback = fallbackSessionBranchId
-        ? branches.find((b) => b.id === fallbackSessionBranchId) ?? null
-        : null;
-      setActiveBranch(fallback);
-      if (fallback?.id) {
-        void switchBranch(fallback.id).catch(() => {
-          setBranchId(fallback.id);
-        });
-      } else {
-        setBranchId(null);
-      }
-    }
   };
 
   return (
@@ -201,7 +155,6 @@ export function BranchProvider({ children }: { children: React.ReactNode }) {
         branches,
         isLoading,
         activeBranch,
-        setActiveBranch,
         addBranch,
         updateBranch,
         removeBranch,

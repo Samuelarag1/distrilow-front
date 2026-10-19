@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState, useSyncExternalStore } from "react";
 import { useRouter } from "next/navigation";
 import { ShieldCheck } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -8,106 +8,83 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
-import { setApiSession } from "@/lib/api-client";
 import { backendApi } from "@/lib/backend-api";
-import { setPersistentSessionCookie } from "@/lib/client-cookies";
 import { isPosCashOnlyUser } from "@/lib/permissions";
+import { applySession } from "@/lib/session";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
-import type { SessionBranch } from "@/lib/api-types";
 import { BrandMark } from "@/components/common/brand-mark";
-import { BrandSpinner } from "@/components/common/brand-spinner";
+import { BrandSpinnerScreen } from "@/components/common/brand-spinner";
 
-function normalizeSessionBranches(input: unknown): SessionBranch[] {
-  if (!Array.isArray(input)) return [];
-
-  return input
-    .map((raw, index) => {
-      if (typeof raw === "string") {
-        const id = raw.trim();
-        if (!id) return null;
-        return { id, name: `Sucursal ${index + 1}` } satisfies SessionBranch;
-      }
-
-      if (!raw || typeof raw !== "object") return null;
-      const value = raw as { id?: unknown; branchId?: unknown; name?: unknown };
-      const id =
-        (typeof value.id === "string" && value.id.trim()) ||
-        (typeof value.branchId === "string" && value.branchId.trim()) ||
-        "";
-      if (!id) return null;
-
-      return {
-        id,
-        name:
-          typeof value.name === "string" && value.name.trim()
-            ? value.name
-            : `Sucursal ${index + 1}`,
-      } satisfies SessionBranch;
-    })
-    .filter((branch): branch is SessionBranch => Boolean(branch));
+// false during SSR and until React hydrates the page, true afterwards.
+const noopSubscribe = () => () => {};
+function useIsHydrated() {
+  return useSyncExternalStore(noopSubscribe, () => true, () => false);
 }
 
 export default function LoginPage() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  // validating: waiting for the backend. entering: accepted, navigating — the
+  // label matches app/loading.tsx so the hand-off reads as one spinner.
+  const [status, setStatus] = useState<"idle" | "validating" | "entering">("idle");
+  const isLoading = status !== "idle";
   const router = useRouter();
   const { toast } = useToast();
-  const {
-    setCurrentUser,
-    setToken,
-    setBranchId,
-    setBranches,
-    setNeedsOnboarding,
-  } = useUser();
+  const isHydrated = useIsHydrated();
+  const { currentUser, token, branchId, branches, needsOnboarding } = useUser();
 
-  const handleLogin = async (event: React.FormEvent) => {
+  // Single place that leaves /login: as soon as there is a session — from the
+  // form below, or restored on page load from the httpOnly refresh cookie —
+  // go where this user belongs instead of asking for credentials again.
+  // replace(), so "back" doesn't return to the login form.
+  useEffect(() => {
+    if (!token || !currentUser) return;
+
+    if (needsOnboarding || !branchId) {
+      router.replace("/onboarding/branch");
+    } else if (isPosCashOnlyUser(currentUser.role, branches.length)) {
+      router.replace("/pos");
+    } else {
+      router.replace("/");
+    }
+  }, [token, currentUser, branchId, branches.length, needsOnboarding, router]);
+
+  const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    setIsLoading(true);
+    // Uncontrolled inputs, read on submit: whatever the user (or the browser's
+    // autofill) typed before hydration survives — controlled inputs would be
+    // reset to their empty initial state when React hydrates.
+    const form = new FormData(event.currentTarget);
+    const email = String(form.get("email") ?? "").trim();
+    const password = String(form.get("password") ?? "");
+    setStatus("validating");
 
     try {
       const data = await backendApi.auth.login({ email, password });
 
-      const currentUser = { ...data.user, name: data.user.email };
-      const activeBranchId = data.session?.activeBranchId ?? null;
-      const availableBranches = normalizeSessionBranches(
-        data.session?.availableBranches ?? []
+      // Token, user, branches and routing hints in one write. The active
+      // branch is the last one this user opened in this browser (D7), else the
+      // server's default — never one picked by the front.
+      applySession(
+        {
+          ...data,
+          session: {
+            ...data.session,
+            needsOnboarding: data.session?.needsOnboarding ?? false,
+          },
+        },
+        "login"
       );
-      const needsOnboarding = data.session?.needsOnboarding ?? false;
-
-      setToken(data.accessToken);
-      setCurrentUser(currentUser);
-      setBranchId(activeBranchId);
-      setBranches?.(availableBranches);
-      setNeedsOnboarding?.(needsOnboarding);
-
-      setApiSession({
-        accessToken: data.accessToken,
-        branchId: activeBranchId ?? undefined,
-      });
-
-      setPersistentSessionCookie("branches", JSON.stringify(availableBranches));
-      setPersistentSessionCookie("activeBranchId", activeBranchId ?? "");
-      setPersistentSessionCookie("needsOnboarding", needsOnboarding);
+      setStatus("entering");
 
       toast({
         title: "Sesion iniciada",
         description: `Entraste correctamente como ${data.user.email}.`,
       });
-
-      const posOnly = isPosCashOnlyUser(
-        data.user.role,
-        availableBranches.length
-      );
-
-      if (needsOnboarding || !activeBranchId) {
-        router.push("/onboarding/branch");
-      } else if (posOnly) {
-        router.push("/pos");
-      } else {
-        router.push("/");
-      }
+      // Navigation happens in the effect above once the session state lands.
     } catch (error: any) {
+      // Solo se apaga el loader en error: en exito se mantiene visible hasta
+      // que la navegacion desmonta la pagina, para que el formulario no
+      // reaparezca un instante antes de redirigir.
+      setStatus("idle");
       toast({
         variant: "destructive",
         title: "No pudimos iniciar sesion",
@@ -116,8 +93,6 @@ export default function LoginPage() {
           "Revisa tu email y tu contrasena, y vuelve a intentarlo."
         ),
       });
-    } finally {
-      setIsLoading(false);
     }
   };
 
@@ -125,8 +100,12 @@ export default function LoginPage() {
     <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4 py-8">
       <div className="pointer-events-none absolute inset-0 login-subtle-ambient" />
 
+      {/* method="post" is only a safety net: if a native submit ever slipped
+          through, credentials would never end up in the URL or history. */}
       <form
+        method="post"
         onSubmit={handleLogin}
+        aria-busy={isLoading}
         className="relative w-full max-w-md space-y-6 rounded-2xl border border-border/70 bg-card/95 p-6 shadow-sm backdrop-blur-sm sm:p-8"
       >
         <div className="flex flex-col items-center gap-3 text-center">
@@ -150,8 +129,8 @@ export default function LoginPage() {
               id="email"
               type="email"
               placeholder="equipo@distrilow.com"
-              value={email}
-              onChange={(event) => setEmail(event.target.value)}
+              name="email"
+              autoComplete="username"
               className="h-12 border-input bg-background/90 text-foreground placeholder:text-muted-foreground"
               required
             />
@@ -165,36 +144,39 @@ export default function LoginPage() {
               id="password"
               type="password"
               placeholder="********"
-              value={password}
-              onChange={(event) => setPassword(event.target.value)}
+              name="password"
+              autoComplete="current-password"
               className="h-12 border-input bg-background/90 text-foreground placeholder:text-muted-foreground"
               required
             />
           </div>
         </div>
 
+        {/* Disabled until hydration: before React takes over, a click or Enter
+            would trigger the browser's native GET submit — a full reload that
+            wipes the fields. A disabled default button also blocks Enter. */}
         <Button
           className="h-12 w-full font-semibold"
           type="submit"
-          disabled={isLoading}
+          disabled={isLoading || !isHydrated}
         >
-          {isLoading ? (
-            <BrandSpinner
-              size="sm"
-              label="Validando acceso..."
-              layout="inline"
-              labelClassName="text-primary-foreground"
-            />
-          ) : (
-            "Ingresar"
-          )}
+          Ingresar
         </Button>
 
         <div className="inline-flex w-full items-center justify-center gap-2 text-xs text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5" />
           <span>Conexion cifrada</span>
         </div>
+
       </form>
+
+      {/* Outside the form on purpose: its backdrop-blur would trap a fixed
+          overlay inside the card instead of covering the screen. */}
+      {isLoading ? (
+        <BrandSpinnerScreen
+          label={status === "entering" ? "Cargando..." : "Validando acceso..."}
+        />
+      ) : null}
 
       <style jsx>{`
         .login-subtle-ambient {

@@ -127,8 +127,7 @@ export const getDashboardMetrics = async (
   void type;
   try {
     const response = await apiClientFetch.get<SnapshotMetricsResponse>(
-      `/reporting/dashboard/summary?period=monthly&scope=active`,
-      { branchScoped: true }
+      `/reporting/dashboard/summary?period=monthly&scope=active`
     );
 
     return parseDashboardMetrics(response);

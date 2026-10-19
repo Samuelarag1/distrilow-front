@@ -263,6 +263,7 @@ export function CashModule() {
     try {
       setIsSaving(true);
       const session = await backendApi.cash.openSession({
+        branchId: branchId ?? undefined,
         openingFloat: opening,
       });
 
@@ -364,6 +365,7 @@ export function CashModule() {
         createdExpenseId = createdExpense.id;
 
         const updated = await backendApi.cash.addMovement(cashSession.id, {
+          branchId: branchId ?? undefined,
           type: "OUT",
           reason: `Compra con caja - ${getExpenseCategoryLabel(
             purchaseExpenseCategory
@@ -432,6 +434,7 @@ export function CashModule() {
     try {
       setIsSaving(true);
       const updated = await backendApi.cash.addMovement(cashSession.id, {
+        branchId: branchId ?? undefined,
         type: movementType as CashMovementType,
         reason,
         amount,
@@ -501,6 +504,7 @@ export function CashModule() {
       setIsSaving(true);
 
       const closedSession = await backendApi.cash.closeSession(cashSession.id, {
+        branchId: branchId ?? undefined,
         countedCash: countedCashNumber,
         notes: closeNotes.trim() || undefined,
       });

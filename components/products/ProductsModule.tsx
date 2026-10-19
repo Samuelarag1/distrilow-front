@@ -9,11 +9,9 @@ import { Product } from "@/lib/products";
 import { useProducts } from "@/hooks/useProducts";
 import { useProductActions } from "@/components/providers/product-provider";
 import { useBranch } from "@/components/providers/business-provider";
-import { useUser } from "../providers/user-provider";
 import { useDebouncedValue } from "./hooks/useDebouncedValue";
 import { useProductSave } from "./hooks/useProductSave";
 import { DeleteProductDialog } from "./components/DeleteProductDialog";
-import { useApiSessionSync } from "./hooks/useApiSessionAsync";
 import { swrFetcher } from "@/lib/swr-fetcher";
 import { backendApi } from "@/lib/backend-api";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
@@ -155,10 +153,7 @@ export function ProductsModule() {
   const searchParams = useSearchParams();
   const { addProduct, updateProduct, removeProduct } = useProductActions();
   const { activeBranchId } = useBranch();
-  const { token, branchId } = useUser();
   const { toast } = useToast();
-
-  useApiSessionSync(token, branchId);
 
   const [searchQuery, setSearchQuery] = useState("");
   const debouncedSearch = useDebouncedValue(searchQuery, 350);

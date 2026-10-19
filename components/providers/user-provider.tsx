@@ -1,20 +1,27 @@
 "use client";
 
 import { usePathname } from "next/navigation";
+import { forceLogout, refreshSessionIfNeeded } from "@/lib/api-client";
 import {
-  forceLogout,
-  getLastRefreshPayload,
-  getApiSession,
-  refreshSessionIfNeeded,
-  setApiSession,
-} from "@/lib/api-client";
+  getActiveBranchId,
+  reloadOnBranchSwitch,
+  selectBranch,
+  subscribeActiveBranch,
+} from "@/lib/active-branch";
+import { emitAuthSync, subscribeAuthSync } from "@/lib/auth-live-sync";
 import { backendApi } from "@/lib/backend-api";
+import { readClientCookie } from "@/lib/client-cookies";
 import {
-  clearSessionCookies,
-  setPersistentSessionCookie,
-} from "@/lib/client-cookies";
-import { isManagementRole } from "@/lib/permissions";
-import { useIdleLogout } from "@/hooks/use-idle-logout";
+  applySession,
+  clearSession,
+  consumeIdentityChangedNotice,
+  getServerSession,
+  getSession,
+  getSessionEpoch,
+  readSessionHints,
+  subscribeSession,
+} from "@/lib/session";
+import { resolveIdleLogoutTimeoutMs, useIdleLogout } from "@/hooks/use-idle-logout";
 import { useToast } from "@/hooks/use-toast";
 import React, {
   useCallback,
@@ -22,16 +29,34 @@ import React, {
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
+  useSyncExternalStore,
 } from "react";
 import type { SessionBranch, UserRole } from "@/lib/api-types";
+import { SessionGate, type SessionGateStatus } from "@/components/providers/session-gate";
 
-// 20 min of no mouse/keyboard/touch/scroll activity anywhere in the app
-// (including POS — an unattended, still-logged-in terminal is the case
-// this exists to close) logs the session out automatically. Override with
-// NEXT_PUBLIC_IDLE_TIMEOUT_MS for a different site-wide value.
-const IDLE_LOGOUT_TIMEOUT_MS =
-  Number(process.env.NEXT_PUBLIC_IDLE_TIMEOUT_MS) || 20 * 60 * 1000;
+// Routes that render without a confirmed session.
+function isPublicRoute(pathname: string) {
+  return (
+    pathname === "/login" ||
+    pathname.startsWith("/login/") ||
+    pathname === "/offline"
+  );
+}
+
+// 20 min with no mouse/keyboard/touch/scroll activity in any tab logs the
+// session out automatically — except while a /pos tab is open, where a
+// cashier with an open till is physically present (decision D6,
+// docs/design/01-login-y-sesion.md). NEXT_PUBLIC_IDLE_TIMEOUT_MS can change
+// it, but never below 10 min (resolveIdleLogoutTimeoutMs).
+const IDLE_LOGOUT_TIMEOUT_MS = resolveIdleLogoutTimeoutMs(
+  process.env.NEXT_PUBLIC_IDLE_TIMEOUT_MS
+);
+
+// When the server can't be reached on page load, the session is kept and the
+// restore is retried on this schedule (the last value repeats).
+const RESTORE_RETRY_DELAYS_MS = [2_000, 5_000, 15_000, 30_000];
 
 export interface User {
   id: string;
@@ -51,13 +76,7 @@ interface UserContextType {
   branches: Branch[];
   needsOnboarding: boolean;
 
-  setToken: (t: string | null) => void;
-  setCurrentUser: (u: User | null) => void;
   setAvatar: (avatar: string | null) => void;
-
-  setBranchId: (id: string | null) => void;
-  setBranches: (b: Branch[]) => void;
-  setNeedsOnboarding: (v: boolean) => void;
   switchBranch: (id: string) => Promise<void>;
 
   logout: () => Promise<void>;
@@ -65,69 +84,6 @@ interface UserContextType {
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
 const USER_AVATAR_STORE_KEY = "user-avatar-by-id";
-
-function normalizeBranchIdValue(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-
-  const lowered = trimmed.toLowerCase();
-  if (lowered === "null" || lowered === "undefined") return null;
-
-  return trimmed;
-}
-
-function normalizeSessionBranches(input: unknown): Branch[] {
-  if (!Array.isArray(input)) return [];
-
-  return input
-    .map((raw, index) => {
-      if (typeof raw === "string") {
-        const id = normalizeBranchIdValue(raw);
-        if (!id) return null;
-        return { id, name: `Sucursal ${index + 1}` } satisfies Branch;
-      }
-
-      if (!raw || typeof raw !== "object") return null;
-
-      const value = raw as {
-        id?: unknown;
-        branchId?: unknown;
-        name?: unknown;
-        isDefault?: unknown;
-      };
-      const id =
-        normalizeBranchIdValue(value.id) ??
-        normalizeBranchIdValue(value.branchId) ??
-        "";
-
-      if (!id) return null;
-
-      return {
-        id,
-        name:
-          typeof value.name === "string" && value.name.trim()
-            ? value.name
-            : `Sucursal ${index + 1}`,
-        isDefault: Boolean(value.isDefault),
-      } satisfies Branch;
-    })
-    .filter((branch): branch is Branch => Boolean(branch));
-}
-
-function getCookie(name: string): string | null {
-  const match = document.cookie
-    .split("; ")
-    .find((row) => row.startsWith(`${name}=`));
-  if (!match) return null;
-  const value = match.split("=").slice(1).join("=");
-
-  try {
-    return decodeURIComponent(value);
-  } catch {
-    return value;
-  }
-}
 
 function readAvatarStore(): Record<string, string> {
   if (typeof window === "undefined") return {};
@@ -157,334 +113,207 @@ function writeAvatarStore(store: Record<string, string>) {
   window.localStorage.setItem(USER_AVATAR_STORE_KEY, JSON.stringify(store));
 }
 
-function writeSessionCookies(payload: {
-  branches?: Branch[];
-  activeBranchId?: string | null;
-  needsOnboarding?: boolean;
-}) {
-  if (payload.branches) {
-    setPersistentSessionCookie("branches", JSON.stringify(payload.branches));
-  }
-
-  if (payload.activeBranchId !== undefined) {
-    setPersistentSessionCookie("activeBranchId", payload.activeBranchId ?? "");
-  }
-
-  if (payload.needsOnboarding !== undefined) {
-    setPersistentSessionCookie("needsOnboarding", payload.needsOnboarding);
-  }
+function restoreRetryDelay(attempt: number) {
+  const base =
+    RESTORE_RETRY_DELAYS_MS[Math.min(attempt, RESTORE_RETRY_DELAYS_MS.length - 1)];
+  // ±20% jitter, so terminals that lost the server together don't retry in lockstep.
+  return Math.round(base * (0.8 + Math.random() * 0.4));
 }
 
 export function UserProvider({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const { toast } = useToast();
-  const [currentUser, setCurrentUserState] = useState<User | null>(null);
-  const [token, setToken] = useState<string | null>(null);
-  const [branchId, setBranchIdState] = useState<string | null>(null);
-  const [branches, setBranches] = useState<Branch[]>([]);
-  const [needsOnboarding, setNeedsOnboarding] = useState<boolean>(false);
-  const [sessionBootstrapped, setSessionBootstrapped] = useState(false);
+  // The session has a single writer, lib/session.ts; this provider only reads it.
+  const session = useSyncExternalStore(
+    subscribeSession,
+    getSession,
+    getServerSession
+  );
+  const branchId = useSyncExternalStore(
+    subscribeActiveBranch,
+    getActiveBranchId,
+    () => null
+  );
+  // The avatar is a per-user display preference stored in this browser; it is
+  // not part of the session. Reading it during hydration is safe: there is no
+  // user to render until the session store fills in after mount.
+  const [avatarStore, setAvatarStore] = useState(readAvatarStore);
+  // Outcome of the page-load restore, for the screen shown while there is no
+  // confirmed session (see SessionGate below).
+  const [restoreStatus, setRestoreStatus] = useState<SessionGateStatus>("checking");
+  const retryRestoreNow = useRef<() => void>(() => {});
   const isPosRoute = pathname === "/pos" || pathname.startsWith("/pos/");
+  // A session is confirmed only once there is an access token in memory. The
+  // `user` cookie is just a routing hint: it can outlive a dead session.
+  const hasToken = Boolean(session.accessToken);
 
-  const hydrateUserAvatar = useCallback((input: User): User => {
-    const normalized: User = {
-      ...input,
-      name: input.name ?? input.email,
+  const currentUser = useMemo<User | null>(() => {
+    if (!session.user) return null;
+    const avatar = avatarStore[session.user.id];
+    return {
+      ...session.user,
+      name: session.user.email,
+      ...(avatar ? { avatar } : {}),
     };
-    if (!normalized.id) return normalized;
+  }, [session.user, avatarStore]);
 
-    const stored = readAvatarStore()[normalized.id];
-    if (!normalized.avatar && stored) {
-      return {
-        ...normalized,
-        avatar: stored,
-      };
-    }
-
-    return normalized;
-  }, []);
-
-  const setCurrentUser = useCallback((user: User | null) => {
-    if (!user) {
-      setCurrentUserState(null);
-      return;
-    }
-
-    const hydrated = hydrateUserAvatar(user);
-    setCurrentUserState(hydrated);
-    setPersistentSessionCookie("user", JSON.stringify(hydrated));
-  }, [hydrateUserAvatar]);
-
-  const setAvatar = useCallback((avatar: string | null) => {
-    setCurrentUserState((prev) => {
-      if (!prev) return prev;
-
-      const normalizedAvatar = avatar?.trim() || undefined;
-      const next = {
-        ...prev,
-        avatar: normalizedAvatar,
-      };
+  const userId = session.user?.id;
+  const setAvatar = useCallback(
+    (avatar: string | null) => {
+      if (!userId) return;
 
       const store = readAvatarStore();
+      const normalizedAvatar = avatar?.trim();
       if (normalizedAvatar) {
-        store[prev.id] = normalizedAvatar;
+        store[userId] = normalizedAvatar;
       } else {
-        delete store[prev.id];
+        delete store[userId];
       }
       writeAvatarStore(store);
-      setPersistentSessionCookie("user", JSON.stringify(next));
-      return next;
-    });
-  }, []);
+      setAvatarStore(store);
+    },
+    [userId]
+  );
 
-  const setBranchId = useCallback((id: string | null) => {
-    setBranchIdState(normalizeBranchIdValue(id));
-  }, []);
-
+  // Page load: optimistic first paint from the routing-hint cookies, then the
+  // httpOnly refresh cookie confirms (or ends) the session. Only a "no" from
+  // the server ends it; if the server can't be reached, the session is kept
+  // and the restore is retried (H2, invariant I3).
   useEffect(() => {
-    setSessionBootstrapped(false);
+    applySession(readSessionHints(), "hint");
 
-    // accessToken is httpOnly now — there is no cookie to read here. Every
-    // fresh page load must ask the backend to confirm the session via the
-    // httpOnly refresh cookie instead of trusting a client-visible value.
-    const userCookie = getCookie("user");
-    const activeBranchCookie =
-      getCookie("activeBranchId") ?? getCookie("branchId");
-    const branchesCookie = getCookie("branches");
-    const onboardingCookie = getCookie("needsOnboarding");
-    let parsedBranches: Branch[] = [];
-
-    if (userCookie) {
-      try {
-        const parsed = JSON.parse(userCookie);
-        setCurrentUserState(hydrateUserAvatar({
-          ...parsed,
-          name: parsed.name ?? parsed.email,
-        }));
-      } catch (err) {
-        console.error("Error parsing user cookie:", err);
-      }
-    }
-
-    if (branchesCookie) {
-      try {
-        parsedBranches = normalizeSessionBranches(JSON.parse(branchesCookie));
-        setBranches(parsedBranches);
-      } catch (err) {
-        console.error("Error parsing branches cookie:", err);
-      }
-    }
-
-    if (onboardingCookie) {
-      setNeedsOnboarding(onboardingCookie === "true");
-    }
-
-    const resolvedBranchId =
-      normalizeBranchIdValue(activeBranchCookie) ??
-      parsedBranches[0]?.id ??
-      null;
-    setBranchId(resolvedBranchId);
-
-    if (!activeBranchCookie && resolvedBranchId) {
-      setPersistentSessionCookie("activeBranchId", resolvedBranchId);
+    if (consumeIdentityChangedNotice()) {
+      toast({
+        title: "Se inicio sesion con otro usuario",
+        description:
+          "En este navegador entro otro usuario, asi que esta pestana se actualizo con su sesion.",
+      });
     }
 
     let cancelled = false;
+    let retryTimer: number | null = null;
+    let attempt = 0;
+    let wasUnavailable = false;
 
-    const bootstrapFromRefresh = async () => {
-      try {
-        const refreshed = await refreshSessionIfNeeded(0);
-        if (cancelled) return;
+    const endSession = () => {
+      setRestoreStatus("ended");
+      clearSession();
+      forceLogout();
+    };
 
-        if (!refreshed) {
-          // No valid session at all — don't leave the UI hydrated from a
-          // stale "user" cookie pretending someone is still logged in.
-          clearSessionCookies();
-          setCurrentUserState(null);
-          setToken(null);
-          setBranches([]);
-          setBranchId(null);
-          setNeedsOnboarding(false);
-          forceLogout();
-          return;
-        }
+    const restore = async () => {
+      retryTimer = null;
+      // The backend sets/clears `hasSession` together with the refresh token,
+      // so without it there is nothing to restore: skip the request (a
+      // guaranteed 401) on a cold /login.
+      if (!readClientCookie("hasSession")) {
+        endSession();
+        return;
+      }
 
-        const payload = getLastRefreshPayload();
-        const session = getApiSession();
-        const refreshedToken = session.accessToken ?? payload?.accessToken ?? null;
-        const refreshedBranches = normalizeSessionBranches(
-          payload?.session?.availableBranches ?? parsedBranches
-        );
-        const refreshedBranchId =
-          normalizeBranchIdValue(payload?.session?.activeBranchId) ??
-          normalizeBranchIdValue(session.branchId) ??
-          normalizeBranchIdValue(resolvedBranchId) ??
-          normalizeBranchIdValue(refreshedBranches[0]?.id) ??
-          null;
-        const refreshedNeedsOnboarding =
-          payload?.session?.needsOnboarding ??
-          (onboardingCookie ? onboardingCookie === "true" : false);
+      const epoch = getSessionEpoch();
+      const result = await refreshSessionIfNeeded(0);
+      if (cancelled) return;
+      // The user logged in while this page-load refresh was in flight: that
+      // login owns the session now; this result is stale.
+      if (getSessionEpoch() !== epoch) return;
 
-        if (payload?.user) {
-          const hydratedUser = hydrateUserAvatar({
-            ...payload.user,
-            name: payload.user.email,
-          });
-          setCurrentUserState(hydratedUser);
-          setPersistentSessionCookie("user", JSON.stringify(hydratedUser));
-        }
+      if (result === "invalid") {
+        endSession();
+        return;
+      }
 
-        setToken(refreshedToken);
-        setBranches(refreshedBranches);
-        setBranchId(refreshedBranchId);
-        setNeedsOnboarding(refreshedNeedsOnboarding);
+      if (result === "unavailable") {
+        // Kept, not ended: SessionGate tells the user and offers a retry.
+        wasUnavailable = true;
+        setRestoreStatus("unavailable");
+        retryTimer = window.setTimeout(restore, restoreRetryDelay(attempt));
+        attempt += 1;
+        return;
+      }
 
-        setApiSession({
-          accessToken: refreshedToken,
-          branchId: refreshedBranchId ?? undefined,
-        });
-
-        writeSessionCookies({
-          branches: refreshedBranches,
-          activeBranchId: refreshedBranchId,
-          needsOnboarding: refreshedNeedsOnboarding,
-        });
-      } finally {
-        if (!cancelled) {
-          setSessionBootstrapped(true);
-        }
+      setRestoreStatus("confirmed");
+      if (wasUnavailable) {
+        toast({ title: "Conexion restablecida" });
       }
     };
 
-    void bootstrapFromRefresh();
+    // Back online, or the user asked: retry right away instead of waiting
+    // for the next slot.
+    const retryNow = () => {
+      if (retryTimer === null) return;
+      window.clearTimeout(retryTimer);
+      setRestoreStatus("checking");
+      void restore();
+    };
+    retryRestoreNow.current = retryNow;
+
+    window.addEventListener("online", retryNow);
+    void restore();
 
     return () => {
       cancelled = true;
+      if (retryTimer !== null) window.clearTimeout(retryTimer);
+      window.removeEventListener("online", retryNow);
     };
-  }, [hydrateUserAvatar, setBranchId]);
+  }, [toast]);
 
-  useEffect(() => {
-    if (!sessionBootstrapped) return;
+  // A logout in another tab ends the session here too: it is the same one.
+  useEffect(
+    () =>
+      subscribeAuthSync((event) => {
+        if (event.type === "logout") forceLogout();
+      }),
+    []
+  );
 
-    setApiSession({ accessToken: token, branchId: branchId ?? undefined });
-    if (branchId !== undefined) {
-      setPersistentSessionCookie("activeBranchId", branchId ?? "");
-    }
-  }, [token, branchId, sessionBootstrapped]);
-
+  // Switching branch only changes the working context, never the
+  // authorization: the backend's BranchScopeGuard validates x-branch-id on
+  // every request, for every role. So no new token is needed — and
+  // /auth/switch-branch is no longer called (docs/design/01 §12.4, R7).
+  // The page then reloads (effect below), so the new branch starts clean.
   const switchBranch = useCallback(async (id: string) => {
-    if (!id) return;
-    if (id === branchId) return;
-    if (branches.length > 0 && !branches.some((branch) => branch.id === id)) {
-      throw new Error("No tienes acceso a la sucursal seleccionada.");
-    }
+    selectBranch(id);
+  }, []);
 
-    const applyLocalBranchSelection = (nextBranchId: string) => {
-      setBranchId(nextBranchId);
-      setApiSession({
-        accessToken: token,
-        branchId: nextBranchId,
-      });
-      writeSessionCookies({
-        branches,
-        activeBranchId: nextBranchId,
-        needsOnboarding,
-      });
-    };
-
-    // Para roles no-management, cambiar sucursal localmente evita depender de
-    // /auth/switch-branch, que suele restringirse por rol.
-    if (!isManagementRole(currentUser?.role)) {
-      applyLocalBranchSelection(id);
-      return;
-    }
-
-    const response = await backendApi.auth.switchBranch({ branchId: id });
-
-    const nextToken = response.accessToken ?? token;
-    const nextBranches = normalizeSessionBranches(
-      response.session?.availableBranches ?? branches
-    );
-    const nextBranchId =
-      normalizeBranchIdValue(response.session?.activeBranchId) ??
-      normalizeBranchIdValue(id);
-    if (!nextBranchId) {
-      throw new Error("No se pudo resolver la sucursal activa.");
-    }
-    const nextNeedsOnboarding =
-      response.session?.needsOnboarding ?? needsOnboarding;
-
-    if (nextToken !== token) {
-      setToken(nextToken);
-    }
-    setBranches(nextBranches);
-    setBranchId(nextBranchId);
-    setNeedsOnboarding(nextNeedsOnboarding);
-
-    setApiSession({
-      accessToken: nextToken,
-      branchId: nextBranchId,
-    });
-
-    writeSessionCookies({
-      branches: nextBranches,
-      activeBranchId: nextBranchId,
-      needsOnboarding: nextNeedsOnboarding,
-    });
-  }, [branchId, token, branches, needsOnboarding, currentUser?.role, setBranchId]);
+  // Any move from one branch to another reloads this tab, whether the user
+  // chose it or a refresh revoked the current branch: nothing of the previous
+  // branch may stay on screen or in a cache (lib/active-branch.ts).
+  useEffect(() => reloadOnBranchSwitch(() => window.location.reload()), []);
 
   useEffect(() => {
     if (isPosRoute) return;
     if (typeof window === "undefined") return;
-
-    // "hasSession" is the non-secret marker cookie the backend sets
-    // alongside the real (httpOnly) tokens — see client-cookies.ts.
-    const hasSessionMarker = Boolean(getCookie("hasSession"));
-    if (!currentUser && !token && !hasSessionMarker) return;
+    // Only renew a confirmed session; restoring one is the page-load effect's job.
+    if (!hasToken) return;
 
     const refreshIntervalMs = 5 * 60 * 1000;
     let destroyed = false;
 
-    const maybeRefresh = async () => {
+    // Renews ahead of expiry; the new token reaches React through lib/session.ts.
+    const maybeRefresh = () => {
       if (destroyed) return;
-
-      const refreshed = await refreshSessionIfNeeded(refreshIntervalMs);
-      if (!refreshed || destroyed) return;
-
-      const session = getApiSession();
-      if (session.accessToken && session.accessToken !== token) {
-        setToken(session.accessToken);
-      }
-      const refreshedBranchId = normalizeBranchIdValue(session.branchId);
-      if (refreshedBranchId && refreshedBranchId !== branchId) {
-        setBranchId(refreshedBranchId);
-      }
-    };
-
-    const handleFocus = () => {
-      void maybeRefresh();
+      void refreshSessionIfNeeded(refreshIntervalMs);
     };
 
     const handleVisibilityChange = () => {
       if (document.visibilityState !== "visible") return;
-      void maybeRefresh();
+      maybeRefresh();
     };
-    window.addEventListener("focus", handleFocus);
+    window.addEventListener("focus", maybeRefresh);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
-    const intervalId = window.setInterval(() => {
-      void maybeRefresh();
-    }, 60_000);
+    const intervalId = window.setInterval(maybeRefresh, 60_000);
 
-    void maybeRefresh();
+    maybeRefresh();
 
     return () => {
       destroyed = true;
       window.clearInterval(intervalId);
-      window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("focus", maybeRefresh);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
-  }, [currentUser, token, branchId, setBranchId, isPosRoute]);
+  }, [hasToken, isPosRoute]);
 
   const logout = useCallback(async () => {
     try {
@@ -493,20 +322,13 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
       // ignore logout API errors, continue local cleanup
     }
 
-    clearSessionCookies();
-
-    setCurrentUser(null);
-    setToken(null);
-    setBranchId(null);
-    setBranches([]);
-    setNeedsOnboarding(false);
-    setApiSession({ accessToken: null, branchId: null });
-
-    window.location.href = "/login";
-  }, [setCurrentUser, setBranchId]);
+    emitAuthSync("logout");
+    forceLogout();
+  }, []);
 
   useIdleLogout({
-    enabled: Boolean(currentUser),
+    enabled: hasToken,
+    keepAlive: isPosRoute,
     timeoutMs: IDLE_LOGOUT_TIMEOUT_MS,
     onWarn: () => {
       toast({
@@ -522,34 +344,61 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
   const value = useMemo(
     () => ({
       currentUser,
-      token,
+      token: session.accessToken,
       branchId,
-      branches,
-      needsOnboarding,
-      setCurrentUser,
+      branches: session.branches,
+      needsOnboarding: session.needsOnboarding,
       setAvatar,
-      setToken,
-      setBranchId,
-      setBranches,
-      setNeedsOnboarding,
       switchBranch,
       logout,
     }),
     [
       currentUser,
-      token,
+      session.accessToken,
       branchId,
-      branches,
-      needsOnboarding,
-      setCurrentUser,
+      session.branches,
+      session.needsOnboarding,
       setAvatar,
       switchBranch,
       logout,
-      setBranchId,
     ]
   );
 
-  return <UserContext.Provider value={value}>{children}</UserContext.Provider>;
+  // The app only renders with a confirmed session. Without one it would show
+  // the hint user in the menu and every figure at $0 — misleading for a
+  // cashier — while requests can't succeed anyway.
+  const showGate = !hasToken && !isPublicRoute(pathname);
+
+  return (
+    <UserContext.Provider value={value}>
+      {showGate ? (
+        <SessionGate
+          status={restoreStatus}
+          onRetry={() => retryRestoreNow.current()}
+        />
+      ) : (
+        children
+      )}
+    </UserContext.Provider>
+  );
+}
+
+/**
+ * Remounts everything below it when the active branch changes, so no screen
+ * can keep showing (or keep in local state) data from the previous branch —
+ * e.g. SWR's keepPreviousData would otherwise display branch A's numbers
+ * under branch B while B loads. The SWR cache itself is keyed by branch, so
+ * switching back is still instant.
+ */
+export function ActiveBranchBoundary({ children }: { children: React.ReactNode }) {
+  const { branchId } = useUser();
+  const pathname = usePathname();
+  // Public routes show no branch data. Remounting them would wipe their
+  // state: signing in sets the active branch, and the login page would lose
+  // its spinner and show the form again while the navigation is still on its
+  // way (seconds, the first time a route compiles in dev).
+  if (isPublicRoute(pathname)) return <>{children}</>;
+  return <React.Fragment key={branchId ?? "no-branch"}>{children}</React.Fragment>;
 }
 
 export function useUser() {

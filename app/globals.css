@@ -176,17 +176,6 @@
   }
 }
 
-@keyframes spinnerReveal {
-  from {
-    opacity: 0;
-    transform: translateY(2px) scale(0.97);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
 /* Mobile optimizations */
 @media (max-width: 768px) {
   .container {
@@ -277,12 +266,24 @@
     animation: pageEnter 180ms ease-out;
   }
 
-  .animate-brand-spin {
-    animation: brandSpin 1.8s linear infinite;
+  /* A loading screen must not fade/slide in: it takes over from the previous
+     one (e.g. the login's) and has to look like the same spinner. The page
+     that replaces it still gets the enter animation. */
+  .page-enter:has(.app-loader-screen) {
+    animation: none;
   }
 
-  .spinner-reveal {
-    animation: spinnerReveal 220ms ease-out;
+  /* BrandSpinner's arc. Duration must match SPIN_DURATION_MS in
+     components/common/brand-spinner.tsx. */
+  .brand-spinner-ring {
+    transform-origin: center;
+    animation: brandSpin 1.1s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .brand-spinner-ring {
+      animation-duration: 3s;
+    }
   }
 }
 
