@@ -344,9 +344,9 @@ export function normalizeSale(
     toOptionalText(row.notes);
   const originalNotes = toOptionalText(row.originalNotes) ?? notesRaw;
   const parsedNotes = parseSaleNotesPayload(originalNotes ?? notesRaw);
-  const hasBackendPendingReason = toOptionalText(row.pendingReason) != null;
+
   const pendingReason =
-    (hasBackendPendingReason ? parsedNotes.pendingReason : undefined) ??
+    parsedNotes.pendingReason ??
     toOptionalText(row.pendingReason) ??
     (outstandingAmount > 0 && !note && !parsedNotes.note ? originalNotes : undefined);
   const pendingReasonLabel = getSalePendingReasonLabel(pendingReason);

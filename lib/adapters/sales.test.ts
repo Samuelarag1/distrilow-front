@@ -27,9 +27,9 @@ describe("sales adapter", () => {
             cash: 500,
             card: 1000,
           },
-          pendingReason: "Cliente paga al retirar",
+          pendingReason: "OUTSTANDING_BALANCE",
           note: "Entrega parcial de prueba",
-          notes: "Motivo pendiente: Legacy\nNota: no deberia ganar",
+          notes: "Motivo pendiente: Cliente paga al retirar\nNota: no deberia ganar",
           itemsCount: 1,
           itemsQuantity: 2,
           createdAt: "2026-04-03T10:00:00.000Z",
@@ -62,6 +62,7 @@ describe("sales adapter", () => {
     expect(sale.legacyChargeStatus).toBe("PAID");
     expect(sale.note).toBe("Entrega parcial de prueba");
     expect(sale.pendingReason).toBe("Cliente paga al retirar");
+    expect(sale.pendingReasonLabel).toBe("Cliente paga al retirar");
     expect(sale.paymentType).toBe("MIXED");
     expect(sale.paymentBreakdownByMethod.card).toBe(1000);
     expect(sale.lineItems[0]?.productName).toBe("Yerba");
