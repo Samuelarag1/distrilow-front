@@ -49,6 +49,7 @@ import {
 } from "@/components/ui/dialog";
 
 import { useUser } from "@/components/providers/user-provider";
+import { canManageCash as canRoleManageCash } from "@/lib/permissions";
 import { Product } from "@/lib/products";
 import {
   usePosProductSearch,
@@ -1786,10 +1787,7 @@ export function POSModule() {
   const { currentUser, branchId, branches } = useUser();
   const { toast } = useToast();
 
-  const canManageCash =
-    currentUser?.role === "admin" ||
-    currentUser?.role === "cashier" ||
-    currentUser?.role === "seller";
+  const canManageCash = canRoleManageCash(currentUser?.role);
 
   const [cart, setCart] = useState<CartItem[]>([]);
   const [searchRefreshTick, setSearchRefreshTick] = useState(0);

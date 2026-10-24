@@ -1,8 +1,14 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import type { UserRole } from "@/lib/api-types";
+import {
+  isPathAllowedForPosCashOnly,
+  isPosCashOnlyUser,
+  resolvePostLoginPath,
+} from "@/lib/permissions";
 
 type SessionUser = {
-  role?: string;
+  role?: UserRole;
 };
 
 function hasCookieValue(value?: string) {
@@ -20,13 +26,6 @@ function parseCookieJson<T>(value?: string): T | null {
   }
 }
 
-function isRestrictedUser(role?: string, branchesCount = 0) {
-  if (!role) return false;
-  if (role === "seller") return true;
-  const isManagement = role === "admin";
-  return !isManagement && branchesCount <= 1;
-}
-
 export function middleware(request: NextRequest) {
   try {
     // The real tokens are httpOnly and may live on the API's own subdomain —
@@ -38,40 +37,31 @@ export function middleware(request: NextRequest) {
     const branches = parseCookieJson<Array<{ id: string }>>(
       request.cookies.get("branches")?.value
     );
-    const restrictedUser = isRestrictedUser(user?.role, branches?.length ?? 0);
-    const { pathname } = request.nextUrl;
+    const posCashOnly = isPosCashOnlyUser(user?.role, branches?.length ?? 0);
+    const { pathname, search } = request.nextUrl;
 
-    // Permitir siempre login
     if (pathname.startsWith("/login")) {
-      // Si la sesion esta incompleta/corrupta, no forzar redirect al home:
-      // dejar entrar al login para reautenticacion.
+      // A session that looks complete goes where it belongs (or back to
+      // ?next=). An incomplete or corrupt one stays, to sign in again.
       if (hasSession && user?.role) {
-        return NextResponse.redirect(new URL(restrictedUser ? "/pos" : "/", request.url));
+        const target = resolvePostLoginPath(
+          request.nextUrl.searchParams.get("next"),
+          { posCashOnly, needsOnboarding: false }
+        );
+        return NextResponse.redirect(new URL(target, request.url));
       }
       return NextResponse.next();
     }
 
-    // Rutas protegidas
     if (!hasSession) {
-      return NextResponse.redirect(new URL("/login", request.url));
+      const login = new URL("/login", request.url);
+      // Back to this screen after signing in (validated by the login).
+      if (pathname !== "/") login.searchParams.set("next", `${pathname}${search}`);
+      return NextResponse.redirect(login);
     }
 
-    if (restrictedUser) {
-      const allowed =
-        pathname === "/pos" ||
-        pathname.startsWith("/pos/") ||
-        pathname === "/cash" ||
-        pathname.startsWith("/cash/") ||
-        pathname === "/onboarding/branch" ||
-        pathname.startsWith("/onboarding/branch/");
-
-      if (pathname === "/") {
-        return NextResponse.redirect(new URL("/pos", request.url));
-      }
-
-      if (!allowed) {
-        return NextResponse.redirect(new URL("/pos", request.url));
-      }
+    if (posCashOnly && !isPathAllowedForPosCashOnly(pathname)) {
+      return NextResponse.redirect(new URL("/pos", request.url));
     }
 
     return NextResponse.next();

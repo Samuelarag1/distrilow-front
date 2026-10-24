@@ -10,7 +10,7 @@ describe("mensajes del login", () => {
 
   it("credenciales inválidas no dicen si el email existe", () => {
     expect(getUserFacingErrorMessage(new Error("Invalid Credentials"))).toBe(
-      "Revisa tu email y tu contrasena, y vuelve a intentarlo."
+      "Revisá tu email y tu contraseña, y volvé a intentar."
     );
   });
 });

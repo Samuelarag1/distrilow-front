@@ -29,7 +29,7 @@ let refreshBlockedUntil = 0;
 
 const REFRESH_EXPIRY_BUFFER_MS = 2 * 60 * 1000;
 const SESSION_UNAVAILABLE_MESSAGE =
-  "No pudimos confirmar tu sesion con el servidor. Revisa la conexion e intenta de nuevo.";
+  "No pudimos confirmar tu sesión con el servidor. Revisá la conexión y volvé a intentar.";
 
 function normalizeBaseUrl(base: string) {
   return base.endsWith("/") ? base.slice(0, -1) : base;
@@ -394,14 +394,22 @@ let isLeavingPage = false;
  * /login. Guarded so that a fan-out of concurrent failures (every widget on
  * a page 401ing at once, or a background idle-timeout firing alongside a
  * failed request) only navigates once instead of racing several redirects.
+ *
+ * `returnHere`: the session expired on its own, so after signing in again
+ * the user comes back to this screen (?next=, validated by the login). An
+ * explicit or idle logout doesn't.
  */
-export function forceLogout() {
+export function forceLogout({ returnHere = false }: { returnHere?: boolean } = {}) {
   if (typeof window === "undefined" || isLeavingPage) return;
-  if (window.location.pathname.startsWith("/login")) return;
+  const { pathname, search } = window.location;
+  if (pathname.startsWith("/login")) return;
 
   isLeavingPage = true;
   clearSession();
-  window.location.href = "/login";
+  window.location.href =
+    returnHere && pathname !== "/"
+      ? `/login?next=${encodeURIComponent(`${pathname}${search}`)}`
+      : "/login";
 }
 
 /**
@@ -422,7 +430,7 @@ async function ensureResponseOkOrThrow(res: Response): Promise<void> {
   if (res.ok) return;
 
   if (res.status === 401) {
-    forceLogout();
+    forceLogout({ returnHere: true });
   }
 
   const contentType = res.headers.get("content-type") ?? "";
@@ -449,11 +457,11 @@ async function ensureResponseOkOrThrow(res: Response): Promise<void> {
 
   const statusHint =
     res.status === 403
-      ? "No tienes acceso a esta sucursal o no hay sucursal activa en la sesion."
+      ? "No tenés acceso a esta sucursal o no hay una sucursal activa en la sesión."
       : `API request failed (${res.status})`;
   const publicMessage =
     res.status >= 500
-      ? "Ocurrio un error del servidor. Intenta nuevamente en unos minutos."
+      ? "Ocurrió un error del servidor. Volvé a intentar en unos minutos."
       : friendlyMessage || bodyText || statusHint;
   const retryAfterSeconds = parseRetryAfterSeconds(res.headers.get("Retry-After"));
 

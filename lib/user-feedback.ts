@@ -71,7 +71,7 @@ function normalizeKnownErrorMessage(message: string, fallback: string) {
     normalized.includes("not enough stock") ||
     normalized.includes("insufficient stock")
   ) {
-    return "No hay stock suficiente para completar la operacion.";
+    return "No hay stock suficiente para completar la operación.";
   }
 
   if (
@@ -80,7 +80,7 @@ function normalizeKnownErrorMessage(message: string, fallback: string) {
     normalized.includes("network error") ||
     normalized.includes("network request failed")
   ) {
-    return "No pudimos conectarnos con el servidor. Verifica tu conexion e intenta nuevamente.";
+    return "No pudimos conectarnos con el servidor. Revisá tu conexión y volvé a intentar.";
   }
 
   if (
@@ -88,7 +88,7 @@ function normalizeKnownErrorMessage(message: string, fallback: string) {
     normalized.includes("credenciales invalidas") ||
     normalized.includes("authentication failed")
   ) {
-    return "Revisa tu email y tu contrasena, y vuelve a intentarlo.";
+    return "Revisá tu email y tu contraseña, y volvé a intentar.";
   }
 
   // The backend says it only after the password was right (it never reveals
@@ -103,14 +103,14 @@ function normalizeKnownErrorMessage(message: string, fallback: string) {
     (normalized.includes("session") && normalized.includes("expired")) ||
     (normalized.includes("token") && normalized.includes("expired"))
   ) {
-    return "Tu sesion vencio o no tienes permisos para realizar esta accion.";
+    return "Tu sesión venció o no tenés permiso para hacer esta acción.";
   }
 
   if (
     normalized.includes("missing branch") ||
     (normalized.includes("branch") && normalized.includes("required"))
   ) {
-    return "Debes seleccionar una sucursal activa para continuar.";
+    return "Elegí una sucursal activa para continuar.";
   }
 
   if (
@@ -131,14 +131,14 @@ function normalizeKnownErrorMessage(message: string, fallback: string) {
     normalized.includes("unique constraint") ||
     normalized.includes("duplicate")
   ) {
-    return "Ya existe un registro con esos datos. Revisa la informacion e intenta nuevamente.";
+    return "Ya existe un registro con esos datos. Revisá la información y volvé a intentar.";
   }
 
   if (
     normalized.includes("timeout") ||
     normalized.includes("timed out")
   ) {
-    return "La operacion tardo demasiado en responder. Intenta nuevamente.";
+    return "La operación tardó demasiado en responder. Volvé a intentar.";
   }
 
   if (
@@ -163,7 +163,7 @@ function normalizeKnownErrorMessage(message: string, fallback: string) {
 
 export function getUserFacingErrorMessage(
   error: unknown,
-  fallback = "No pudimos completar la accion. Intenta nuevamente."
+  fallback = "No pudimos completar la acción. Volvé a intentar."
 ) {
   const rawMessage = extractErrorMessage(error);
   if (!rawMessage) return fallback;

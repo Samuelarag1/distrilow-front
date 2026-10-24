@@ -97,7 +97,7 @@ export default function OnboardingBranchesPage() {
         title: "No se pudo crear la sucursal",
         description: getUserFacingErrorMessage(
           err,
-          "Revisa los datos de la sucursal e intenta nuevamente."
+          "Revisá los datos de la sucursal y volvé a intentar."
         ),
       });
     } finally {
