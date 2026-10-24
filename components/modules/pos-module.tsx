@@ -1788,7 +1788,6 @@ export function POSModule() {
 
   const canManageCash =
     currentUser?.role === "admin" ||
-    currentUser?.role === "manager" ||
     currentUser?.role === "cashier" ||
     currentUser?.role === "seller";
 

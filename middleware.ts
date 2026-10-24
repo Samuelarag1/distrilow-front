@@ -23,7 +23,7 @@ function parseCookieJson<T>(value?: string): T | null {
 function isRestrictedUser(role?: string, branchesCount = 0) {
   if (!role) return false;
   if (role === "seller") return true;
-  const isManagement = role === "admin" || role === "manager";
+  const isManagement = role === "admin";
   return !isManagement && branchesCount <= 1;
 }
 

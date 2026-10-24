@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
-import { useBranches } from "@/components/providers/branch-provider";
 import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
@@ -68,14 +67,12 @@ function toYmd(date: Date) {
 }
 
 export function CashModule() {
-  const { currentUser, branchId } = useUser();
-  const { branches } = useBranches();
+  const { currentUser, branchId, branches } = useUser();
   const { logEvent } = useAudit();
   const { toast } = useToast();
 
   const canManageCash =
     currentUser?.role === "admin" ||
-    currentUser?.role === "manager" ||
     currentUser?.role === "cashier" ||
     currentUser?.role === "seller";
 

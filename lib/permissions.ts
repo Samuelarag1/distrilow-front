@@ -1,6 +1,7 @@
 ﻿import type { UserRole } from "@/lib/api-types";
 
-const MANAGEMENT_ROLES: UserRole[] = ["admin", "manager"];
+// Only admin manages. Keep in sync with middleware.ts (isRestrictedUser).
+const MANAGEMENT_ROLES: UserRole[] = ["admin"];
 
 export function isManagementRole(role?: UserRole | null) {
   return !!role && MANAGEMENT_ROLES.includes(role);
