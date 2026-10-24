@@ -1,51 +1,13 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
-import {
-  Building2,
-  Edit,
-  Loader2,
-  Mail,
-  MapPin,
-  MoreHorizontal,
-  Phone,
-  Plus,
-  Search,
-  Trash2,
-} from "lucide-react";
+import { useMemo, useState } from "react";
+import { Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Badge } from "@/components/ui/badge";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { BrandSpinner } from "@/components/common/brand-spinner";
-import {
-  BranchFormFields,
-  focusFirstBranchError,
-} from "@/components/branches/branch-form-fields";
+import { ConfirmDeleteDialog } from "@/components/common/confirm-delete-dialog";
+import { BranchCard } from "@/components/branches/branch-card";
+import { BranchDialog } from "@/components/branches/branch-dialog";
 import { useUser } from "@/components/providers/user-provider";
 import { useBranchList } from "@/hooks/use-branch-list";
 import { useToast } from "@/hooks/use-toast";
@@ -53,15 +15,7 @@ import { backendApi } from "@/lib/backend-api";
 import type { Branch } from "@/lib/api-types";
 import { isManagementRole } from "@/lib/permissions";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
-import {
-  BRANCH_TYPE_LABELS,
-  EMPTY_BRANCH_FORM,
-  branchToFormValues,
-  toBranchRequest,
-  validateBranchForm,
-  type BranchFormErrors,
-  type BranchFormValues,
-} from "@/lib/branches/branch-form";
+import { toBranchRequest, type BranchFormValues } from "@/lib/branches/branch-form";
 
 function byName(a: Branch, b: Branch) {
   return a.name.localeCompare(b.name);
@@ -235,211 +189,14 @@ export function BranchesModule() {
         />
       )}
 
-      <AlertDialog
+      <ConfirmDeleteDialog
         open={!!branchToDelete}
-        onOpenChange={(open) => !open && !isDeleting && setBranchToDelete(null)}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>
-              ¿Eliminar {branchToDelete?.name}?
-            </AlertDialogTitle>
-            <AlertDialogDescription>
-              Solo se puede eliminar una sucursal sin ventas, cajas ni stock
-              registrados, y que no sea la única sucursal de ningún usuario.
-              Esta acción no se puede deshacer.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              onClick={(event) => {
-                // Stay open until the request ends: a 409 is shown with the
-                // dialog still there, and the spinner is visible meanwhile.
-                event.preventDefault();
-                void handleDelete();
-              }}
-              disabled={isDeleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
-              {isDeleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              Eliminar
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
+        title={<>¿Eliminar {branchToDelete?.name}?</>}
+        description="Solo se puede eliminar una sucursal sin ventas, cajas ni stock registrados, y que no sea la única sucursal de ningún usuario. Esta acción no se puede deshacer."
+        isDeleting={isDeleting}
+        onCancel={() => setBranchToDelete(null)}
+        onConfirm={() => void handleDelete()}
+      />
     </div>
-  );
-}
-
-function BranchCard({
-  branch,
-  canManage,
-  onEdit,
-  onDelete,
-}: {
-  branch: Branch;
-  canManage: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
-}) {
-  return (
-    <Card className="overflow-hidden group hover:shadow-lg transition-all duration-300 border-t-4 border-t-primary/20 hover:border-t-primary">
-      <CardHeader className="flex flex-row items-start justify-between gap-2 space-y-0 pb-2">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="p-2 bg-primary/10 rounded-lg group-hover:bg-primary/20 transition-colors">
-            <Building2 className="h-5 w-5 text-primary" />
-          </div>
-          <div className="min-w-0">
-            <CardTitle className="truncate text-lg font-bold" title={branch.name}>
-              {branch.name}
-            </CardTitle>
-            <div className="mt-1 flex flex-wrap items-center gap-1.5">
-              <Badge variant="outline" className="font-mono text-[10px]">
-                {branch.code}
-              </Badge>
-              <Badge variant="secondary" className="text-[10px]">
-                {BRANCH_TYPE_LABELS[branch.branchType] ?? branch.branchType}
-              </Badge>
-              {!branch.isActive && (
-                <Badge variant="outline" className="text-[10px] text-muted-foreground">
-                  Inactiva
-                </Badge>
-              )}
-            </div>
-          </div>
-        </div>
-        {canManage && (
-          // Not modal: its items open dialogs, and two modal layers at once can
-          // leave the page without pointer events when the dialog closes.
-          <DropdownMenu modal={false}>
-            <DropdownMenuTrigger asChild>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="h-9 w-9 shrink-0"
-                aria-label={`Acciones de ${branch.name}`}
-              >
-                <MoreHorizontal className="h-4 w-4" />
-              </Button>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={onEdit}>
-                <Edit className="mr-2 h-4 w-4" />
-                Editar
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={onDelete} className="text-destructive">
-                <Trash2 className="mr-2 h-4 w-4" />
-                Eliminar
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
-      </CardHeader>
-      <CardContent className="pt-4 space-y-3 text-sm text-muted-foreground">
-        <div className="flex items-start gap-2">
-          <MapPin className="h-4 w-4 mt-0.5 shrink-0 text-primary/60" />
-          <span>{branch.address}</span>
-        </div>
-        {branch.phone && (
-          <div className="flex items-center gap-2">
-            <Phone className="h-4 w-4 shrink-0 text-primary/60" />
-            <span>{branch.phone}</span>
-          </div>
-        )}
-        {branch.email && (
-          <div className="flex items-center gap-2">
-            <Mail className="h-4 w-4 shrink-0 text-primary/60" />
-            <span className="truncate">{branch.email}</span>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
-interface BranchDialogProps {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  branch: Branch | null;
-  onSave: (values: BranchFormValues) => Promise<void>;
-}
-
-function BranchDialog({ open, onOpenChange, branch, onSave }: BranchDialogProps) {
-  // Mounted fresh on every open (see `key` in BranchesModule): editing starts
-  // from every field the branch has today.
-  const [values, setValues] = useState<BranchFormValues>(() =>
-    branch ? branchToFormValues(branch) : EMPTY_BRANCH_FORM
-  );
-  const [errors, setErrors] = useState<BranchFormErrors>({});
-  const [isSaving, setIsSaving] = useState(false);
-  const contentRef = useRef<HTMLDivElement>(null);
-
-  const set = <K extends keyof BranchFormValues>(key: K, value: BranchFormValues[K]) =>
-    setValues((prev) => ({ ...prev, [key]: value }));
-
-  const handleSubmit = async (event: React.FormEvent) => {
-    event.preventDefault();
-    const found = validateBranchForm(values);
-    setErrors(found);
-    if (Object.keys(found).length) {
-      focusFirstBranchError("branch", found);
-      return;
-    }
-
-    setIsSaving(true);
-    try {
-      await onSave(values);
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
-  return (
-    <Dialog open={open} onOpenChange={(next) => !isSaving && onOpenChange(next)}>
-      <DialogContent
-        ref={contentRef}
-        className="sm:max-w-[480px]"
-        onOpenAutoFocus={(event) => {
-          // Editing: focus the dialog itself, not the first field. On a phone
-          // focusing the name would open the keyboard over the form.
-          if (!branch) return;
-          event.preventDefault();
-          contentRef.current?.focus();
-        }}
-      >
-        <DialogHeader>
-          <DialogTitle>{branch ? "Editar sucursal" : "Nueva sucursal"}</DialogTitle>
-          <DialogDescription>
-            {branch
-              ? "Modificá los datos de la sucursal."
-              : "La sucursal nueva queda activa y lista para asignar a usuarios."}
-          </DialogDescription>
-        </DialogHeader>
-        <form onSubmit={handleSubmit} noValidate className="space-y-4">
-          <BranchFormFields
-            idPrefix="branch"
-            values={values}
-            errors={errors}
-            onChange={set}
-          />
-
-          <DialogFooter sticky>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={isSaving}
-              onClick={() => onOpenChange(false)}
-            >
-              Cancelar
-            </Button>
-            <Button type="submit" disabled={isSaving}>
-              {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {branch ? "Guardar cambios" : "Crear sucursal"}
-            </Button>
-          </DialogFooter>
-        </form>
-      </DialogContent>
-    </Dialog>
   );
 }
