@@ -42,7 +42,9 @@ export function UserProfile() {
 
   return (
     <>
-      <DropdownMenu>
+      {/* Not modal: "Cerrar sesión" opens a dialog, and two modal layers at
+          once can leave the page without pointer events when it closes. */}
+      <DropdownMenu modal={false}>
         <DropdownMenuTrigger asChild>
           <SidebarMenuButton className="data-[state=open]:bg-sidebar-accent data-[state=open]:text-sidebar-accent-foreground group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:!p-0">
             <Avatar className="h-8 w-8 rounded-lg">

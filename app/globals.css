@@ -182,8 +182,10 @@
     @apply px-4;
   }
 
-  /* Larger touch targets on mobile */
-  button,
+  /* Larger touch targets on mobile. Not for checkboxes, switches and radios:
+     Radix renders them as <button>, and a 44px min-height stretched them out
+     of shape (a 16x44 checkbox). Their row or label is the touch target. */
+  button:not([role="checkbox"]):not([role="switch"]):not([role="radio"]),
   [role="button"] {
     @apply min-h-[44px];
   }
