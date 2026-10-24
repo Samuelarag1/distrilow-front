@@ -30,7 +30,7 @@ Reference values live in `.env.example` (copy to `.env.local`):
 | `NEXT_PUBLIC_BACKEND_URL` | Backend origin, no `/api` suffix (default `http://localhost:3000`) |
 | `NEXT_PUBLIC_API_PREFIX` | REST prefix (default `/api`) |
 | `NEXT_PUBLIC_API_BASE_URL` / `NEXT_PUBLIC_API_URL` | Legacy alternatives, still read by `resolveApiBaseUrl()` in `lib/api-client.ts` |
-| `BACKEND_URL` | Backend URL for server components / SSR |
+| `BACKEND_URL` | No code reads it since the server-side API client was removed; it (and `API_URL`) only add an origin to the CSP `connect-src` list in `next.config.mjs` |
 
 `next.config.mjs` derives its CSP `connect-src` from these same vars, so a backend origin change needs updating there too if it's not already covered by an existing entry.
 
@@ -49,7 +49,7 @@ Reference values live in `.env.example` (copy to `.env.local`):
 
 ### Provider tree
 
-`app/layout.tsx` wraps everything in `ThemeProvider` → `AppProviders` (`components/providers/app-providers.tsx`). `AppProviders` branches on `pathname`: `/pos` routes get a minimal `OfflineProvider > UserProvider` tree (lighter SWR config, no revalidate-on-reconnect); every other route gets the full stack — `OfflineProvider > UserProvider > BusinessProvider > AuditProvider > BranchProvider > TransactionsProvider > ProductProvider`. Provider order matters (branch depends on user, transactions/products depend on branch, etc.) — respect it when adding a new context provider. (`app/providers/provider.tsx` is a legacy, currently-unused SWRConfig-only wrapper — don't confuse it with `components/providers/`.)
+`app/layout.tsx` wraps everything in `ThemeProvider` → `AppProviders` (`components/providers/app-providers.tsx`). `AppProviders` branches on `pathname`: `/pos` routes get a minimal `OfflineProvider > UserProvider` tree (lighter SWR config, no revalidate-on-reconnect); every other route gets the full stack — `OfflineProvider > UserProvider > BusinessProvider > ActiveBranchBoundary > TransactionsProvider > ProductProvider`. Provider order matters (business and the branch boundary depend on user, transactions/products depend on the branch, etc.) — respect it when adding a new context provider. A screen's data is loaded by that screen (SWR), not by a global provider: everything in this tree runs on every non-POS page and again on each return from `/pos`. (`app/providers/provider.tsx` is a legacy, currently-unused SWRConfig-only wrapper — don't confuse it with `components/providers/`.)
 
 ### Adapters (API → ViewModel)
 
@@ -68,7 +68,7 @@ Each domain that needs cross-tab cache invalidation has its own `lib/*-live-sync
 - `app/*/page.tsx` routes are thin; real screens live in `components/modules/*-module.tsx` (one per top-level route: pos, sales, cash, expenses, inventory, reports, branches, users, profile).
 - `components/products/` is the one module broken into its own `components/`, `hooks/`, `types/`, `utils/` subfolders — treat it as the pattern to follow if another module grows past a single file.
 - `components/ui/` are shadcn/ui primitives (Radix-based) — see `components.json` for aliases (`@/components`, `@/lib`, `@/hooks`, etc., all rooted at `@/*` per `tsconfig.json`). These are project-owned and safe to modify directly, not a vendored dependency.
-- `app/actions/*.actions.ts` are server actions (audit, expenses, inventory, sales, users).
+- There are no server actions and no server-side API client: every backend call goes from the browser through `lib/backend-api.ts`, with the access token held in memory.
 - Newer top-level routes not covered by the README's architecture diagram: `app/intelligence/`, `app/orders/`, `app/reservations/` — check these for current status/ownership before assuming they're production-ready.
 
 ### Reports/margin data integrity

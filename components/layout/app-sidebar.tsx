@@ -29,7 +29,7 @@ import {
   SidebarRail,
 } from "@/components/ui/sidebar";
 import { UserProfile } from "@/components/layout/user-profile";
-import { NavLinkIcon } from "@/components/layout/nav-link-icon";
+import { NavPendingScreen } from "@/components/layout/nav-pending-screen";
 import { useUser } from "@/components/providers/user-provider";
 import {
   canAccessExpenses,
@@ -109,10 +109,13 @@ export function AppSidebar() {
                       href={item.url}
                       className="flex w-full items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
                     >
-                      <NavLinkIcon icon={item.icon} />
+                      <div className="flex h-5 w-5 items-center justify-center">
+                        <item.icon className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
+                      </div>
                       <span className="truncate group-data-[collapsible=icon]:hidden">
                         {item.title}
                       </span>
+                      <NavPendingScreen />
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
@@ -139,10 +142,13 @@ export function AppSidebar() {
                       href="/users"
                       className="flex w-full items-center gap-3 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:gap-0"
                     >
-                      <NavLinkIcon icon={UserCheck} />
+                      <div className="flex h-5 w-5 items-center justify-center">
+                        <UserCheck className="h-4 w-4 shrink-0 transition-transform group-hover:scale-110" />
+                      </div>
                       <span className="truncate group-data-[collapsible=icon]:hidden">
                         Usuarios
                       </span>
+                      <NavPendingScreen />
                     </Link>
                   </SidebarMenuButton>
                 </SidebarMenuItem>

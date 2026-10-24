@@ -24,7 +24,10 @@ import {
 import { Download } from "lucide-react";
 import useSWR from "swr";
 
-import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
+import {
+  DATE_INPUT_DEBOUNCE_MS,
+  useDebouncedValue,
+} from "@/components/products/hooks/useDebouncedValue";
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { swrFetcher } from "@/lib/swr-fetcher";
@@ -151,7 +154,7 @@ function formatMoney(value: number) {
 }
 
 function readInventoryValue(
-  summary: ReportsInventorySummaryResponse | null,
+  summary: ReportsInventorySummaryResponse | undefined,
   mode: InventoryValueMode
 ) {
   if (!summary) return 0;
@@ -167,10 +170,6 @@ export function StockReport() {
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [currentPage, setCurrentPage] = useState(1);
   const [priceMode, setPriceMode] = useState<InventoryValueMode>("retail");
-  const [summary, setSummary] =
-    useState<ReportsInventorySummaryResponse | null>(null);
-  const [lowStock, setLowStock] =
-    useState<ReportsInventoryLowStockResponse | null>(null);
   const [discountPreset, setDiscountPreset] =
     useState<DiscountPreset>("LOSS_EXPIRED");
   const [selectedDiscountProductId, setSelectedDiscountProductId] =
@@ -182,8 +181,8 @@ export function StockReport() {
     return toInputDate(from);
   });
   const [discountTo, setDiscountTo] = useState(() => toInputDate(new Date()));
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const queryDiscountFrom = useDebouncedValue(discountFrom, DATE_INPUT_DEBOUNCE_MS);
+  const queryDiscountTo = useDebouncedValue(discountTo, DATE_INPUT_DEBOUNCE_MS);
 
   const debouncedSearch = useDebouncedValue(searchQuery, 350);
   const normalizedSearch = debouncedSearch.trim();
@@ -238,74 +237,61 @@ export function StockReport() {
     setCurrentPage(1);
   }, [normalizedSearch, selectedCategory]);
 
-  useEffect(() => {
-    if (!branchId) {
-      setSummary(null);
-      setLowStock(null);
-      setError("No hay sucursal activa para consultar inventario.");
-      return;
+  const inventoryFilters = {
+    branchId: branchId ?? undefined,
+    search: normalizedSearch || undefined,
+    categoryId: selectedCategory !== "all" ? selectedCategory : undefined,
+    lowStockThreshold: LOW_STOCK_THRESHOLD,
+  };
+
+  // Separate keys on purpose: paging the low-stock list must not recompute
+  // the summary, which aggregates the whole inventory.
+  const {
+    data: summary,
+    error: summaryError,
+    isLoading: isSummaryLoading,
+  } = useSWR<ReportsInventorySummaryResponse>(
+    branchId
+      ? ["reporting-inventory-summary", branchId, normalizedSearch, selectedCategory]
+      : null,
+    () => backendApi.reporting.inventory.summary(inventoryFilters, branchId),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
     }
-
-    const controller = new AbortController();
-
-    const load = async () => {
-      setIsLoading(true);
-      setError(null);
-
-      try {
-        const [summaryResponse, lowStockResponse] = await Promise.all([
-          backendApi.reporting.inventory.summary(
-            {
-              branchId,
-              search: normalizedSearch || undefined,
-              categoryId:
-                selectedCategory !== "all" ? selectedCategory : undefined,
-              lowStockThreshold: LOW_STOCK_THRESHOLD,
-            },
-            branchId,
-            { signal: controller.signal }
-          ),
-          backendApi.reporting.inventory.lowStock(
-            {
-              branchId,
-              search: normalizedSearch || undefined,
-              categoryId:
-                selectedCategory !== "all" ? selectedCategory : undefined,
-              page: currentPage,
-              limit,
-              lowStockThreshold: LOW_STOCK_THRESHOLD,
-            },
-            branchId,
-            { signal: controller.signal }
-          ),
-        ]);
-
-        setSummary(summaryResponse);
-        setLowStock(lowStockResponse);
-      } catch (fetchError) {
-        if (
-          fetchError instanceof DOMException &&
-          fetchError.name === "AbortError"
-        )
-          return;
-        const message =
-          fetchError instanceof Error
-            ? fetchError.message
-            : "No se pudo cargar el reporte de inventario.";
-        setError(message);
-      } finally {
-        if (!controller.signal.aborted) {
-          setIsLoading(false);
-        }
-      }
-    };
-
-    void load();
-
-    return () => {
-      controller.abort();
-    };
-  }, [branchId, normalizedSearch, selectedCategory, currentPage, limit]);
+  );
+  const {
+    data: lowStock,
+    error: lowStockError,
+    isLoading: isLowStockLoading,
+  } = useSWR<ReportsInventoryLowStockResponse>(
+    branchId
+      ? [
+          "reporting-inventory-low-stock",
+          branchId,
+          normalizedSearch,
+          selectedCategory,
+          currentPage,
+          limit,
+        ]
+      : null,
+    () =>
+      backendApi.reporting.inventory.lowStock(
+        { ...inventoryFilters, page: currentPage, limit },
+        branchId
+      ),
+    {
+      revalidateOnFocus: false,
+      keepPreviousData: true,
+    }
+  );
+  const isLoading = isSummaryLoading || isLowStockLoading;
+  const inventoryError = summaryError ?? lowStockError;
+  const error = inventoryError
+    ? inventoryError instanceof Error
+      ? inventoryError.message
+      : "No se pudo cargar el reporte de inventario."
+    : null;
 
   const categories = useMemo(
     () =>
@@ -369,8 +355,8 @@ export function StockReport() {
           "stock-movements",
           branchId,
           {
-            from: discountFrom,
-            to: discountTo,
+            from: queryDiscountFrom,
+            to: queryDiscountTo,
             preset: discountPreset,
             productId:
               selectedDiscountProductId !== "all"
@@ -400,8 +386,8 @@ export function StockReport() {
           fetchAllStockMovementsByType(
             activeBranchId,
             type,
-            discountFrom,
-            discountTo,
+            queryDiscountFrom,
+            queryDiscountTo,
             requestedProductId ?? undefined
           )
         )
@@ -426,71 +412,23 @@ export function StockReport() {
         };
       });
 
-      const missingCostProductIds = [
-        ...new Set(
-          combined
-            .filter((movement) => movement.unitCost === null)
-            .map((movement) => String(movement.productId ?? "").trim())
-            .filter(Boolean)
-        ),
-      ];
-
-      const costByProductId = new Map<string, number>();
-      const nameByProductId = new Map<string, string>();
-      for (
-        let index = 0;
-        index < missingCostProductIds.length;
-        index += PRODUCT_COST_BATCH_SIZE
-      ) {
-        const chunk = missingCostProductIds.slice(
-          index,
-          index + PRODUCT_COST_BATCH_SIZE
-        );
-        const chunkResults = await Promise.allSettled(
-          chunk.map((productId) => backendApi.products.getById(productId))
-        );
-
-        chunkResults.forEach((result, chunkIndex) => {
-          if (result.status !== "fulfilled") return;
-          const productId = chunk[chunkIndex];
-          const productName = normalizeProductName(result.value.name);
-          if (productName) {
-            nameByProductId.set(productId, productName);
-          }
-          const costPrice = Number(result.value.costPrice ?? Number.NaN);
-          if (!Number.isFinite(costPrice)) return;
-          costByProductId.set(productId, costPrice);
-        });
-      }
-
+      // Each movement brings its own cost (unitCost is NOT NULL in
+      // stock_movements), so no product is fetched to complete it.
       let rows = combined
-        .map((movement) => {
-          const fallbackCost = costByProductId.get(movement.productId);
-          const resolvedUnitCost =
+        .map((movement) => ({
+          id: movement.id,
+          createdAt: movement.createdAt ?? "",
+          type: movement.type,
+          productId: movement.productId,
+          productName: movement.productName,
+          quantity: movement.quantity,
+          unitCost: movement.unitCost,
+          estimatedLoss:
             movement.unitCost !== null
-              ? movement.unitCost
-              : Number.isFinite(Number(fallbackCost))
-              ? Number(fallbackCost)
-              : null;
-          const estimatedLoss =
-            resolvedUnitCost !== null
-              ? movement.quantity * resolvedUnitCost
-              : 0;
-          return {
-            id: movement.id,
-            createdAt: movement.createdAt ?? "",
-            type: movement.type,
-            productId: movement.productId,
-            productName:
-              movement.productName ??
-              nameByProductId.get(movement.productId) ??
-              null,
-            quantity: movement.quantity,
-            unitCost: resolvedUnitCost,
-            estimatedLoss,
-            reason: normalizeReason(movement.reason),
-          };
-        })
+              ? movement.quantity * movement.unitCost
+              : 0,
+          reason: normalizeReason(movement.reason),
+        }))
         .sort(
           (left, right) =>
             new Date(right.createdAt ?? 0).getTime() -
@@ -507,6 +445,7 @@ export function StockReport() {
         ),
       ];
 
+      const nameByProductId = new Map<string, string>();
       for (
         let index = 0;
         index < recentMissingNameIds.length;

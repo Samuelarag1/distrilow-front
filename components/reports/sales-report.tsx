@@ -25,7 +25,10 @@ import {
 import { Download } from "lucide-react";
 import useSWR from "swr";
 
-import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
+import {
+  DATE_INPUT_DEBOUNCE_MS,
+  useDebouncedValue,
+} from "@/components/products/hooks/useDebouncedValue";
 import { useUser } from "@/components/providers/user-provider";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
 import { backendApi } from "@/lib/backend-api";
@@ -205,12 +208,14 @@ export function SalesReport({ dateRange }: { dateRange: DateRange }) {
     formatMonthInputValue(defaultRange.to)
   );
 
+  const queryMonth = useDebouncedValue(selectedMonth, DATE_INPUT_DEBOUNCE_MS);
+
   const range = useMemo(() => {
     return createMonthSelection(defaultRange.from, defaultRange.to, {
-      fromMonth: selectedMonth,
-      toMonth: selectedMonth,
+      fromMonth: queryMonth,
+      toMonth: queryMonth,
     });
-  }, [defaultRange.from, defaultRange.to, selectedMonth]);
+  }, [defaultRange.from, defaultRange.to, queryMonth]);
 
   const normalizedDetailSearch = debouncedDetailSearch.trim();
 

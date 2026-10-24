@@ -22,6 +22,10 @@ import { Input } from "@/components/ui/input";
 import { AlertCircle, CalendarDays, Info } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useUser } from "@/components/providers/user-provider";
+import {
+  DATE_INPUT_DEBOUNCE_MS,
+  useDebouncedValue,
+} from "@/components/products/hooks/useDebouncedValue";
 import { backendApi } from "@/lib/backend-api";
 import type { CIParetoMetric, CIPriceType } from "@/lib/api-types";
 
@@ -122,7 +126,10 @@ export function ParetoReport() {
   const [customFrom, setCustomFrom] = useState(() => defaultCustomDates().from);
   const [customTo, setCustomTo]     = useState(() => defaultCustomDates().to);
 
-  const { from, to } = getPresetRange(preset, customFrom, customTo);
+  const queryCustomFrom = useDebouncedValue(customFrom, DATE_INPUT_DEBOUNCE_MS);
+  const queryCustomTo = useDebouncedValue(customTo, DATE_INPUT_DEBOUNCE_MS);
+
+  const { from, to } = getPresetRange(preset, queryCustomFrom, queryCustomTo);
 
   const { data, isLoading, error } = useSWR(
     branchId && from && to ? ["ci-pareto", branchId, metric, priceType, from, to] : null,

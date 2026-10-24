@@ -11,7 +11,10 @@ import { Search, X } from "lucide-react";
 
 import { useUser } from "@/components/providers/user-provider";
 import { backendApi } from "@/lib/backend-api";
-import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
+import {
+  DATE_INPUT_DEBOUNCE_MS,
+  useDebouncedValue,
+} from "@/components/products/hooks/useDebouncedValue";
 import type { MeasurementType, Movement, MovementType } from "@/lib/api-types";
 
 const REPORTING_TIME_ZONE = "America/Argentina/Cordoba";
@@ -112,6 +115,8 @@ export function StockMovementsReport() {
     return toInputDate(d);
   });
   const [to, setTo] = useState(() => toInputDate(new Date()));
+  const queryFrom = useDebouncedValue(from, DATE_INPUT_DEBOUNCE_MS);
+  const queryTo = useDebouncedValue(to, DATE_INPUT_DEBOUNCE_MS);
   const [typeFilter, setTypeFilter] = useState<MovementType | "ALL">("ALL");
   const [searchText, setSearchText] = useState("");
   const debouncedSearch = useDebouncedValue(searchText, 400);
@@ -137,17 +142,17 @@ export function StockMovementsReport() {
 
   const { data, isLoading, error } = useSWR(
     branchId && productIdFilter !== null
-      ? ["stock-movements-history", branchId, page, from, to, typeFilter, productIdFilter]
+      ? ["stock-movements-history", branchId, page, queryFrom, queryTo, typeFilter, productIdFilter]
       : branchId && productIdFilter === undefined
-      ? ["stock-movements-history", branchId, page, from, to, typeFilter, null]
+      ? ["stock-movements-history", branchId, page, queryFrom, queryTo, typeFilter, null]
       : null,
     async () =>
       backendApi.stockMovements.history(
         {
           page,
           limit: PAGE_SIZE,
-          from,
-          to,
+          from: queryFrom,
+          to: queryTo,
           type: typeFilter !== "ALL" ? (typeFilter as MovementType) : undefined,
           productId: productIdFilter ?? undefined,
         } as any,

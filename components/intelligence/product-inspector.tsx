@@ -54,7 +54,10 @@ import type {
   ProductInsightsResponse,
   ProductInsightsSalesPeriod,
 } from "@/lib/api-types";
-import { useDebouncedValue } from "@/components/products/hooks/useDebouncedValue";
+import {
+  DATE_INPUT_DEBOUNCE_MS,
+  useDebouncedValue,
+} from "@/components/products/hooks/useDebouncedValue";
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -200,6 +203,8 @@ export function ProductInspector() {
   const [movType, setMovType] = useState<MovTypeFilter>("ALL");
   const [movFrom, setMovFrom] = useState(defaultRange.from);
   const [movTo, setMovTo] = useState(defaultRange.to);
+  const queryMovFrom = useDebouncedValue(movFrom, DATE_INPUT_DEBOUNCE_MS);
+  const queryMovTo = useDebouncedValue(movTo, DATE_INPUT_DEBOUNCE_MS);
   const [movPage, setMovPage] = useState(1);
 
   // ── Product list ──────────────────────────────────────────────────────────
@@ -231,14 +236,14 @@ export function ProductInspector() {
   // ── Movement history ──────────────────────────────────────────────────────
   const { data: movData, isLoading: movLoading } = useSWR(
     branchId && selected
-      ? ["pi-movements", branchId, selected.id, movType, movFrom, movTo, movPage]
+      ? ["pi-movements", branchId, selected.id, movType, queryMovFrom, queryMovTo, movPage]
       : null,
     () =>
       backendApi.stockMovements.list({
         productId: selected!.id,
         type: movType === "ALL" ? undefined : movType,
-        from: movFrom || undefined,
-        to: movTo || undefined,
+        from: queryMovFrom || undefined,
+        to: queryMovTo || undefined,
         page: movPage,
         limit: MOV_PAGE_SIZE,
       }),

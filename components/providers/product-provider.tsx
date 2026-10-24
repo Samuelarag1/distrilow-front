@@ -2,7 +2,6 @@
 
 import React, { createContext, useContext } from "react";
 import { mutate } from "swr";
-import { useAudit } from "./audit-provider";
 import { useUser } from "./user-provider";
 import { backendApi } from "@/lib/backend-api";
 import { productsApi, Product } from "@/lib/products";
@@ -25,17 +24,6 @@ interface StockMovementInput {
 }
 
 interface ProductContextType {
-  updateStock: (
-    id: string,
-    newStock: number,
-    branchId?: string
-  ) => Promise<void>;
-  adjustStock: (
-    id: string,
-    delta: number,
-    branchId?: string,
-    options?: { type?: MovementType; reason?: string }
-  ) => Promise<void>;
   registerStockMovement: (input: StockMovementInput) => Promise<void>;
   transferStock: (
     productId: string,
@@ -53,11 +41,6 @@ interface ProductContextType {
 }
 
 const ProductContext = createContext<ProductContextType | undefined>(undefined);
-
-type StockState = {
-  productId: string;
-  quantity: string | number | null;
-};
 
 const INBOUND_TYPES = new Set<MovementType>([
   "PURCHASE",
@@ -97,7 +80,6 @@ function normalizeProductForUi<T extends ProductUiCacheEntry>(item: T) {
 }
 
 export function ProductProvider({ children }: { children: React.ReactNode }) {
-  const { logEvent } = useAudit();
   const { branchId: sessionBranchId } = useUser();
 
   const invalidateProducts = () =>
@@ -185,14 +167,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       throw new Error("No hay sucursal activa para ajustar stock.");
     }
     return resolved;
-  };
-
-  const getBranchProductStock = async (branchId: string, productId: string) => {
-    const stockRows = (await backendApi.stocks.listByBranch(branchId)) as StockState[];
-
-    const stockRow = stockRows.find((row) => row.productId === productId);
-    const quantity = Number(stockRow?.quantity ?? 0);
-    return Number.isFinite(quantity) ? quantity : 0;
   };
 
   const postAdjustmentMovement = async (params: {
@@ -292,16 +266,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
       });
     }
 
-    logEvent("adjust_stock", "product", "Movimiento de stock", input.productId, {
-      branchId,
-      quantity: normalizedQuantity,
-      unitCost,
-      movementType: input.type,
-      direction: input.direction,
-      toBranchId: input.toBranchId,
-      reason: input.reason,
-    });
-
     await Promise.all([
       invalidateProducts(),
       mutate(["product", input.productId], undefined, { revalidate: true }),
@@ -311,60 +275,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     if (input.type === "TRANSFER_OUT" && input.toBranchId) {
       emitProductsSync(input.toBranchId);
     }
-  };
-
-  const updateStock = async (
-    id: string,
-    newStock: number,
-    branchId?: string
-  ) => {
-    const product = await productsApi.getById(id);
-    const resolvedBranchId = resolveBranchId(branchId || product.branchId || undefined);
-    const currentStock = await getBranchProductStock(resolvedBranchId, id);
-    const targetStock = Math.max(0, Math.trunc(newStock));
-    const delta = targetStock - currentStock;
-
-    if (delta === 0) return;
-
-    await registerStockMovement({
-      productId: id,
-      branchId: resolvedBranchId,
-      quantity: Math.abs(delta),
-      type: "ADJUSTMENT",
-      unitCost: Number(product.costPrice ?? 0),
-      direction: delta > 0 ? "in" : "out",
-      reason: "Ajuste manual de stock",
-    });
-  };
-
-  const adjustStock = async (
-    id: string,
-    delta: number,
-    branchId?: string,
-    options?: { type?: MovementType; reason?: string }
-  ) => {
-    const normalizedDelta = Math.trunc(delta);
-    if (normalizedDelta === 0) return;
-
-    const product = await productsApi.getById(id);
-    const resolvedBranchId = resolveBranchId(branchId || product.branchId || undefined);
-
-    const movementType = options?.type ?? "ADJUSTMENT";
-
-    await registerStockMovement({
-      productId: id,
-      branchId: resolvedBranchId,
-      quantity: Math.abs(normalizedDelta),
-      type: movementType,
-      unitCost: Number(product.costPrice ?? 0),
-      direction:
-        movementType === "ADJUSTMENT"
-          ? normalizedDelta > 0
-            ? "in"
-            : "out"
-          : undefined,
-      reason: options?.reason,
-    });
   };
 
   const transferStock = async (
@@ -387,8 +297,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   const addProduct = async (productData: Partial<Product>) => {
     const created = await productsApi.create(productData);
 
-    logEvent("create", "product", "Agrego nuevo producto", created.id);
-
     await mutate(["product", created.id], normalizeProductForUi(created), {
       revalidate: false,
     });
@@ -401,10 +309,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
     const updated = await productsApi.update(id, productData);
 
     if (updated) {
-      logEvent("update", "product", "Modifico producto", id, {
-        productData,
-      });
-
       await Promise.all([
         patchProductInProductsCaches(updated),
         mutate(["product", id], normalizeProductForUi(updated), {
@@ -424,8 +328,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   const removeProduct = async (id: string) => {
     await productsApi.remove(id);
 
-    logEvent("delete", "product", "Elimino producto", id);
-
     await Promise.all([
       removeProductFromProductsCaches(id),
       mutate(["product", id], undefined, { revalidate: false }),
@@ -436,8 +338,6 @@ export function ProductProvider({ children }: { children: React.ReactNode }) {
   return (
     <ProductContext.Provider
       value={{
-        updateStock,
-        adjustStock,
         registerStockMovement,
         transferStock,
         addProduct,
@@ -465,13 +365,10 @@ export function useProducts(options: UseProductsArgs = {}) {
     ...options,
     branchId: options.branchId ?? branchId,
   });
-  const { updateStock, adjustStock, registerStockMovement, transferStock } =
-    useProductActions();
+  const { registerStockMovement, transferStock } = useProductActions();
 
   return {
     ...swr,
-    updateStock,
-    adjustStock,
     registerStockMovement,
     transferStock,
   };
