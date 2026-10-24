@@ -1,10 +1,6 @@
-export type UserRole =
-  | "admin"
-  | "manager"
-  | "staff"
-  | "seller"
-  | "cashier"
-  | "viewer";
+// The backend's roles (users_role_enum). "staff" exists in the database but has
+// no permission on any route, so the users screen doesn't offer it (doc 03, D19).
+export type UserRole = "admin" | "cashier" | "seller" | "staff";
 
 export type BranchType = "STORE" | "WAREHOUSE";
 export type MeasurementType = "unit" | "gram" | "kg" | "ml" | "liter";
@@ -109,31 +105,30 @@ export interface LogoutResponse {
   success: true;
 }
 
+/** A user as /users returns it: always with their branches (doc 03, GES-02). */
 export interface User {
   id: string;
   email: string;
   role: UserRole;
   isActive: boolean;
-  defaultBranchId?: string | null;
-  branches?: SessionBranch[];
+  branches: Array<{ id: string; name: string }>;
+  defaultBranchId: string | null;
   createdAt?: string;
   updatedAt?: string;
 }
 
+/** A user and their branches are saved together, in one request (GES-03). */
 export interface CreateUserRequest {
   email: string;
   password: string;
   role: UserRole;
   isActive?: boolean;
-}
-
-export type UpdateUserRequest = Partial<CreateUserRequest>;
-
-export interface UpdateUserBranchesRequest {
   branchIds: string[];
   defaultBranchId?: string;
-  replace?: boolean;
 }
+
+/** Any subset: password only when it changes; branchIds replaces the list. */
+export type UpdateUserRequest = Partial<CreateUserRequest>;
 
 export interface Branch {
   id: string;
@@ -144,41 +139,25 @@ export interface Branch {
   isActive: boolean;
   phone?: string | null;
   email?: string | null;
-  allowsSales?: boolean;
-  allowsPurchases?: boolean;
-  allowsTransfers?: boolean;
-  managesOwnStock?: boolean;
-  allowNegativeStock?: boolean;
-  isMain?: boolean;
   createdAt?: string;
   updatedAt?: string;
 }
 
+/**
+ * The fields the admin manages, the same for create and edit (doc 03, S1).
+ * No isActive: a new branch is always active; closing one is its own action.
+ * An empty phone or email goes as null, which clears it.
+ */
 export interface CreateBranchRequest {
   code: string;
-  address: string;
   name: string;
+  address: string;
   branchType: BranchType;
-  isActive?: boolean;
-  phone?: string;
-  email?: string;
+  phone: string | null;
+  email: string | null;
 }
 
-export interface UpdateBranchRequest {
-  name?: string;
-  address?: string;
-  branchType?: BranchType;
-  isMain?: boolean;
-  allowsSales?: boolean;
-  allowsPurchases?: boolean;
-  allowsTransfers?: boolean;
-  managesOwnStock?: boolean;
-  allowNegativeStock?: boolean;
-  isActive?: boolean;
-  phone?: string;
-  email?: string;
-  code?: string;
-}
+export type UpdateBranchRequest = Partial<CreateBranchRequest>;
 
 export interface BootstrapBranchResponse {
   branch: Branch;

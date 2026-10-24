@@ -134,3 +134,25 @@ describe("SUC-10 — la sucursal viaja tambien en el body de las escrituras de d
     expect(branchHeader).toBe("branch-A");
   });
 });
+
+describe("GES-02 — /users con un backend anterior al doc 03", () => {
+  // Seen on 2026-10-21: the new front against a backend still running the old
+  // build (dist/) crashed /users on `user.branches.length`. The front can go
+  // live before the backend, so the boundary fills in what's missing.
+  it("una respuesta sin branches ni defaultBranchId no rompe: quedan vacios", async () => {
+    fetchMock.mockImplementation(
+      async () =>
+        new Response(
+          JSON.stringify([
+            { id: "u1", email: "cajero@x.com", role: "cashier", isActive: true },
+          ]),
+          { status: 200, headers: { "content-type": "application/json" } }
+        )
+    );
+    const { backendApi } = await freshBackendApi();
+
+    const [user] = await backendApi.users.list();
+
+    expect(user).toMatchObject({ branches: [], defaultBranchId: null });
+  });
+});

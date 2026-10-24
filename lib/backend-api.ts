@@ -102,7 +102,6 @@ import type {
   UpdateProductRequest,
   UpdateProductReviewFlagsRequest,
   UpdateResult,
-  UpdateUserBranchesRequest,
   UpdateUserRequest,
   UploadImageResponse,
   User,
@@ -543,14 +542,6 @@ function invalidateStockCache(branchId?: string | null) {
     return;
   }
   stockCacheByBranch.clear();
-}
-
-function requireActiveBranchId() {
-  const branchId = getApiSession().branchId;
-  if (!branchId) {
-    throw new Error("No hay sucursal activa en la sesion.");
-  }
-  return branchId;
 }
 
 function normalizeProductListItem(value: unknown): ProductListItem {
@@ -1699,6 +1690,22 @@ async function withRateLimitRetry<T>(
   }
 }
 
+/**
+ * A user from /users with the fields the screen relies on always present.
+ * A backend older than doc 03 answers without `branches`; that must show an
+ * empty list, not crash the page (the front can go live before the backend:
+ * Vercel publishes on every push to main). Saving still can't wipe anything:
+ * the form requires at least one branch, and an old backend rejects the new
+ * payload with 400.
+ */
+function normalizeUser(user: User): User {
+  return {
+    ...user,
+    branches: Array.isArray(user.branches) ? user.branches : [],
+    defaultBranchId: user.defaultBranchId ?? null,
+  };
+}
+
 export const backendApi = {
   auth: {
     login: (body: LoginRequest) =>
@@ -1751,21 +1758,16 @@ export const backendApi = {
     },
   },
   users: {
-    list: () => apiClientFetch.get<User[]>("/users"),
-    getById: (id: string) =>
-      apiClientFetch.get<User>(`/users/${id}`),
-    create: (body: CreateUserRequest) =>
-      apiClientFetch.post<User>("/users", body),
-    update: (id: string, body: UpdateUserRequest) =>
-      apiClientFetch.patch<User>(`/users/${id}`, body),
-    updateBranches: (id: string, body: UpdateUserBranchesRequest) =>
-      apiClientFetch.patch<User>(`/users/${id}/branches`, body),
+    list: async () =>
+      (await apiClientFetch.get<User[]>("/users")).map(normalizeUser),
+    getById: async (id: string) =>
+      normalizeUser(await apiClientFetch.get<User>(`/users/${id}`)),
+    create: async (body: CreateUserRequest) =>
+      normalizeUser(await apiClientFetch.post<User>("/users", body)),
+    update: async (id: string, body: UpdateUserRequest) =>
+      normalizeUser(await apiClientFetch.patch<User>(`/users/${id}`, body)),
     remove: (id: string) =>
       apiClientFetch.delete<boolean>(`/users/${id}`),
-  },
-  userBranches: {
-    updateBranches: (id: string, body: UpdateUserBranchesRequest) =>
-      apiClientFetch.patch<User>(`/user-branches/${id}/branches`, body),
   },
   branches: {
     list: () =>
@@ -2016,11 +2018,7 @@ export const backendApi = {
             }
           : undefined
       );
-      return toPaginatedResponse(
-        payload
-        // Number(query.skip ?? query.offset ?? 0),
-        // Number(query.take ?? query.limit ?? 20)
-      );
+      return toPaginatedResponse(payload);
     },
     remove: async (id: string) => {
       const deleted = await apiClientFetch.delete<boolean>(`/products/${id}`);

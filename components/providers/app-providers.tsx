@@ -10,7 +10,6 @@ import { ProductProvider } from "./product-provider";
 import { ActiveBranchBoundary, UserProvider } from "./user-provider";
 import { AuditProvider } from "./audit-provider";
 import { OfflineProvider } from "./offline-provider";
-import { BranchProvider } from "./branch-provider";
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
@@ -48,13 +47,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
         <UserProvider>
           <BusinessProvider>
             <AuditProvider>
-              <BranchProvider>
-                <ActiveBranchBoundary>
-                  <TransactionsProvider autoLoadSales={false}>
-                    <ProductProvider>{children}</ProductProvider>
-                  </TransactionsProvider>
-                </ActiveBranchBoundary>
-              </BranchProvider>
+              <ActiveBranchBoundary>
+                <TransactionsProvider autoLoadSales={false}>
+                  <ProductProvider>{children}</ProductProvider>
+                </TransactionsProvider>
+              </ActiveBranchBoundary>
             </AuditProvider>
           </BusinessProvider>
         </UserProvider>

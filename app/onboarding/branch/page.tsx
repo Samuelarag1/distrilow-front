@@ -24,27 +24,18 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { Switch } from "@/components/ui/switch";
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
+  BranchFormFields,
+  focusFirstBranchError,
+} from "@/components/branches/branch-form-fields";
 import { backendApi } from "@/lib/backend-api";
-
-type BranchPayload = {
-  code: string;
-  name: string;
-  address: string;
-  phone?: string;
-  email?: string;
-  isActive: boolean;
-  branchType: "STORE" | "WAREHOUSE";
-};
+import {
+  EMPTY_BRANCH_FORM,
+  toBranchRequest,
+  validateBranchForm,
+  type BranchFormErrors,
+  type BranchFormValues,
+} from "@/lib/branches/branch-form";
 
 export default function OnboardingBranchesPage() {
   const router = useRouter();
@@ -54,15 +45,11 @@ export default function OnboardingBranchesPage() {
   const [open, setOpen] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
 
-  const [formData, setFormData] = useState<BranchPayload>({
+  const [formData, setFormData] = useState<BranchFormValues>({
+    ...EMPTY_BRANCH_FORM,
     code: "SUC-001",
-    name: "",
-    address: "",
-    phone: "",
-    email: "",
-    isActive: true,
-    branchType: "STORE",
   });
+  const [errors, setErrors] = useState<BranchFormErrors>({});
 
   useEffect(() => {
     if (!token && !currentUser) router.replace("/login");
@@ -77,22 +64,16 @@ export default function OnboardingBranchesPage() {
   const handleCreateBootstrap = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    if (
-      !formData.name.trim() ||
-      !formData.address.trim() ||
-      !formData.code.trim()
-    ) {
-      toast({
-        variant: "destructive",
-        title: "Faltan datos",
-        description: "Nombre, codigo y direccion son obligatorios.",
-      });
+    const found = validateBranchForm(formData);
+    setErrors(found);
+    if (Object.keys(found).length) {
+      focusFirstBranchError("onboarding", found);
       return;
     }
 
     setIsSaving(true);
     try {
-      const res = await backendApi.branches.bootstrap(formData);
+      const res = await backendApi.branches.bootstrap(toBranchRequest(formData));
 
       const createdBranchId =
         res?.session?.activeBranchId ?? res?.branch?.id ?? null;
@@ -110,7 +91,7 @@ export default function OnboardingBranchesPage() {
       selectBranch(createdBranchId);
 
       router.push("/");
-    } catch (err: any) {
+    } catch (err) {
       toast({
         variant: "destructive",
         title: "No se pudo crear la sucursal",
@@ -156,109 +137,19 @@ export default function OnboardingBranchesPage() {
                 </DialogDescription>
               </DialogHeader>
 
-              <form onSubmit={handleCreateBootstrap} className="space-y-4 pt-2">
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="name">Nombre</Label>
-                    <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) =>
-                        setFormData({ ...formData, name: e.target.value })
-                      }
-                      placeholder="Ej: Casa Central"
-                      required
-                      autoFocus
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="code">Codigo</Label>
-                    <Input
-                      id="code"
-                      value={formData.code}
-                      onChange={(e) =>
-                        setFormData({ ...formData, code: e.target.value })
-                      }
-                      placeholder="Ej: SUC-001"
-                      required
-                    />
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="address">Direccion</Label>
-                  <Input
-                    id="address"
-                    value={formData.address}
-                    onChange={(e) =>
-                      setFormData({ ...formData, address: e.target.value })
-                    }
-                    placeholder="Ej: Av. Siempreviva 742"
-                    required
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="branchType">Tipo</Label>
-                    <Select
-                      value={formData.branchType}
-                      onValueChange={(value) =>
-                        setFormData({
-                          ...formData,
-                          branchType: value as BranchPayload["branchType"],
-                        })
-                      }
-                    >
-                      <SelectTrigger id="branchType" className="w-full">
-                        <SelectValue placeholder="Selecciona un tipo" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="STORE">Tienda</SelectItem>
-                        <SelectItem value="WAREHOUSE">Almacen</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="isActive">Activa</Label>
-                    <div className="h-10 flex items-center">
-                      <Switch
-                        id="isActive"
-                        checked={formData.isActive}
-                        onCheckedChange={(checked) =>
-                          setFormData({ ...formData, isActive: checked })
-                        }
-                      />
-                    </div>
-                  </div>
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="phone">Telefono (opcional)</Label>
-                    <Input
-                      id="phone"
-                      value={formData.phone ?? ""}
-                      onChange={(e) =>
-                        setFormData({ ...formData, phone: e.target.value })
-                      }
-                      placeholder="Ej: 351xxxxxxx"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="email">Email (opcional)</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={formData.email ?? ""}
-                      onChange={(e) =>
-                        setFormData({ ...formData, email: e.target.value })
-                      }
-                      placeholder="sucursal@empresa.com"
-                    />
-                  </div>
-                </div>
+              <form
+                onSubmit={handleCreateBootstrap}
+                noValidate
+                className="space-y-4 pt-2"
+              >
+                <BranchFormFields
+                  idPrefix="onboarding"
+                  values={formData}
+                  errors={errors}
+                  onChange={(field, value) =>
+                    setFormData((prev) => ({ ...prev, [field]: value }))
+                  }
+                />
 
                 <DialogFooter className="pt-2">
                   <Button type="submit" disabled={isSaving}>

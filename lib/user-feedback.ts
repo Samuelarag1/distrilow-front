@@ -91,6 +91,12 @@ function normalizeKnownErrorMessage(message: string, fallback: string) {
     return "Revisa tu email y tu contrasena, y vuelve a intentarlo.";
   }
 
+  // The backend says it only after the password was right (it never reveals
+  // whether an account exists).
+  if (normalized.includes("user is not active")) {
+    return "Tu usuario está desactivado. Pedile a un administrador que lo active.";
+  }
+
   if (
     normalized.includes("unauthorized") ||
     normalized.includes("forbidden") ||
