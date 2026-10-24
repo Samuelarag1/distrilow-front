@@ -15,6 +15,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Plus,
@@ -73,6 +74,10 @@ import {
   parsePersistedPosCart,
   type PersistedPosCart,
 } from "@/lib/pos-cart-storage";
+import {
+  CASH_PAYMENT_DISCOUNT_PERCENT,
+  getCashDiscountAmount,
+} from "@/lib/cash-discount";
 
 interface CartItem extends Product {
   quantity: number;
@@ -256,9 +261,17 @@ type PosCatalogCardProps = PosCartListProps & {
   onSelectSearchProduct: (product: Product) => Promise<boolean>;
 };
 
+type CashDiscountControl = {
+  enabled: boolean;
+  amount: number;
+  onEnabledChange: (enabled: boolean) => void;
+};
+
 type PosPaymentCardProps = {
   cartLength: number;
   itemCount: number;
+  subtotal: number;
+  cashDiscount: CashDiscountControl;
   total: number;
   totalInitialPayments: number;
   pendingAfterInitialPayments: number;
@@ -283,6 +296,8 @@ type PosPaymentConfirmDialogProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   isProcessingPayment: boolean;
+  subtotal: number;
+  cashDiscountAmount: number;
   total: number;
   totalInitialPayments: number;
   itemCount: number;
@@ -1237,6 +1252,8 @@ PosCatalogCard.displayName = "PosCatalogCard";
 const PosPaymentCard = memo(function PosPaymentCard({
   cartLength,
   itemCount,
+  subtotal,
+  cashDiscount,
   total,
   totalInitialPayments,
   pendingAfterInitialPayments,
@@ -1258,6 +1275,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
 }: PosPaymentCardProps) {
   const showPendingReasonInput =
     cartLength > 0 &&
+    !cashDiscount.enabled &&
     (pendingAfterInitialPayments > 0 || pendingPaymentReason.trim().length > 0);
 
   return (
@@ -1272,8 +1290,14 @@ const PosPaymentCard = memo(function PosPaymentCard({
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span>Subtotal:</span>
-            <span>${formatMoney(total)}</span>
+            <span>${formatMoney(subtotal)}</span>
           </div>
+          {cashDiscount.enabled && (
+            <div className="flex justify-between text-sm font-semibold text-emerald-700">
+              <span>Descuento efectivo ({CASH_PAYMENT_DISCOUNT_PERCENT}%):</span>
+              <span>-${formatMoney(cashDiscount.amount)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-sm">
             <span>Pagos iniciales:</span>
             <span>${formatMoney(totalInitialPayments)}</span>
@@ -1301,6 +1325,16 @@ const PosPaymentCard = memo(function PosPaymentCard({
             <p className="text-xs font-semibold uppercase text-muted-foreground">
               Pagos
             </p>
+            <label className="flex cursor-pointer items-center justify-between gap-3 rounded-md bg-muted/40 px-3 py-2">
+              <span className="text-sm font-semibold">
+                Descuento {CASH_PAYMENT_DISCOUNT_PERCENT}% por pago en efectivo
+              </span>
+              <Switch
+                checked={cashDiscount.enabled}
+                onCheckedChange={cashDiscount.onEnabledChange}
+                disabled={isSaleCommitted || isProcessingPayment}
+              />
+            </label>
             <div className="grid grid-cols-2 gap-2">
               <div className="space-y-1">
                 <label className="text-md font-bold text-muted-foreground">
@@ -1331,10 +1365,17 @@ const PosPaymentCard = memo(function PosPaymentCard({
                     onTransferPaymentAmountChange(event.target.value)
                   }
                   onBlur={onTransferPaymentAmountBlur}
+                  disabled={cashDiscount.enabled}
                   className="h-10"
                 />
               </div>
             </div>
+            {cashDiscount.enabled ? (
+              <p className="text-[11px] text-muted-foreground">
+                Con el descuento se cobra el total en efectivo, sin
+                transferencia ni saldo pendiente.
+              </p>
+            ) : null}
             {showPendingReasonInput ? (
               <div className="space-y-1">
                 <label className="text-md font-bold text-muted-foreground">
@@ -1411,6 +1452,8 @@ function PosPaymentConfirmDialog({
   open,
   onOpenChange,
   isProcessingPayment,
+  subtotal,
+  cashDiscountAmount,
   total,
   totalInitialPayments,
   itemCount,
@@ -1467,6 +1510,12 @@ function PosPaymentConfirmDialog({
                   <p className="mt-2 text-2xl font-black tracking-tight">
                     ${formatMoney(total)}
                   </p>
+                  {cashDiscountAmount > 0 ? (
+                    <p className="mt-1 text-xs font-semibold text-emerald-700">
+                      Con {CASH_PAYMENT_DISCOUNT_PERCENT}% de descuento por
+                      efectivo
+                    </p>
+                  ) : null}
                 </div>
                 <div className="rounded-2xl border bg-background/80 p-4 shadow-sm">
                   <p className="text-xs font-semibold uppercase tracking-[0.18em] text-muted-foreground">
@@ -1709,6 +1758,24 @@ function PosPaymentConfirmDialog({
                 Totales
               </h3>
               <div className="mt-4 space-y-3 text-sm">
+                {cashDiscountAmount > 0 ? (
+                  <>
+                    <div className="flex justify-between gap-3">
+                      <span className="text-muted-foreground">Subtotal</span>
+                      <span className="font-semibold">
+                        ${formatMoney(subtotal)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between gap-3 text-emerald-700">
+                      <span>
+                        Descuento efectivo ({CASH_PAYMENT_DISCOUNT_PERCENT}%)
+                      </span>
+                      <span className="font-semibold">
+                        -${formatMoney(cashDiscountAmount)}
+                      </span>
+                    </div>
+                  </>
+                ) : null}
                 <div className="flex justify-between gap-3">
                   <span className="text-muted-foreground">Total venta</span>
                   <span className="font-semibold">${formatMoney(total)}</span>
@@ -1796,6 +1863,7 @@ export function POSModule() {
   const [transferReference, setTransferReference] = useState("");
   const [pendingPaymentReason, setPendingPaymentReason] = useState("");
   const [saleNote, setSaleNote] = useState("");
+  const [isCashDiscountEnabled, setIsCashDiscountEnabled] = useState(false);
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isSaleCommitted, setIsSaleCommitted] = useState(false);
@@ -1818,6 +1886,14 @@ export function POSModule() {
   }, []);
   const handleTransferPaymentAmountBlur = useCallback(() => {
     setTransferPaymentAmount((prev) => normalizeWholeAmountInput(prev));
+  }, []);
+  // El descuento exige cobrar todo en efectivo: al activarlo se borra la transferencia.
+  const handleCashDiscountChange = useCallback((enabled: boolean) => {
+    setIsCashDiscountEnabled(enabled);
+    if (enabled) {
+      setTransferPaymentAmount("");
+      setTransferReference("");
+    }
   }, []);
 
   useEffect(() => {
@@ -1854,6 +1930,7 @@ export function POSModule() {
       setTransferReference(persisted.transferReference);
       setPendingPaymentReason(persisted.pendingPaymentReason);
       setSaleNote(persisted.saleNote);
+      setIsCashDiscountEnabled(persisted.cashDiscount);
       setIsSaleCommitted(false);
 
       toast({
@@ -1903,6 +1980,7 @@ export function POSModule() {
         transferReference,
         pendingPaymentReason,
         saleNote,
+        cashDiscount: isCashDiscountEnabled,
       };
 
       window.localStorage.setItem(posCartStorageKey, JSON.stringify(payload));
@@ -1922,6 +2000,7 @@ export function POSModule() {
     transferReference,
     pendingPaymentReason,
     saleNote,
+    isCashDiscountEnabled,
     currentUser?.id,
     branchId,
   ]);
@@ -2446,6 +2525,8 @@ export function POSModule() {
   const previewCashierName =
     currentUser?.name ?? currentUser?.email ?? "Usuario actual";
   const {
+    subtotal,
+    cashDiscountAmount,
     total,
     totalInitialPayments,
     pendingAfterInitialPayments,
@@ -2455,10 +2536,20 @@ export function POSModule() {
     previewItems,
     previewTotalUnits,
   } = useMemo(() => {
-    const nextTotal = cart.reduce(
+    const nextSubtotal = cart.reduce(
       (sum, item) => sum + getCartLineTotal(item),
       0
     );
+    // El back redondea cada renglón al centavo antes de sumar; se descuenta sobre esa misma base.
+    const nextCashDiscountAmount = isCashDiscountEnabled
+      ? getCashDiscountAmount(
+          cart.reduce(
+            (sum, item) => sum + roundTo(getCartLineTotal(item), 2),
+            0
+          )
+        )
+      : 0;
+    const nextTotal = nextSubtotal - nextCashDiscountAmount;
     const cashPaymentPreview = parseWholeAmount(cashPaymentAmount);
     const transferPaymentPreview = parseWholeAmount(transferPaymentAmount);
     const nextTotalInitialPayments =
@@ -2505,6 +2596,8 @@ export function POSModule() {
     }));
 
     return {
+      subtotal: nextSubtotal,
+      cashDiscountAmount: nextCashDiscountAmount,
       total: nextTotal,
       totalInitialPayments: nextTotalInitialPayments,
       pendingAfterInitialPayments: Math.max(
@@ -2520,13 +2613,34 @@ export function POSModule() {
         0
       ),
     };
-  }, [cart, cashPaymentAmount, transferPaymentAmount, transferReference]);
+  }, [
+    cart,
+    cashPaymentAmount,
+    transferPaymentAmount,
+    transferReference,
+    isCashDiscountEnabled,
+  ]);
+  const cashDiscountControl = useMemo<CashDiscountControl>(
+    () => ({
+      enabled: isCashDiscountEnabled,
+      amount: cashDiscountAmount,
+      onEnabledChange: handleCashDiscountChange,
+    }),
+    [isCashDiscountEnabled, cashDiscountAmount, handleCashDiscountChange]
+  );
 
   const normalizedPendingPaymentReason =
     normalizePendingPaymentReason(pendingPaymentReason);
   const normalizedSaleNote = saleNote.trim();
   const isPendingReasonRequired =
-    total > 0 && totalInitialPayments <= Number.EPSILON;
+    !isCashDiscountEnabled && total > 0 && totalInitialPayments <= Number.EPSILON;
+  // Mismo criterio que el back: con descuento, el efectivo cargado tiene que cubrir el total.
+  const cashDiscountError =
+    isCashDiscountEnabled && roundTo(pendingAfterInitialPayments, 2) > 0
+      ? `Con el descuento por efectivo hay que cobrar el total en efectivo: carga al menos $${formatMoney(
+          total
+        )}.`
+      : null;
 
   const ensureOpenCashSession = async () => {
     if (!canManageCash) return true;
@@ -2582,6 +2696,15 @@ export function POSModule() {
       setPendingPaymentReason(normalizedPendingPaymentReason);
     }
 
+    if (cashDiscountError) {
+      toast({
+        variant: "destructive",
+        title: "Falta efectivo",
+        description: cashDiscountError,
+      });
+      return;
+    }
+
     if (isPendingReasonRequired && !normalizedPendingPaymentReason) {
       toast({
         variant: "destructive",
@@ -2607,6 +2730,7 @@ export function POSModule() {
       transferReference: string;
       pendingPaymentReason: string;
       saleNote: string;
+      isCashDiscountEnabled: boolean;
     } | null = null;
 
     try {
@@ -2655,6 +2779,15 @@ export function POSModule() {
         return;
       }
 
+      if (cashDiscountError) {
+        toast({
+          variant: "destructive",
+          title: "Falta efectivo",
+          description: cashDiscountError,
+        });
+        return;
+      }
+
       setIsProcessingPayment(true);
       const payments: Array<{
         amount: number;
@@ -2682,6 +2815,7 @@ export function POSModule() {
         transferReference,
         pendingPaymentReason,
         saleNote,
+        isCashDiscountEnabled,
       };
 
       setIsPaymentConfirmOpen(false);
@@ -2714,6 +2848,9 @@ export function POSModule() {
               : undefined,
           note: normalizedSaleNote,
         }),
+        cashDiscountPercent: isCashDiscountEnabled
+          ? CASH_PAYMENT_DISCOUNT_PERCENT
+          : undefined,
       });
 
       const paidAmount = Number(createdSale.paidAmount ?? 0);
@@ -2766,24 +2903,27 @@ export function POSModule() {
         backendTransferExcess > 0
           ? backendTransferExcess
           : transferExcessPreview;
+      const backendDiscount = Number(createdSale.discountAmount ?? 0);
+      const totalLabel =
+        backendDiscount > 0
+          ? `Total $${formatMoney(backendTotal)} (descuento efectivo $${formatMoney(
+              backendDiscount
+            )})`
+          : `Total $${formatMoney(backendTotal)}`;
       toast({
         title: "Venta registrada",
         description:
           outstandingAmount > 0
-            ? `Total $${formatMoney(backendTotal)}. Cobrado $${formatMoney(
+            ? `${totalLabel}. Cobrado $${formatMoney(
                 paidAmount
               )}. Saldo pendiente $${formatMoney(outstandingAmount)}.`
             : effectiveCashChange > 0
-            ? `Total $${formatMoney(backendTotal)}. Vuelto $${formatMoney(
-                effectiveCashChange
-              )}.`
+            ? `${totalLabel}. Vuelto $${formatMoney(effectiveCashChange)}.`
             : effectiveTransferExcess > 0
-            ? `Total $${formatMoney(
-                backendTotal
-              )}. Excedente transferido $${formatMoney(
+            ? `${totalLabel}. Excedente transferido $${formatMoney(
                 effectiveTransferExcess
               )}.`
-            : `Total $${formatMoney(backendTotal)} registrado correctamente.`,
+            : `${totalLabel} registrado correctamente.`,
       });
       scanCacheRef.current.clear();
       setSearchRefreshTick((current) => current + 1);
@@ -2796,6 +2936,7 @@ export function POSModule() {
         setTransferReference(rollbackState.transferReference);
         setPendingPaymentReason(rollbackState.pendingPaymentReason);
         setSaleNote(rollbackState.saleNote);
+        setIsCashDiscountEnabled(rollbackState.isCashDiscountEnabled);
         setIsPaymentConfirmOpen(true);
       }
       toast({
@@ -2816,6 +2957,7 @@ export function POSModule() {
     setTransferReference("");
     setPendingPaymentReason("");
     setSaleNote("");
+    setIsCashDiscountEnabled(false);
     if (!options?.silent) {
       toast({
         title: "Carrito vaciado",
@@ -2888,6 +3030,8 @@ export function POSModule() {
             <PosPaymentCard
               cartLength={cart.length}
               itemCount={itemCount}
+              subtotal={subtotal}
+              cashDiscount={cashDiscountControl}
               total={total}
               totalInitialPayments={totalInitialPayments}
               pendingAfterInitialPayments={pendingAfterInitialPayments}
@@ -2918,6 +3062,8 @@ export function POSModule() {
           open={isPaymentConfirmOpen}
           onOpenChange={setIsPaymentConfirmOpen}
           isProcessingPayment={isProcessingPayment}
+          subtotal={subtotal}
+          cashDiscountAmount={cashDiscountAmount}
           total={total}
           totalInitialPayments={totalInitialPayments}
           itemCount={itemCount}
@@ -3450,6 +3596,8 @@ export function POSModule() {
           <PosPaymentCard
             cartLength={cart.length}
             itemCount={itemCount}
+            subtotal={subtotal}
+            cashDiscount={cashDiscountControl}
             total={total}
             totalInitialPayments={totalInitialPayments}
             pendingAfterInitialPayments={pendingAfterInitialPayments}
@@ -3480,6 +3628,8 @@ export function POSModule() {
         open={isPaymentConfirmOpen}
         onOpenChange={setIsPaymentConfirmOpen}
         isProcessingPayment={isProcessingPayment}
+        subtotal={subtotal}
+        cashDiscountAmount={cashDiscountAmount}
         total={total}
         totalInitialPayments={totalInitialPayments}
         itemCount={itemCount}

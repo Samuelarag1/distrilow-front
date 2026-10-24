@@ -13,6 +13,7 @@ export type PersistedPosCart<TItem> = {
   transferReference: string;
   pendingPaymentReason: string;
   saleNote: string;
+  cashDiscount: boolean;
 };
 
 const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
@@ -68,6 +69,7 @@ export function parsePersistedPosCart<TItem>(
           ? parsed.pendingPaymentReason
           : "",
       saleNote: typeof parsed.saleNote === "string" ? parsed.saleNote : "",
+      cashDiscount: parsed.cashDiscount === true,
     };
   } catch {
     return null;

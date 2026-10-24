@@ -106,6 +106,15 @@ export function SalesDetailModal({
               <p className="text-lg font-bold">
                 {formatMoney(sale.totalAmount)}
               </p>
+              {sale.discountAmount > 0 ? (
+                <p className="text-xs font-medium text-emerald-700">
+                  Desc. efectivo
+                  {sale.discountPercent != null
+                    ? ` ${sale.discountPercent}%`
+                    : ""}
+                  : -{formatMoney(sale.discountAmount)}
+                </p>
+              ) : null}
             </div>
             <div className="rounded-lg border bg-muted/50 p-3">
               <p className="text-xs text-muted-foreground">Pagado</p>
@@ -242,6 +251,11 @@ export function SalesDetailModal({
                             </td>
                             <td className="p-3 text-right font-semibold">
                               {formatMoney(subtotal)}
+                              {item.discountAmount > 0 ? (
+                                <p className="text-xs font-normal text-emerald-700">
+                                  -{formatMoney(item.discountAmount)} desc.
+                                </p>
+                              ) : null}
                             </td>
                             <td className="p-3 text-center">
                               {item.priceType ? (

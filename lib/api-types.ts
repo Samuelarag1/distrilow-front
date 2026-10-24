@@ -678,7 +678,11 @@ export interface CreateSaleRequest {
   items: SaleItemInput[];
   payments?: SalePaymentInput[];
   notes?: string;
+  /** Solo con todos los pagos en efectivo y cubriendo el total; ver lib/cash-discount.ts. */
+  cashDiscountPercent?: number;
 }
+
+export type SaleDiscountType = "CASH_PAYMENT";
 
 export interface SaleSummary {
   id: string;
@@ -687,7 +691,11 @@ export interface SaleSummary {
   userName?: string | null;
   clientId?: string | null;
   total?: number;
+  /** Neto: ya descontado discountAmount. */
   totalAmount?: number;
+  discountType?: SaleDiscountType | null;
+  discountPercent?: number | null;
+  discountAmount?: number;
   totalCost?: number;
   profit?: number;
   paidAmount?: number;
@@ -718,8 +726,10 @@ export interface SaleDetail extends SaleSummary {
     productId: string;
     productName?: string;
     quantity: number;
+    /** Precio de lista; subtotal ya trae restado discountAmount. */
     unitPrice: number;
     subtotal?: number;
+    discountAmount?: number;
     pricingMode?: PricingMode;
     requestedPriceType?: PriceType;
     priceType?: PriceType;
