@@ -132,13 +132,25 @@ export function BrandSpinner({
 }
 
 /**
- * Full-screen loading state. Login, route loading (app/loading.tsx) and the
- * session check all render exactly this, at the same place, so a sequence of
- * them reads as a single spinner.
+ * Full-screen loading state. Login, route loading (app/loading.tsx), the
+ * session check and sidebar navigation all render exactly this, at the same
+ * place, so a sequence of them reads as a single spinner. `className` is only
+ * for stacking and entrance (see NavPendingScreen), never for the look.
  */
-export function BrandSpinnerScreen({ label }: { label: string }) {
+export function BrandSpinnerScreen({
+  label,
+  className,
+}: {
+  label: string;
+  className?: string;
+}) {
   return (
-    <div className="app-loader-screen fixed inset-0 z-40 grid place-items-center bg-background">
+    <div
+      className={cn(
+        "app-loader-screen fixed inset-0 z-40 grid place-items-center bg-background",
+        className
+      )}
+    >
       <BrandSpinner size="lg" label={label} />
     </div>
   );
