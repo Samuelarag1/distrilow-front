@@ -11,6 +11,7 @@ import {
 import { emitAuthSync, subscribeAuthSync } from "@/lib/auth-live-sync";
 import { backendApi } from "@/lib/backend-api";
 import { readClientCookie } from "@/lib/client-cookies";
+import { readAvatars, saveAvatar } from "@/lib/user-avatar";
 import {
   applySession,
   clearSession,
@@ -83,35 +84,6 @@ interface UserContextType {
 }
 
 const UserContext = createContext<UserContextType | undefined>(undefined);
-const USER_AVATAR_STORE_KEY = "user-avatar-by-id";
-
-function readAvatarStore(): Record<string, string> {
-  if (typeof window === "undefined") return {};
-  const raw = window.localStorage.getItem(USER_AVATAR_STORE_KEY);
-  if (!raw) return {};
-
-  try {
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") return {};
-
-    return Object.entries(parsed as Record<string, unknown>).reduce(
-      (acc, [key, value]) => {
-        if (typeof value === "string" && value.trim()) {
-          acc[key] = value.trim();
-        }
-        return acc;
-      },
-      {} as Record<string, string>
-    );
-  } catch {
-    return {};
-  }
-}
-
-function writeAvatarStore(store: Record<string, string>) {
-  if (typeof window === "undefined") return;
-  window.localStorage.setItem(USER_AVATAR_STORE_KEY, JSON.stringify(store));
-}
 
 function restoreRetryDelay(attempt: number) {
   const base =
@@ -134,10 +106,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     getActiveBranchId,
     () => null
   );
-  // The avatar is a per-user display preference stored in this browser; it is
-  // not part of the session. Reading it during hydration is safe: there is no
-  // user to render until the session store fills in after mount.
-  const [avatarStore, setAvatarStore] = useState(readAvatarStore);
+  // Reading the avatars during hydration is safe: there is no user to render
+  // until the session store fills in after mount.
+  const [avatars, setAvatars] = useState(readAvatars);
   // Outcome of the page-load restore, for the screen shown while there is no
   // confirmed session (see SessionGate below).
   const [restoreStatus, setRestoreStatus] = useState<SessionGateStatus>("checking");
@@ -149,28 +120,18 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
   const currentUser = useMemo<User | null>(() => {
     if (!session.user) return null;
-    const avatar = avatarStore[session.user.id];
+    const avatar = avatars[session.user.id];
     return {
       ...session.user,
       name: session.user.email,
       ...(avatar ? { avatar } : {}),
     };
-  }, [session.user, avatarStore]);
+  }, [session.user, avatars]);
 
   const userId = session.user?.id;
   const setAvatar = useCallback(
     (avatar: string | null) => {
-      if (!userId) return;
-
-      const store = readAvatarStore();
-      const normalizedAvatar = avatar?.trim();
-      if (normalizedAvatar) {
-        store[userId] = normalizedAvatar;
-      } else {
-        delete store[userId];
-      }
-      writeAvatarStore(store);
-      setAvatarStore(store);
+      if (userId) setAvatars(saveAvatar(userId, avatar));
     },
     [userId]
   );
@@ -184,9 +145,9 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
     if (consumeIdentityChangedNotice()) {
       toast({
-        title: "Se inicio sesion con otro usuario",
+        title: "Se inició sesión con otro usuario",
         description:
-          "En este navegador entro otro usuario, asi que esta pestana se actualizo con su sesion.",
+          "En este navegador entró otro usuario, así que esta pestaña se actualizó con su sesión.",
       });
     }
 
@@ -198,7 +159,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     const endSession = () => {
       setRestoreStatus("ended");
       clearSession();
-      forceLogout();
+      forceLogout({ returnHere: true });
     };
 
     const restore = async () => {
@@ -234,7 +195,7 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
 
       setRestoreStatus("confirmed");
       if (wasUnavailable) {
-        toast({ title: "Conexion restablecida" });
+        toast({ title: "Conexión restablecida" });
       }
     };
 
@@ -332,8 +293,8 @@ export function UserProvider({ children }: { children: React.ReactNode }) {
     timeoutMs: IDLE_LOGOUT_TIMEOUT_MS,
     onWarn: () => {
       toast({
-        title: "Tu sesion esta por cerrarse",
-        description: "No detectamos actividad. Movete o hace click para seguir conectado.",
+        title: "Tu sesión está por cerrarse",
+        description: "No detectamos actividad. Mové el mouse o tocá la pantalla para seguir conectado.",
       });
     },
     onIdle: () => {

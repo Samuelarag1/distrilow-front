@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
 import { backendApi } from "@/lib/backend-api";
-import { isPosCashOnlyUser } from "@/lib/permissions";
+import { isPosCashOnlyUser, resolvePostLoginPath } from "@/lib/permissions";
 import { applySession } from "@/lib/session";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import { BrandMark } from "@/components/common/brand-mark";
@@ -33,18 +33,19 @@ export default function LoginPage() {
 
   // Single place that leaves /login: as soon as there is a session — from the
   // form below, or restored on page load from the httpOnly refresh cookie —
-  // go where this user belongs instead of asking for credentials again.
+  // go where this user belongs (or back to ?next=, the screen where the
+  // session ended) instead of asking for credentials again.
   // replace(), so "back" doesn't return to the login form.
   useEffect(() => {
     if (!token || !currentUser) return;
 
-    if (needsOnboarding || !branchId) {
-      router.replace("/onboarding/branch");
-    } else if (isPosCashOnlyUser(currentUser.role, branches.length)) {
-      router.replace("/pos");
-    } else {
-      router.replace("/");
-    }
+    const next = new URLSearchParams(window.location.search).get("next");
+    router.replace(
+      resolvePostLoginPath(next, {
+        posCashOnly: isPosCashOnlyUser(currentUser.role, branches.length),
+        needsOnboarding: needsOnboarding || !branchId,
+      })
+    );
   }, [token, currentUser, branchId, branches.length, needsOnboarding, router]);
 
   const handleLogin = async (event: React.FormEvent<HTMLFormElement>) => {
@@ -76,7 +77,7 @@ export default function LoginPage() {
       setStatus("entering");
 
       toast({
-        title: "Sesion iniciada",
+        title: "Sesión iniciada",
         description: `Entraste correctamente como ${data.user.email}.`,
       });
       // Navigation happens in the effect above once the session state lands.
@@ -87,10 +88,10 @@ export default function LoginPage() {
       setStatus("idle");
       toast({
         variant: "destructive",
-        title: "No pudimos iniciar sesion",
+        title: "No pudimos iniciar sesión",
         description: getUserFacingErrorMessage(
           error,
-          "Revisa tu email y tu contrasena, y vuelve a intentarlo."
+          "Revisá tu email y tu contraseña, y volvé a intentar."
         ),
       });
     }
@@ -112,10 +113,10 @@ export default function LoginPage() {
           <BrandMark className="h-16 w-16 ring-border/80" priority />
           <div className="space-y-1">
             <h1 className="text-2xl font-semibold tracking-tight">
-              Iniciar sesion
+              Iniciar sesión
             </h1>
             <p className="text-sm text-muted-foreground">
-              Accede con tus credenciales para continuar.
+              Ingresá con tus datos para continuar.
             </p>
           </div>
         </div>
@@ -138,7 +139,7 @@ export default function LoginPage() {
 
           <div className="space-y-2">
             <Label htmlFor="password" className="text-foreground/90">
-              Contrasena
+              Contraseña
             </Label>
             <Input
               id="password"
@@ -165,7 +166,7 @@ export default function LoginPage() {
 
         <div className="inline-flex w-full items-center justify-center gap-2 text-xs text-muted-foreground">
           <ShieldCheck className="h-3.5 w-3.5" />
-          <span>Conexion cifrada</span>
+          <span>Conexión cifrada</span>
         </div>
 
       </form>

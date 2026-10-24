@@ -16,6 +16,7 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
+import { canManageCash as canRoleManageCash } from "@/lib/permissions";
 import { backendApi } from "@/lib/backend-api";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
@@ -69,10 +70,7 @@ export function CashModule() {
   const { currentUser, branchId, branches } = useUser();
   const { toast } = useToast();
 
-  const canManageCash =
-    currentUser?.role === "admin" ||
-    currentUser?.role === "cashier" ||
-    currentUser?.role === "seller";
+  const canManageCash = canRoleManageCash(currentUser?.role);
 
   const [cashSession, setCashSession] = useState<CashSession | null>(null);
   const [lastClosedSession, setLastClosedSession] =
