@@ -168,10 +168,14 @@ function extractApiMessage(body: unknown, fallback: string) {
   if (!body) return fallback;
   if (typeof body === "string") return body || fallback;
   if (typeof body === "object" && body !== null) {
+    const record = body as Record<string, unknown>;
+    const details = record.details;
     const msg =
-      (body as any).message ??
-      (body as any).error ??
-      (body as any).details?.message;
+      record.message ??
+      record.error ??
+      (typeof details === "object" && details !== null
+        ? (details as Record<string, unknown>).message
+        : undefined);
     if (typeof msg === "string" && msg.trim()) return msg;
   }
   return fallback;

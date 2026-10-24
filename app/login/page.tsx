@@ -80,7 +80,7 @@ export default function LoginPage() {
         description: `Entraste correctamente como ${data.user.email}.`,
       });
       // Navigation happens in the effect above once the session state lands.
-    } catch (error: any) {
+    } catch (error) {
       // Solo se apaga el loader en error: en exito se mantiene visible hasta
       // que la navegacion desmonta la pagina, para que el formulario no
       // reaparezca un instante antes de redirigir.
