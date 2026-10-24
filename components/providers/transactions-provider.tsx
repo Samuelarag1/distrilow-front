@@ -11,7 +11,6 @@ import React, {
 } from "react";
 import useSWR from "swr";
 import { useBusiness } from "./business-provider";
-import { useAudit } from "./audit-provider";
 import { useUser } from "./user-provider";
 import { backendApi } from "@/lib/backend-api";
 import type {
@@ -211,7 +210,6 @@ export function TransactionsProvider({
   const [sales, setSales] = useState<Sale[]>([]);
   const [isLoading, setIsLoading] = useState(autoLoadSales);
   const refreshRequestIdRef = useRef(0);
-  const { logEvent } = useAudit();
   const { token, branchId } = useUser();
   const { businessType } = useBusiness();
   const salesListFilters = useMemo(
@@ -349,17 +347,8 @@ export function TransactionsProvider({
 
       const normalized = normalizeExpense(savedExpense, businessType);
       upsertExpense(normalized);
-
-      logEvent(
-        "create",
-        "expense",
-        `Registro un gasto de $${normalized.amount.toLocaleString()}: ${
-          normalized.description
-        }`,
-        normalized.id
-      );
     },
-    [branchId, businessType, logEvent, upsertExpense]
+    [branchId, businessType, upsertExpense]
   );
 
   const addSale = useCallback(
@@ -427,18 +416,9 @@ export function TransactionsProvider({
       const normalized = normalizeSale(savedSale, { businessType });
       upsertSale(normalized);
 
-      logEvent(
-        "create",
-        "sale",
-        `Registro una venta de $${normalized.amount.toLocaleString()} (${
-          normalized.items
-        } items)`,
-        normalized.id
-      );
-
       return normalized;
     },
-    [branchId, businessType, logEvent, upsertSale]
+    [branchId, businessType, upsertSale]
   );
 
   const registerSalePayment = useCallback(

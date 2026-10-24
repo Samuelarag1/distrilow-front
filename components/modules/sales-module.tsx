@@ -21,6 +21,10 @@ import { SalesTable } from "@/components/sales/sales-table";
 import { GrowthAnalysis } from "@/components/sales/growth-analysis";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
+import {
+  DATE_INPUT_DEBOUNCE_MS,
+  useDebouncedValue,
+} from "@/components/products/hooks/useDebouncedValue";
 import { backendApi } from "@/lib/backend-api";
 import { fetchReportingSalesSeries } from "@/lib/reports/reporting-sales-history";
 
@@ -117,15 +121,17 @@ export function SalesModule() {
   const defaultDateInputs = useMemo(() => getCurrentMonthToDateInputs(), []);
   const [fromInput, setFromInput] = useState(defaultDateInputs.from);
   const [toInput, setToInput] = useState(defaultDateInputs.to);
+  const queryFrom = useDebouncedValue(fromInput, DATE_INPUT_DEBOUNCE_MS);
+  const queryTo = useDebouncedValue(toInput, DATE_INPUT_DEBOUNCE_MS);
   const { toast } = useToast();
   const { branchId } = useUser();
   const monthlyConfig = useMemo(() => {
-    const current = buildDateRange(fromInput, toInput);
+    const current = buildDateRange(queryFrom, queryTo);
     return {
       current,
       previous: getPreviousEquivalentRange(current),
     };
-  }, [fromInput, toInput]);
+  }, [queryFrom, queryTo]);
   const { data: monthlyReporting, isValidating: isMonthlyLoading } = useSWR(
     branchId
       ? [
@@ -159,8 +165,9 @@ export function SalesModule() {
       revalidateOnFocus: false,
     }
   );
+  // Same key as DailySales: both show this summary and it's fetched once.
   const { data: salesSummary, isLoading: isSummaryLoading } = useSWR(
-    branchId ? ["sales-module-summary", branchId] : null,
+    branchId ? ["reporting-sales-summary", branchId] : null,
     () => backendApi.reporting.sales.summary(),
     {
       revalidateOnFocus: false,
@@ -170,12 +177,12 @@ export function SalesModule() {
 
   const { data: priceTypesSummary } = useSWR(
     branchId
-      ? ["sales-price-types-summary", branchId, fromInput, toInput]
+      ? ["sales-price-types-summary", branchId, queryFrom, queryTo]
       : null,
     () =>
       backendApi.reporting.sales.priceTypes.summary({
-        from: fromInput,
-        to: toInput,
+        from: queryFrom,
+        to: queryTo,
       }),
     {
       revalidateOnFocus: false,

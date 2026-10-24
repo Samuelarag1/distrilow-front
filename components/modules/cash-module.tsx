@@ -16,7 +16,6 @@ import {
 } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { useUser } from "@/components/providers/user-provider";
-import { useAudit } from "@/components/providers/audit-provider";
 import { backendApi } from "@/lib/backend-api";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
@@ -68,7 +67,6 @@ function toYmd(date: Date) {
 
 export function CashModule() {
   const { currentUser, branchId, branches } = useUser();
-  const { logEvent } = useAudit();
   const { toast } = useToast();
 
   const canManageCash =
@@ -378,21 +376,6 @@ export function CashModule() {
 
         await refreshCashState();
 
-        logEvent(
-          "create",
-          "cash_expense",
-          `Compra con caja por ${formatMoney(amount)} en ${activeBranchName}`,
-          createdExpense.id,
-          {
-            branchId,
-            cashSessionId: cashSession.id,
-            amount,
-            category: purchaseExpenseCategory,
-            context: purchaseExpenseContext,
-            description: reason,
-          }
-        );
-
         toast({
           title: "Compra con caja registrada",
           description: "Descontamos el importe de caja y lo registramos tambien en gastos.",
@@ -500,32 +483,11 @@ export function CashModule() {
     try {
       setIsSaving(true);
 
-      const closedSession = await backendApi.cash.closeSession(cashSession.id, {
+      await backendApi.cash.closeSession(cashSession.id, {
         branchId: branchId ?? undefined,
         countedCash: countedCashNumber,
         notes: closeNotes.trim() || undefined,
       });
-
-      const expectedAfterClose = Number(
-        closedSession.expectedCash ?? countedCashNumber
-      );
-      const difference = Number(
-        closedSession.difference ?? countedCashNumber - expectedAfterClose
-      );
-
-      logEvent(
-        "close_cashbox",
-        "cash_session",
-        `Cierre de caja en ${activeBranchName}`,
-        closedSession.id,
-        {
-          branchId: closedSession.branchId ?? branchId ?? null,
-          countedCash: countedCashNumber,
-          expectedCash: expectedAfterClose,
-          difference,
-          notes: closeNotes.trim() || null,
-        }
-      );
 
       setCloseNotes("");
 

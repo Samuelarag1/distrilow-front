@@ -8,7 +8,6 @@ import { BusinessProvider } from "./business-provider";
 import { TransactionsProvider } from "./transactions-provider";
 import { ProductProvider } from "./product-provider";
 import { ActiveBranchBoundary, UserProvider } from "./user-provider";
-import { AuditProvider } from "./audit-provider";
 import { OfflineProvider } from "./offline-provider";
 
 export function AppProviders({ children }: { children: React.ReactNode }) {
@@ -46,13 +45,11 @@ export function AppProviders({ children }: { children: React.ReactNode }) {
       <OfflineProvider>
         <UserProvider>
           <BusinessProvider>
-            <AuditProvider>
-              <ActiveBranchBoundary>
-                <TransactionsProvider autoLoadSales={false}>
-                  <ProductProvider>{children}</ProductProvider>
-                </TransactionsProvider>
-              </ActiveBranchBoundary>
-            </AuditProvider>
+            <ActiveBranchBoundary>
+              <TransactionsProvider autoLoadSales={false}>
+                <ProductProvider>{children}</ProductProvider>
+              </TransactionsProvider>
+            </ActiveBranchBoundary>
           </BusinessProvider>
         </UserProvider>
       </OfflineProvider>

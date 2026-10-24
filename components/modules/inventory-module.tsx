@@ -50,7 +50,6 @@ import type {
 import { resolveProductImageUrl } from "@/lib/media-utils";
 import { backendApi } from "@/lib/backend-api";
 import {
-  buildInventoryOverviewRowFromLegacy,
   normalizeInventoryOverviewPage,
   type InventoryOverviewRow,
   type NormalizedInventoryOverviewPage,
@@ -840,68 +839,26 @@ export function InventoryModule() {
       const controller = new AbortController();
       productsAbortControllerRef.current = controller;
 
+      // No fallback on failure: it used to download the product list and the
+      // branch's whole stock, the heaviest requests, exactly when the server
+      // was already answering errors (429/5xx).
       try {
-        try {
-          const overviewPayload = await backendApi.reporting.inventory.overview(
-            {
-              ...inventoryQuery,
-              page: currentPage,
-              limit: pageSize,
-            },
-            effectiveBranchId,
-            {
-              signal: controller.signal,
-            }
-          );
-
-          return normalizeInventoryOverviewPage(overviewPayload, {
-            offset: inventoryQuery.skip,
+        const overviewPayload = await backendApi.reporting.inventory.overview(
+          {
+            ...inventoryQuery,
+            page: currentPage,
             limit: pageSize,
-          });
-        } catch (overviewError) {
-          if (
-            overviewError instanceof DOMException &&
-            overviewError.name === "AbortError"
-          ) {
-            throw overviewError;
+          },
+          effectiveBranchId,
+          {
+            signal: controller.signal,
           }
+        );
 
-          const [productsPage, stockRows] = await Promise.all([
-            backendApi.productsWithStock(
-              {
-                ...inventoryQuery,
-                name: inventoryQuery.search,
-                q: inventoryQuery.search,
-              },
-              effectiveBranchId,
-              {
-                signal: controller.signal,
-              }
-            ),
-            backendApi.stocks.listByBranch(effectiveBranchId as string),
-          ]);
-          const stockByProductId = new Map<string, Partial<StockDetail>>();
-          stockRows.forEach((row) => {
-            const productId = String(row.productId ?? "").trim();
-            if (!productId || stockByProductId.has(productId)) return;
-            stockByProductId.set(productId, row);
-          });
-
-          return {
-            items: (productsPage.items ?? []).map((product) =>
-              buildInventoryOverviewRowFromLegacy({
-                product,
-                stockRow: stockByProductId.get(String(product.id ?? "")) ?? null,
-                branchId: effectiveBranchId,
-              })
-            ),
-            total: Number(productsPage.total ?? 0),
-            skip: Number(productsPage.skip ?? inventoryQuery.skip ?? 0),
-            take: Number(productsPage.take ?? pageSize),
-            nextSkip: productsPage.nextSkip ?? null,
-            hasMore: Boolean(productsPage.hasMore),
-          } satisfies NormalizedInventoryOverviewPage;
-        }
+        return normalizeInventoryOverviewPage(overviewPayload, {
+          offset: inventoryQuery.skip,
+          limit: pageSize,
+        });
       } finally {
         if (productsAbortControllerRef.current === controller) {
           productsAbortControllerRef.current = null;

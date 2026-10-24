@@ -1,5 +1,6 @@
-const STATIC_CACHE = "distrilow-static-v2";
-const RUNTIME_CACHE = "distrilow-runtime-v2";
+// Bumping the version makes `activate` delete every older cache.
+const STATIC_CACHE = "distrilow-static-v3";
+const RUNTIME_CACHE = "distrilow-runtime-v3";
 
 const PRECACHE_URLS = [
   "/",
@@ -55,30 +56,11 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
+  // JS and CSS are left to the browser's HTTP cache: Next names them by
+  // content hash and serves them as immutable. Kept here, every deploy added
+  // its files and none was ever removed.
   const destination = request.destination;
-  const isNetworkFirstAsset =
-    destination === "style" || destination === "script";
-  const isCacheFirstAsset = destination === "image" || destination === "font";
-
-  if (!isNetworkFirstAsset && !isCacheFirstAsset) return;
-
-  if (isNetworkFirstAsset) {
-    event.respondWith(
-      fetch(request)
-        .then((response) => {
-          if (response && response.status === 200 && response.type === "basic") {
-            const copy = response.clone();
-            caches.open(RUNTIME_CACHE).then((cache) => cache.put(request, copy));
-          }
-          return response;
-        })
-        .catch(async () => {
-          const cached = await caches.match(request);
-          return cached ?? Response.error();
-        })
-    );
-    return;
-  }
+  if (destination !== "image" && destination !== "font") return;
 
   event.respondWith(
     caches.match(request).then((cached) => {

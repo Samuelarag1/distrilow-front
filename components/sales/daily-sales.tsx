@@ -83,7 +83,7 @@ export function DailySales() {
     }
   );
   const { data: salesSummary, isLoading: isSummaryLoading } = useSWR(
-    branchId ? ["daily-sales-summary", branchId] : null,
+    branchId ? ["reporting-sales-summary", branchId] : null,
     () => backendApi.reporting.sales.summary(),
     {
       revalidateOnFocus: false,

@@ -63,6 +63,10 @@ import { BrandMark } from "@/components/common/brand-mark";
 import { BrandSpinner } from "@/components/common/brand-spinner";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useUser } from "@/components/providers/user-provider";
+import {
+  DATE_INPUT_DEBOUNCE_MS,
+  useDebouncedValue,
+} from "@/components/products/hooks/useDebouncedValue";
 import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
 import { getUserFacingErrorMessage } from "@/lib/user-feedback";
 import {
@@ -231,9 +235,11 @@ export function ExpensesModule() {
     category: "",
     description: "",
   });
+  const queryFrom = useDebouncedValue(fromInput, DATE_INPUT_DEBOUNCE_MS);
+  const queryTo = useDebouncedValue(toInput, DATE_INPUT_DEBOUNCE_MS);
   const selectedDateRange = useMemo(
-    () => buildDateRange(fromInput, toInput),
-    [fromInput, toInput]
+    () => buildDateRange(queryFrom, queryTo),
+    [queryFrom, queryTo]
   );
   const selectedDateQuery = useMemo(
     () => ({

@@ -10,7 +10,6 @@ import {
   CardDescription,
 } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { useAudit } from "@/components/providers/audit-provider";
 import { useTransactions } from "@/components/providers/transactions-provider";
 import { useBusiness } from "@/components/providers/business-provider";
 import { useProducts } from "@/components/providers/product-provider";
@@ -39,10 +38,38 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
+import useSWR from "swr";
 import { backendApi } from "@/lib/backend-api";
-import type { CashSession } from "@/lib/api-types";
-import type { AuditEvent } from "@/components/providers/audit-provider";
+import type { AuditLog, CashSession } from "@/lib/api-types";
 import { exportRowsToCsv, exportRowsToPdf } from "@/lib/report-export";
+
+interface AuditEvent {
+  id: string;
+  timestamp: string;
+  userId: string;
+  userName: string;
+  action: string;
+  entityType: string;
+  entityId?: string;
+  description: string;
+  metadata?: any;
+}
+
+const NO_AUDIT_EVENTS: AuditEvent[] = [];
+
+function normalizeAudit(log: AuditLog): AuditEvent {
+  return {
+    id: String(log.id),
+    timestamp: String(log.createdAt ?? new Date().toISOString()),
+    userId: String(log.userId ?? "unknown"),
+    userName: String(log.user?.email ?? "Usuario"),
+    action: String(log.action || "update").toLowerCase(),
+    entityType: String(log.entityType ?? "system"),
+    entityId: log.entityId ?? undefined,
+    description: `${String(log.action ?? "ACTION")} ${String(log.entityType ?? "ENTITY")}`,
+    metadata: log.metadata,
+  };
+}
 
 type MovementSummary = {
   movementType?: string;
@@ -132,7 +159,24 @@ function extractMovementSummary(event: AuditEvent): MovementSummary | null {
 }
 
 export function ReportsModule() {
-  const { events, isLoading, error } = useAudit();
+  const { currentUser, branchId } = useUser();
+  // Loaded by this screen, not by a global provider: nothing else shows it.
+  const {
+    data: auditEvents,
+    error: auditError,
+    isLoading,
+  } = useSWR(
+    currentUser?.role === "admin" ? "audit-latest" : null,
+    async () => {
+      const rows = await backendApi.audit.list({ skip: 0, take: 100 });
+      return rows.items.map(normalizeAudit);
+    },
+    { revalidateOnFocus: false }
+  );
+  const events = auditEvents ?? NO_AUDIT_EVENTS;
+  const error = auditError
+    ? auditError.message || "No se pudo cargar auditoria."
+    : null;
   const { sales } = useTransactions();
   const { businessType } = useBusiness();
   const { products } = useProducts({
@@ -140,7 +184,6 @@ export function ReportsModule() {
     skip: 0,
     resolveStockFromStocksEndpoint: false,
   });
-  const { branchId } = useUser();
 
   const [activeTab, setActiveTab] = useState("audit");
   const [eventTypeFilter, setEventTypeFilter] = useState("all");

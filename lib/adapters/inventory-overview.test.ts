@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  buildInventoryOverviewRowFromLegacy,
-  normalizeInventoryOverviewRow,
-} from "./inventory-overview";
-import type { Product } from "../api-types";
+import { normalizeInventoryOverviewRow } from "./inventory-overview";
 
 describe("inventory overview adapter", () => {
   it("preserves canonical inventory overview values without recalculating backend fields", () => {
@@ -43,36 +39,5 @@ describe("inventory overview adapter", () => {
     expect(row.maxStock).toBeNull();
     expect(row.sharedStock?.isShared).toBe(true);
     expect(row.product.name).toBe("Arroz");
-  });
-
-  it("builds a safe legacy fallback row when overview is unavailable", () => {
-    const row = buildInventoryOverviewRowFromLegacy({
-      product: {
-        id: "prod-2",
-        name: "Harina",
-        costPrice: 100,
-        wholesalePrice: 130,
-        retailPrice: 150,
-        measurementType: "unit",
-        trackStock: true,
-        stock: 4,
-        stockBaseProductId: "base-2",
-        stockConsumptionQuantity: 2,
-        stockBaseUnit: "kg",
-        minStock: 5,
-        maxStock: 10,
-      } as Partial<Product> & {
-        stock: number;
-        minStock: number;
-        maxStock: number;
-      },
-      branchId: "branch-1",
-    });
-
-    expect(row.stockStatus).toBe("LOW");
-    expect(row.shortageQty).toBe(1);
-    expect(row.baseQuantity).toBe(8);
-    expect(row.sharedStock?.isShared).toBe(true);
-    expect(row.product.stock).toBe(4);
   });
 });

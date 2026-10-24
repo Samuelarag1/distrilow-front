@@ -6,6 +6,10 @@ import { es } from "date-fns/locale";
 import { Download } from "lucide-react";
 import useSWR from "swr";
 
+import {
+  DATE_INPUT_DEBOUNCE_MS,
+  useDebouncedValue,
+} from "@/components/products/hooks/useDebouncedValue";
 import { useUser } from "@/components/providers/user-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -109,6 +113,8 @@ export function ExpensesProjectionReport() {
   const [to, setTo] = useState(() => format(new Date(), "yyyy-MM-dd"));
 
   const hasInvalidRange = from > to;
+  const queryFrom = useDebouncedValue(from, DATE_INPUT_DEBOUNCE_MS);
+  const queryTo = useDebouncedValue(to, DATE_INPUT_DEBOUNCE_MS);
 
   const {
     data: expenses = [],
@@ -116,10 +122,10 @@ export function ExpensesProjectionReport() {
     error,
     mutate,
   } = useSWR(
-    branchId && !hasInvalidRange
-      ? ["reporting-expenses-list", branchId, from, to]
+    branchId && queryFrom <= queryTo
+      ? ["reporting-expenses-list", branchId, queryFrom, queryTo]
       : null,
-    () => fetchExpensesForRange(branchId ?? "", from, to),
+    () => fetchExpensesForRange(branchId ?? "", queryFrom, queryTo),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
