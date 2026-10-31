@@ -149,8 +149,11 @@ export function extractSnapshotDateKey(value?: string) {
     return `${exactDate[1]}-${exactDate[2]}-${exactDate[3]}`;
   }
 
+  // Un instante con zona (el back manda toISOString, en UTC) se lee en hora
+  // argentina: el fin del 30/10 llega como 2026-10-31T02:59:59.999Z.
+  const hasExplicitZone = /T.*(Z|[+-]\d{2}:?\d{2})$/i.test(text);
   const leadingDate = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
-  if (leadingDate) {
+  if (leadingDate && !hasExplicitZone) {
     return `${leadingDate[1]}-${leadingDate[2]}-${leadingDate[3]}`;
   }
 
