@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import useSWR from "swr";
 import {
   addMonths,
   endOfMonth,
@@ -23,7 +24,6 @@ import {
   Wallet,
 } from "lucide-react";
 
-import { backendApi } from "@/lib/backend-api";
 import { useUser } from "@/components/providers/user-provider";
 import { subscribeCashSync } from "@/lib/cash-live-sync";
 import { subscribeExpensesSync } from "@/lib/expenses-live-sync";
@@ -42,11 +42,7 @@ import {
 } from "recharts";
 import { exportRowsToPdf } from "@/lib/report-export";
 import {
-  buildCashOverviewFromLegacyDailyBook,
-  buildCashOverviewFromLegacyMonthly,
   getCashOutflowLabel,
-  normalizeCashOverviewResponse,
-  type CashOverviewResult,
   type CashOverviewRow,
 } from "@/lib/adapters/cash-overview";
 
@@ -55,6 +51,11 @@ import type {
   CashBookDailyResponse,
   CashSession,
 } from "@/lib/api-types";
+import {
+  fetchDailyCash,
+  fetchMonthlyCashOverview,
+  type MonthlyCashRange,
+} from "@/lib/reports/cash-calendar-data";
 
 function formatMoney(value: number, maximumFractionDigits = 2) {
   return Number(value ?? 0).toLocaleString("es-AR", {
@@ -126,7 +127,6 @@ function emptyDailyResponse(date: string): CashBookDailyResponse {
 }
 
 const DAILY_MOVEMENTS_LIMIT = 5;
-const DAILY_ENTRIES_FETCH_LIMIT = 500;
 function getEntryMethodLabel(method?: string | null) {
   if (method === "CASH") return "Efectivo";
   if (method === "TRANSFER") return "Transferencia";
@@ -144,192 +144,89 @@ function getEntryLabel(entry: CashBookEntry) {
   return entry.notes?.trim() || "Movimiento de caja";
 }
 
+const NO_SESSION_ROWS: CashOverviewRow[] = [];
+
+function toErrorMessage(error: unknown, fallback: string): string | null {
+  if (!error) return null;
+  return error instanceof Error ? error.message : fallback;
+}
+
 export function CashCalendarReport() {
   const { branchId } = useUser();
   const [visibleMonth, setVisibleMonth] = useState(() =>
     startOfMonth(new Date())
   );
   const [selectedDate, setSelectedDate] = useState(() => new Date());
-  const [monthlyOverview, setMonthlyOverview] =
-    useState<CashOverviewResult | null>(null);
-  const [dayOverview, setDayOverview] = useState<CashOverviewRow | null>(null);
-  const [sessionOverviewRows, setSessionOverviewRows] = useState<CashOverviewRow[]>([]);
-  const [dailyPayload, setDailyPayload] =
-    useState<CashBookDailyResponse | null>(null);
-  const [isMonthlyLoading, setIsMonthlyLoading] = useState(false);
-  const [isDailyLoading, setIsDailyLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const selectedDateYmd = useMemo(
     () => format(selectedDate, "yyyy-MM-dd"),
     [selectedDate]
   );
 
-  const loadMonthly = useCallback(async () => {
-    if (!branchId) {
-      setMonthlyOverview(null);
-      setError("No hay sucursal activa para consultar cajas.");
-      return;
-    }
-
+  const monthlyRange = useMemo<MonthlyCashRange>(() => {
     const fromMonth = format(subMonths(visibleMonth, 5), "yyyy-MM");
-    const toMonth = format(visibleMonth, "yyyy-MM");
-    const fromDate = `${fromMonth}-01`;
-    const toDate = format(endOfMonth(visibleMonth), "yyyy-MM-dd");
+    return {
+      fromMonth,
+      toMonth: format(visibleMonth, "yyyy-MM"),
+      fromDate: `${fromMonth}-01`,
+      toDate: format(endOfMonth(visibleMonth), "yyyy-MM-dd"),
+    };
+  }, [visibleMonth]);
 
-    try {
-      setIsMonthlyLoading(true);
-      setError(null);
+  // SWR: se pide al abrir la pestaña, dos pedidos iguales se juntan en uno, y al
+  // volver a la pestaña se muestra lo que ya estaba mientras se actualiza.
+  const {
+    data: monthlyData,
+    error: monthlyError,
+    isLoading: isMonthlyLoading,
+    mutate: reloadMonthly,
+  } = useSWR(
+    branchId
+      ? ["cash-calendar-monthly", branchId, monthlyRange.fromDate, monthlyRange.toDate]
+      : null,
+    () => fetchMonthlyCashOverview(branchId as string, monthlyRange),
+    { revalidateOnFocus: false }
+  );
+  const {
+    data: dailyData,
+    error: dailyError,
+    isLoading: isDailyLoading,
+    mutate: reloadDaily,
+  } = useSWR(
+    branchId ? ["cash-calendar-daily", branchId, selectedDateYmd] : null,
+    () => fetchDailyCash(branchId as string, selectedDateYmd),
+    { revalidateOnFocus: false }
+  );
 
-      try {
-        const payload = await backendApi.reporting.cash.overview(
-          {
-            branchId,
-            from: fromDate,
-            to: toDate,
-            groupBy: "month",
-          },
-          branchId,
-          undefined
-        );
-
-        setMonthlyOverview(
-          normalizeCashOverviewResponse(payload, {
-            from: fromDate,
-            to: toDate,
-            groupBy: "month",
-          })
-        );
-      } catch {
-        const payload = await backendApi.reporting.cash.monthly(
-          {
-            branchId,
-            fromMonth,
-            toMonth,
-          },
-          branchId,
-          undefined
-        );
-
-        setMonthlyOverview(
-          buildCashOverviewFromLegacyMonthly(payload, {
-            from: fromDate,
-            to: toDate,
-          })
-        );
-      }
-    } catch (fetchError) {
-      const message =
-        fetchError instanceof Error
-          ? fetchError.message
-          : "No se pudo cargar el reporte mensual de cajas.";
-      setError(message);
-      setMonthlyOverview(null);
-    } finally {
-      setIsMonthlyLoading(false);
-    }
-  }, [branchId, visibleMonth]);
-
-  const loadDaily = useCallback(async () => {
-    if (!branchId) {
-      setDayOverview(null);
-      setSessionOverviewRows([]);
-      setDailyPayload(emptyDailyResponse(selectedDateYmd));
-      setError("No hay sucursal activa para consultar caja diaria.");
-      return;
-    }
-
-    try {
-      setIsDailyLoading(true);
-      setError(null);
-
-      const payload = await backendApi.cash.dailyBook(
-        {
-          date: selectedDateYmd,
-          page: 1,
-          limit: DAILY_ENTRIES_FETCH_LIMIT,
-        },
-        branchId
-      );
-
-      setDailyPayload(payload);
-
-      try {
-        const [dayPayload, sessionPayload] = await Promise.all([
-          backendApi.reporting.cash.overview(
-            {
-              branchId,
-              from: selectedDateYmd,
-              to: selectedDateYmd,
-              groupBy: "day",
-            },
-            branchId
-          ),
-          backendApi.reporting.cash.overview(
-            {
-              branchId,
-              from: selectedDateYmd,
-              to: selectedDateYmd,
-              groupBy: "session",
-            },
-            branchId
-          ),
-        ]);
-
-        setDayOverview(
-          normalizeCashOverviewResponse(dayPayload, {
-            from: selectedDateYmd,
-            to: selectedDateYmd,
-            groupBy: "day",
-          }).items[0] ?? null
-        );
-        setSessionOverviewRows(
-          normalizeCashOverviewResponse(sessionPayload, {
-            from: selectedDateYmd,
-            to: selectedDateYmd,
-            groupBy: "session",
-          }).items
-        );
-      } catch {
-        setDayOverview(
-          buildCashOverviewFromLegacyDailyBook(payload, "day").items[0] ?? null
-        );
-        setSessionOverviewRows(
-          buildCashOverviewFromLegacyDailyBook(payload, "session").items
-        );
-      }
-    } catch (fetchError) {
-      const message =
-        fetchError instanceof Error
-          ? fetchError.message
-          : "No se pudo cargar el libro diario de caja.";
-      setError(message);
-      setDayOverview(null);
-      setSessionOverviewRows([]);
-      setDailyPayload(emptyDailyResponse(selectedDateYmd));
-    } finally {
-      setIsDailyLoading(false);
-    }
-  }, [branchId, selectedDateYmd]);
-
-  useEffect(() => {
-    void loadMonthly();
-  }, [loadMonthly]);
-
-  useEffect(() => {
-    void loadDaily();
-  }, [loadDaily]);
+  // Lo mismo que se mostraba antes en cada caso: sin sucursal o con error, el
+  // libro vacío; mientras carga por primera vez, nada.
+  const monthlyOverview = monthlyError ? null : monthlyData ?? null;
+  const dailyPayload = useMemo<CashBookDailyResponse | null>(
+    () =>
+      !branchId || dailyError
+        ? emptyDailyResponse(selectedDateYmd)
+        : dailyData?.payload ?? null,
+    [branchId, dailyError, dailyData, selectedDateYmd]
+  );
+  const dayOverview = dailyError ? null : dailyData?.dayOverview ?? null;
+  const sessionOverviewRows = dailyError
+    ? NO_SESSION_ROWS
+    : dailyData?.sessionRows ?? NO_SESSION_ROWS;
+  const error = !branchId
+    ? "No hay sucursal activa para consultar caja diaria."
+    : toErrorMessage(monthlyError, "No se pudo cargar el reporte mensual de cajas.") ??
+      toErrorMessage(dailyError, "No se pudo cargar el libro diario de caja.");
 
   useEffect(() => {
     const unsubCash = subscribeCashSync((payload) => {
       if (!payload.branchId || payload.branchId === branchId) {
-        void loadMonthly();
-        void loadDaily();
+        void reloadMonthly();
+        void reloadDaily();
       }
     });
     const unsubEx = subscribeExpensesSync((payload) => {
       if (!payload.branchId || payload.branchId === branchId) {
-        void loadDaily();
+        void reloadDaily();
       }
     });
 
@@ -337,7 +234,7 @@ export function CashCalendarReport() {
       unsubCash();
       unsubEx();
     };
-  }, [branchId, loadDaily, loadMonthly]);
+  }, [branchId, reloadDaily, reloadMonthly]);
 
   useEffect(() => {
     if (isSameMonth(selectedDate, visibleMonth)) return;
@@ -857,7 +754,7 @@ export function CashCalendarReport() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => void loadDaily()}
+              onClick={() => void reloadDaily()}
             >
               <RefreshCcw className="mr-2 h-4 w-4" />
               Recargar dia

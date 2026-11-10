@@ -132,8 +132,14 @@ export function SalesModule() {
       previous: getPreviousEquivalentRange(current),
     };
   }, [queryFrom, queryTo]);
+  // Cada dato se pide solo cuando la pestaña que lo muestra está abierta: los
+  // gráficos del mes en Diario y Mensual, y el resumen de hoy en Diario. Al volver
+  // a una pestaña, SWR lo tiene en caché.
+  const showsMonthlyReporting =
+    selectedPeriod === "daily" || selectedPeriod === "monthly";
+  const showsTodaySummary = selectedPeriod === "daily";
   const { data: monthlyReporting, isValidating: isMonthlyLoading } = useSWR(
-    branchId
+    branchId && showsMonthlyReporting
       ? [
           "sales-module-monthly-reporting",
           branchId,
@@ -167,23 +173,8 @@ export function SalesModule() {
   );
   // Same key as DailySales: both show this summary and it's fetched once.
   const { data: salesSummary, isLoading: isSummaryLoading } = useSWR(
-    branchId ? ["reporting-sales-summary", branchId] : null,
+    branchId && showsTodaySummary ? ["reporting-sales-summary", branchId] : null,
     () => backendApi.reporting.sales.summary(),
-    {
-      revalidateOnFocus: false,
-      keepPreviousData: true,
-    }
-  );
-
-  const { data: priceTypesSummary } = useSWR(
-    branchId
-      ? ["sales-price-types-summary", branchId, queryFrom, queryTo]
-      : null,
-    () =>
-      backendApi.reporting.sales.priceTypes.summary({
-        from: queryFrom,
-        to: queryTo,
-      }),
     {
       revalidateOnFocus: false,
       keepPreviousData: true,
@@ -237,42 +228,6 @@ export function SalesModule() {
       },
     };
   }, [monthlyReporting, salesSummary]);
-
-  const priceBreakdown = useMemo(() => {
-    const items = priceTypesSummary?.items ?? [];
-    const find = (key: string) => items.find((i) => (i.key ?? i.priceType) === key);
-    const retail = find("RETAIL");
-    const wholesale = find("WHOLESALE");
-
-    function bucketMarginPct(item: typeof retail) {
-      if (!item) return null;
-      if (item.marginPercent != null && Number.isFinite(Number(item.marginPercent))) {
-        return Number(item.marginPercent);
-      }
-      const rev = Number(item.revenueTotal ?? 0);
-      const profit = Number(item.profitTotal ?? item.profit ?? 0);
-      return rev > 0 ? (profit / rev) * 100 : 0;
-    }
-
-    return {
-      retail: {
-        marginPct: bucketMarginPct(retail),
-        revenue: Number(retail?.revenueTotal ?? 0),
-        profit: Number(retail?.profitTotal ?? retail?.profit ?? 0),
-        units: Number(retail?.unitsTotal ?? 0),
-      },
-      wholesale: {
-        marginPct: bucketMarginPct(wholesale),
-        revenue: Number(wholesale?.revenueTotal ?? 0),
-        profit: Number(wholesale?.profitTotal ?? wholesale?.profit ?? 0),
-        units: Number(wholesale?.unitsTotal ?? 0),
-      },
-      totalMarginPct:
-        priceTypesSummary?.totals?.marginPercent != null
-          ? Number(priceTypesSummary.totals.marginPercent)
-          : null,
-    };
-  }, [priceTypesSummary]);
 
   const handleExport = (format: string) => {
     toast({
@@ -556,6 +511,9 @@ export function SalesModule() {
             </Card>
           </div>
 
+          {/* Tarjeta oculta. Si vuelve a mostrarse, hay que volver a pedir
+              backendApi.reporting.sales.priceTypes.summary (se sacó el 2026-11-09
+              porque se pedía sin mostrarse). */}
           {/* <Card>
             <CardContent className="p-6">
               <p className="text-sm font-semibold mb-4">Margen real por canal de precio</p>

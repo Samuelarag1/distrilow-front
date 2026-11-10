@@ -41,8 +41,10 @@ export interface SaleLineItemViewModel {
   productId: string;
   productName: string;
   quantity: number;
+  /** Precio de lista; subtotal ya trae restado discountAmount. */
   unitPrice: number;
   subtotal: number;
+  discountAmount: number;
   linkedProductId?: string;
   pricingMode?: PricingMode;
   requestedPriceType?: PriceType;
@@ -57,7 +59,10 @@ export interface SaleLineItemViewModel {
 export interface SaleViewModel {
   id: string;
   amount: number;
+  /** Neto: ya descontado discountAmount. */
   totalAmount: number;
+  discountAmount: number;
+  discountPercent: number | null;
   totalCost: number;
   profit: number;
   paidAmount: number;
@@ -151,6 +156,7 @@ function normalizeSaleLineItem(
     quantity,
     unitPrice,
     subtotal: toFiniteNumber(item.subtotal, quantity * unitPrice),
+    discountAmount: toFiniteNumber(item.discountAmount, 0),
     linkedProductId: item.linkedProductId,
     pricingMode: item.pricingMode,
     requestedPriceType: item.requestedPriceType,
@@ -359,6 +365,8 @@ export function normalizeSale(
     id: String(row.id ?? ""),
     amount: totalAmount,
     totalAmount,
+    discountAmount: toFiniteNumber(row.discountAmount, 0),
+    discountPercent: toOptionalFiniteNumber(row.discountPercent) ?? null,
     totalCost: toFiniteNumber(row.totalCost, 0),
     profit: toFiniteNumber(row.profit, 0),
     paidAmount,

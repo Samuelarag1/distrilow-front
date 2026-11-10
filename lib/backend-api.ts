@@ -4,6 +4,8 @@ import { emitExpensesSync } from "@/lib/expenses-live-sync";
 import { emitProductsSync } from "@/lib/products-live-sync";
 import { emitSalesSync } from "@/lib/sales-live-sync";
 import type {
+  AnalyticsSalesBatchQuery,
+  AnalyticsSalesBatchResponse,
   AnalyticsSalesQuery,
   AnalyticsSalesResponse,
   ReportingSalesSummaryResponse,
@@ -2498,6 +2500,13 @@ export const backendApi = {
       history: (query: AnalyticsSalesQuery) =>
         apiClientFetch.get<AnalyticsSalesResponse>(
           `/reporting/sales/history${buildQuery(query)}`
+        ),
+      historyBatch: (query: AnalyticsSalesBatchQuery) =>
+        apiClientFetch.get<AnalyticsSalesBatchResponse>(
+          `/reporting/sales/history${buildQuery({
+            ...query,
+            metrics: query.metrics.join(","),
+          })}`
         ),
       overview: async (
         query: ReportsSalesOverviewQuery,

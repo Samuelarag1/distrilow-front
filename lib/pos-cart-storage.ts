@@ -13,6 +13,7 @@ export type PersistedPosCart<TItem> = {
   transferReference: string;
   pendingPaymentReason: string;
   saleNote: string;
+  cashDiscount: boolean;
 };
 
 const POS_CART_STORAGE_PREFIX = "bms:pos-cart:v1";
@@ -68,6 +69,8 @@ export function parsePersistedPosCart<TItem>(
           ? parsed.pendingPaymentReason
           : "",
       saleNote: typeof parsed.saleNote === "string" ? parsed.saleNote : "",
+      // Arranca prendido (opción A): solo queda apagado si el cajero lo apagó.
+      cashDiscount: parsed.cashDiscount !== false,
     };
   } catch {
     return null;
