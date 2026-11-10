@@ -140,10 +140,10 @@ export async function fetchReportingSalesSeries(
   metrics: AnalyticsMetric[]
 ) {
   const uniqueMetrics = Array.from(new Set(metrics));
-  const responses = await Promise.all(
-    uniqueMetrics.map((metric) =>
-      fetchHistoryMetricCached(range, groupBy, metric)
-    )
+  const responses = await fetchHistoryMetricsCached(
+    range,
+    groupBy,
+    uniqueMetrics
   );
 
   return uniqueMetrics.reduce<Record<AnalyticsMetric, ReportingSalesMetricSeries>>(
@@ -204,49 +204,71 @@ export function formatReportingPeriodLabel(
   return period;
 }
 
-async function fetchHistoryMetricCached(
+/**
+ * Una respuesta por métrica, en el orden pedido. La caché sigue siendo por
+ * métrica (otros gráficos piden una sola), pero las que faltan se piden juntas:
+ * un pedido y una lectura de los renglones en el backend, en vez de uno por
+ * métrica. Si otra pantalla ya está pidiendo una de ellas, se reusa ese pedido.
+ */
+async function fetchHistoryMetricsCached(
   range: DateRange,
   groupBy: AnalyticsGroupBy,
-  metric: AnalyticsMetric
-) {
-  const cacheKey = JSON.stringify({
-    from: toYmd(range.from),
-    to: toYmd(range.to),
-    groupBy,
-    metric,
-  });
+  metrics: AnalyticsMetric[]
+): Promise<AnalyticsSalesResponse[]> {
+  const from = toYmd(range.from);
+  const to = toYmd(range.to);
+  const cacheKeyOf = (metric: AnalyticsMetric) =>
+    JSON.stringify({ from, to, groupBy, metric });
   const now = Date.now();
-  const cached = historyResponseCache.get(cacheKey);
+  const pending = new Map<
+    AnalyticsMetric,
+    AnalyticsSalesResponse | Promise<AnalyticsSalesResponse>
+  >();
+  const missing: AnalyticsMetric[] = [];
 
-  if (cached?.data && cached.expiresAt > now) {
-    return cached.data;
+  for (const metric of metrics) {
+    const cached = historyResponseCache.get(cacheKeyOf(metric));
+    if (cached?.data && cached.expiresAt > now) {
+      pending.set(metric, cached.data);
+    } else if (cached?.promise) {
+      pending.set(metric, cached.promise);
+    } else {
+      missing.push(metric);
+    }
   }
 
-  if (cached?.promise) {
-    return cached.promise;
-  }
-
-  const promise = backendApi.reporting.sales.history({
-    from: toYmd(range.from),
-    to: toYmd(range.to),
-    groupBy,
-    metric,
-  });
-
-  historyResponseCache.set(cacheKey, {
-    expiresAt: now + HISTORY_CACHE_TTL_MS,
-    promise,
-  });
-
-  try {
-    const data = await promise;
-    historyResponseCache.set(cacheKey, {
-      expiresAt: Date.now() + HISTORY_CACHE_TTL_MS,
-      data,
+  if (missing.length > 0) {
+    const batch = backendApi.reporting.sales.historyBatch({
+      from,
+      to,
+      groupBy,
+      metrics: missing,
     });
-    return data;
-  } catch (error) {
-    historyResponseCache.delete(cacheKey);
-    throw error;
+
+    for (const metric of missing) {
+      const cacheKey = cacheKeyOf(metric);
+      const promise = batch.then((response) => {
+        const series = response.series.find((item) => item.metric === metric);
+        if (!series) {
+          throw new Error(`La serie de ventas no trajo la métrica ${metric}.`);
+        }
+        return series;
+      });
+      historyResponseCache.set(cacheKey, {
+        expiresAt: now + HISTORY_CACHE_TTL_MS,
+        promise,
+      });
+      promise.then(
+        (data) =>
+          historyResponseCache.set(cacheKey, {
+            expiresAt: Date.now() + HISTORY_CACHE_TTL_MS,
+            data,
+          }),
+        () => historyResponseCache.delete(cacheKey)
+      );
+      pending.set(metric, promise);
+    }
   }
+
+  return Promise.all(metrics.map((metric) => pending.get(metric)!));
 }

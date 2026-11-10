@@ -1023,6 +1023,18 @@ export interface AnalyticsSalesQuery {
   metric: AnalyticsMetric;
 }
 
+/** Varias métricas en un pedido: una serie por métrica, igual a pedirla sola. */
+export interface AnalyticsSalesBatchQuery {
+  from: string;
+  to: string;
+  groupBy: AnalyticsGroupBy;
+  metrics: AnalyticsMetric[];
+}
+
+export interface AnalyticsSalesBatchResponse {
+  series: AnalyticsSalesResponse[];
+}
+
 export interface ReportingSalesSummaryBucket {
   revenue: number;
   orders: number;
