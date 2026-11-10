@@ -69,7 +69,8 @@ export function parsePersistedPosCart<TItem>(
           ? parsed.pendingPaymentReason
           : "",
       saleNote: typeof parsed.saleNote === "string" ? parsed.saleNote : "",
-      cashDiscount: parsed.cashDiscount === true,
+      // Arranca prendido (opción A): solo queda apagado si el cajero lo apagó.
+      cashDiscount: parsed.cashDiscount !== false,
     };
   } catch {
     return null;

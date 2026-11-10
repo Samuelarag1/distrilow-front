@@ -1,5 +1,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { buildPosCartStorageKey, countPendingPosCartItems } from "./pos-cart-storage";
+import {
+  buildPosCartStorageKey,
+  countPendingPosCartItems,
+  parsePersistedPosCart,
+} from "./pos-cart-storage";
 
 // The branch selector warns before switching branch only when this count is
 // above 0 (components/branchSelector/branchSelector.tsx).
@@ -59,5 +63,18 @@ describe("countPendingPosCartItems — venta en curso antes de cambiar de sucurs
     storage.set(buildPosCartStorageKey("ana", "branch-A")!, "{no es json");
     expect(countPendingPosCartItems("ana", "branch-A")).toBe(0);
     expect(countPendingPosCartItems(null, "branch-A")).toBe(0);
+  });
+});
+
+describe("parsePersistedPosCart — descuento por efectivo (opción A)", () => {
+  const draft = (extra: object) =>
+    JSON.stringify({ version: 1, updatedAt: Date.now(), userId: "u1", branchId: "b1", cart: [], ...extra });
+
+  it("sin el dato, el descuento vuelve prendido, como arranca el POS", () => {
+    expect(parsePersistedPosCart(draft({}))?.cashDiscount).toBe(true);
+  });
+
+  it("si el cajero lo había apagado, sigue apagado", () => {
+    expect(parsePersistedPosCart(draft({ cashDiscount: false }))?.cashDiscount).toBe(false);
   });
 });

@@ -75,8 +75,10 @@ import {
   type PersistedPosCart,
 } from "@/lib/pos-cart-storage";
 import {
+  CASH_DISCOUNT_BLOCK_NOTICE,
   CASH_PAYMENT_DISCOUNT_PERCENT,
   getCashDiscountAmount,
+  resolveCashDiscount,
 } from "@/lib/cash-discount";
 
 interface CartItem extends Product {
@@ -262,7 +264,12 @@ type PosCatalogCardProps = PosCartListProps & {
 };
 
 type CashDiscountControl = {
+  /** Lo que eligió el cajero con el switch (arranca prendido). */
   enabled: boolean;
+  /** Si de verdad se descuenta: prendido y todo en efectivo (resolveCashDiscount). */
+  applied: boolean;
+  /** Por qué no se aplica estando prendido; null si se aplica o está apagado. */
+  notice: string | null;
   amount: number;
   onEnabledChange: (enabled: boolean) => void;
 };
@@ -1275,7 +1282,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
 }: PosPaymentCardProps) {
   const showPendingReasonInput =
     cartLength > 0 &&
-    !cashDiscount.enabled &&
+    !cashDiscount.applied &&
     (pendingAfterInitialPayments > 0 || pendingPaymentReason.trim().length > 0);
 
   return (
@@ -1292,7 +1299,7 @@ const PosPaymentCard = memo(function PosPaymentCard({
             <span>Subtotal:</span>
             <span>${formatMoney(subtotal)}</span>
           </div>
-          {cashDiscount.enabled && (
+          {cashDiscount.applied && (
             <div className="flex justify-between text-sm font-semibold text-emerald-700">
               <span>Descuento efectivo ({CASH_PAYMENT_DISCOUNT_PERCENT}%):</span>
               <span>-${formatMoney(cashDiscount.amount)}</span>
@@ -1365,15 +1372,19 @@ const PosPaymentCard = memo(function PosPaymentCard({
                     onTransferPaymentAmountChange(event.target.value)
                   }
                   onBlur={onTransferPaymentAmountBlur}
-                  disabled={cashDiscount.enabled}
                   className="h-10"
                 />
               </div>
             </div>
-            {cashDiscount.enabled ? (
+            {cashDiscount.applied ? (
               <p className="text-[11px] text-muted-foreground">
-                Con el descuento se cobra el total en efectivo, sin
-                transferencia ni saldo pendiente.
+                El descuento vale si toda la venta se cobra en efectivo. Con una
+                transferencia o saldo pendiente, se cobra a precio de lista.
+              </p>
+            ) : null}
+            {cashDiscount.notice ? (
+              <p className="text-[11px] font-semibold text-amber-700">
+                {cashDiscount.notice}
               </p>
             ) : null}
             {showPendingReasonInput ? (
@@ -1863,7 +1874,11 @@ export function POSModule() {
   const [transferReference, setTransferReference] = useState("");
   const [pendingPaymentReason, setPendingPaymentReason] = useState("");
   const [saleNote, setSaleNote] = useState("");
-  const [isCashDiscountEnabled, setIsCashDiscountEnabled] = useState(false);
+  // Arranca prendido (opción A, 2026-11-09); se aplica solo con todo en efectivo.
+  const [isCashDiscountEnabled, setIsCashDiscountEnabled] = useState(true);
+  // "Cobrar" con saldo pendiente quita el descuento; cualquier cambio en el carrito
+  // o en los pagos lo vuelve a evaluar.
+  const [isCashDiscountWaived, setIsCashDiscountWaived] = useState(false);
   const [isPaymentConfirmOpen, setIsPaymentConfirmOpen] = useState(false);
   const [isProcessingPayment, setIsProcessingPayment] = useState(false);
   const [isSaleCommitted, setIsSaleCommitted] = useState(false);
@@ -1887,7 +1902,7 @@ export function POSModule() {
   const handleTransferPaymentAmountBlur = useCallback(() => {
     setTransferPaymentAmount((prev) => normalizeWholeAmountInput(prev));
   }, []);
-  // El descuento exige cobrar todo en efectivo: al activarlo se borra la transferencia.
+  // El descuento exige cobrar todo en efectivo: al prenderlo a mano se borra la transferencia.
   const handleCashDiscountChange = useCallback((enabled: boolean) => {
     setIsCashDiscountEnabled(enabled);
     if (enabled) {
@@ -1895,6 +1910,9 @@ export function POSModule() {
       setTransferReference("");
     }
   }, []);
+  useEffect(() => {
+    setIsCashDiscountWaived(false);
+  }, [cart, cashPaymentAmount, transferPaymentAmount, isCashDiscountEnabled]);
 
   useEffect(() => {
     cartPersistenceReadyRef.current = false;
@@ -2524,6 +2542,12 @@ export function POSModule() {
     "Sucursal actual";
   const previewCashierName =
     currentUser?.name ?? currentUser?.email ?? "Usuario actual";
+  const cashDiscountState = resolveCashDiscount({
+    enabled: isCashDiscountEnabled,
+    transferAmount: parseWholeAmount(transferPaymentAmount),
+    waivedForBalance: isCashDiscountWaived,
+  });
+  const isCashDiscountApplied = cashDiscountState.applied;
   const {
     subtotal,
     cashDiscountAmount,
@@ -2541,15 +2565,17 @@ export function POSModule() {
       0
     );
     // El back redondea cada renglón al centavo antes de sumar; se descuenta sobre esa misma base.
-    const nextCashDiscountAmount = isCashDiscountEnabled
-      ? getCashDiscountAmount(
-          cart.reduce(
-            (sum, item) => sum + roundTo(getCartLineTotal(item), 2),
-            0
-          )
-        )
+    const nextDiscountBase = cart.reduce(
+      (sum, item) => sum + Number(getCartLineTotal(item).toFixed(2)),
+      0
+    );
+    const nextCashDiscountAmount = isCashDiscountApplied
+      ? getCashDiscountAmount(nextDiscountBase)
       : 0;
-    const nextTotal = nextSubtotal - nextCashDiscountAmount;
+    // Con descuento, el total es el mismo que guarda el back: un peso entero que se puede cobrar.
+    const nextTotal = isCashDiscountApplied
+      ? roundTo(nextDiscountBase - nextCashDiscountAmount, 2)
+      : nextSubtotal;
     const cashPaymentPreview = parseWholeAmount(cashPaymentAmount);
     const transferPaymentPreview = parseWholeAmount(transferPaymentAmount);
     const nextTotalInitialPayments =
@@ -2618,29 +2644,36 @@ export function POSModule() {
     cashPaymentAmount,
     transferPaymentAmount,
     transferReference,
-    isCashDiscountEnabled,
+    isCashDiscountApplied,
   ]);
   const cashDiscountControl = useMemo<CashDiscountControl>(
     () => ({
       enabled: isCashDiscountEnabled,
+      applied: isCashDiscountApplied,
+      notice: cashDiscountState.block
+        ? CASH_DISCOUNT_BLOCK_NOTICE[cashDiscountState.block]
+        : null,
       amount: cashDiscountAmount,
       onEnabledChange: handleCashDiscountChange,
     }),
-    [isCashDiscountEnabled, cashDiscountAmount, handleCashDiscountChange]
+    [
+      isCashDiscountEnabled,
+      isCashDiscountApplied,
+      cashDiscountState.block,
+      cashDiscountAmount,
+      handleCashDiscountChange,
+    ]
   );
 
   const normalizedPendingPaymentReason =
     normalizePendingPaymentReason(pendingPaymentReason);
   const normalizedSaleNote = saleNote.trim();
   const isPendingReasonRequired =
-    !isCashDiscountEnabled && total > 0 && totalInitialPayments <= Number.EPSILON;
+    !isCashDiscountApplied && total > 0 && totalInitialPayments <= Number.EPSILON;
   // Mismo criterio que el back: con descuento, el efectivo cargado tiene que cubrir el total.
-  const cashDiscountError =
-    isCashDiscountEnabled && roundTo(pendingAfterInitialPayments, 2) > 0
-      ? `Con el descuento por efectivo hay que cobrar el total en efectivo: carga al menos $${formatMoney(
-          total
-        )}.`
-      : null;
+  // Si no lo cubre, al tocar "Cobrar" se quita el descuento (queda saldo pendiente).
+  const isCashShortForDiscount =
+    isCashDiscountApplied && roundTo(pendingAfterInitialPayments, 2) > 0;
 
   const ensureOpenCashSession = async () => {
     if (!canManageCash) return true;
@@ -2696,11 +2729,12 @@ export function POSModule() {
       setPendingPaymentReason(normalizedPendingPaymentReason);
     }
 
-    if (cashDiscountError) {
+    if (isCashShortForDiscount) {
+      setIsCashDiscountWaived(true);
       toast({
-        variant: "destructive",
-        title: "Falta efectivo",
-        description: cashDiscountError,
+        title: "Se quitó el descuento",
+        description:
+          "Queda saldo pendiente, así que la venta va a precio de lista. Revisá el total y tocá Cobrar de nuevo.",
       });
       return;
     }
@@ -2779,11 +2813,13 @@ export function POSModule() {
         return;
       }
 
-      if (cashDiscountError) {
+      // No debería pasar: "Cobrar" ya quitó el descuento si quedaba saldo.
+      if (isCashShortForDiscount) {
         toast({
           variant: "destructive",
           title: "Falta efectivo",
-          description: cashDiscountError,
+          description:
+            "Con el descuento hay que cobrar el total en efectivo. Revisá los pagos y tocá Cobrar de nuevo.",
         });
         return;
       }
@@ -2848,7 +2884,7 @@ export function POSModule() {
               : undefined,
           note: normalizedSaleNote,
         }),
-        cashDiscountPercent: isCashDiscountEnabled
+        cashDiscountPercent: isCashDiscountApplied
           ? CASH_PAYMENT_DISCOUNT_PERCENT
           : undefined,
       });
@@ -2957,7 +2993,8 @@ export function POSModule() {
     setTransferReference("");
     setPendingPaymentReason("");
     setSaleNote("");
-    setIsCashDiscountEnabled(false);
+    setIsCashDiscountEnabled(true);
+    setIsCashDiscountWaived(false);
     if (!options?.silent) {
       toast({
         title: "Carrito vaciado",
