@@ -34,7 +34,7 @@ describe("getCashDiscountAmount", () => {
   });
 });
 
-describe("resolveCashDiscount (switch prendido por defecto, opción A)", () => {
+describe("resolveCashDiscount (el switch arranca apagado; prendido a mano)", () => {
   it("prendido y todo en efectivo: se aplica", () => {
     expect(
       resolveCashDiscount({ enabled: true, transferAmount: 0, waivedForBalance: false })

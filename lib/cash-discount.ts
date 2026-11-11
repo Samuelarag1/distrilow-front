@@ -21,8 +21,8 @@ export function getCashDiscountAmount(total: number): number {
 export type CashDiscountBlock = "transfer" | "balance";
 
 /**
- * El switch arranca prendido (decisión del 2026-11-09, opción A), pero el descuento solo se
- * aplica si toda la venta se cobra en efectivo, como exige el back. Si el cajero carga una
+ * El switch arranca apagado (decisión del 2026-11-11) y el cajero lo prende a mano; aun prendido,
+ * el descuento solo se aplica si toda la venta se cobra en efectivo, como exige el back. Si el cajero carga una
  * transferencia, deja de aplicarse al instante; si borra la transferencia, vuelve. El saldo
  * pendiente se decide al tocar "Cobrar" (`waivedForBalance`), no mientras se tipea el
  * efectivo, para que el total no salte con cada número.

@@ -66,12 +66,16 @@ describe("countPendingPosCartItems — venta en curso antes de cambiar de sucurs
   });
 });
 
-describe("parsePersistedPosCart — descuento por efectivo (opción A)", () => {
+describe("parsePersistedPosCart — descuento por efectivo (arranca apagado)", () => {
   const draft = (extra: object) =>
     JSON.stringify({ version: 1, updatedAt: Date.now(), userId: "u1", branchId: "b1", cart: [], ...extra });
 
-  it("sin el dato, el descuento vuelve prendido, como arranca el POS", () => {
-    expect(parsePersistedPosCart(draft({}))?.cashDiscount).toBe(true);
+  it("sin el dato, el descuento vuelve apagado, como arranca el POS", () => {
+    expect(parsePersistedPosCart(draft({}))?.cashDiscount).toBe(false);
+  });
+
+  it("si el cajero lo había prendido, sigue prendido", () => {
+    expect(parsePersistedPosCart(draft({ cashDiscount: true }))?.cashDiscount).toBe(true);
   });
 
   it("si el cajero lo había apagado, sigue apagado", () => {

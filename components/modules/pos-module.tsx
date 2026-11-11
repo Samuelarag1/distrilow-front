@@ -264,7 +264,7 @@ type PosCatalogCardProps = PosCartListProps & {
 };
 
 type CashDiscountControl = {
-  /** Lo que eligió el cajero con el switch (arranca prendido). */
+  /** Lo que eligió el cajero con el switch (arranca apagado). */
   enabled: boolean;
   /** Si de verdad se descuenta: prendido y todo en efectivo (resolveCashDiscount). */
   applied: boolean;
@@ -1874,8 +1874,8 @@ export function POSModule() {
   const [transferReference, setTransferReference] = useState("");
   const [pendingPaymentReason, setPendingPaymentReason] = useState("");
   const [saleNote, setSaleNote] = useState("");
-  // Arranca prendido (opción A, 2026-11-09); se aplica solo con todo en efectivo.
-  const [isCashDiscountEnabled, setIsCashDiscountEnabled] = useState(true);
+  // Arranca apagado (2026-11-11): el cajero lo prende a mano; se aplica solo con todo en efectivo.
+  const [isCashDiscountEnabled, setIsCashDiscountEnabled] = useState(false);
   // "Cobrar" con saldo pendiente quita el descuento; cualquier cambio en el carrito
   // o en los pagos lo vuelve a evaluar.
   const [isCashDiscountWaived, setIsCashDiscountWaived] = useState(false);
@@ -2993,7 +2993,7 @@ export function POSModule() {
     setTransferReference("");
     setPendingPaymentReason("");
     setSaleNote("");
-    setIsCashDiscountEnabled(true);
+    setIsCashDiscountEnabled(false);
     setIsCashDiscountWaived(false);
     if (!options?.silent) {
       toast({
